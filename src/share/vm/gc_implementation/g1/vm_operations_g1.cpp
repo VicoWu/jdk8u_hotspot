@@ -72,6 +72,10 @@ VM_G1IncCollectionPause::VM_G1IncCollectionPause(uint           gc_count_before,
   _gc_cause = gc_cause;
 }
 
+/**
+ * prologue的意思是序言
+ * @return
+ */
 bool VM_G1IncCollectionPause::doit_prologue() {
   bool res = VM_G1OperationWithAllocRequest::doit_prologue();
   if (!res) {
@@ -88,7 +92,7 @@ bool VM_G1IncCollectionPause::doit_prologue() {
   return res;
 }
 
-void VM_G1IncCollectionPause::doit() {
+void VM_G1IncCollectionPause::doit() { // 进行增量收集
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
   assert(!_should_initiate_conc_mark || g1h->should_do_concurrent_full_gc(_gc_cause),
       "only a GC locker, a System.gc(), stats update, whitebox, or a hum allocation induced GC should start a cycle");

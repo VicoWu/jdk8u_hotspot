@@ -819,7 +819,7 @@ void G1CollectorPolicy::record_full_collection_end() {
   set_gcs_are_young(true);
   _last_young_gc = false;
   clear_initiate_conc_mark_if_possible();
-  clear_during_initial_mark_pause();
+  clear_during_initial_mark_pause(); // full gc结束，设置_during_initial_mark_pause为false
   _in_marking_window = false;
   _in_marking_window_im = false;
 
@@ -874,7 +874,7 @@ void G1CollectorPolicy::record_concurrent_mark_init_end(double
                                                    mark_init_elapsed_time_ms) {
   _during_marking = true;
   assert(!initiate_conc_mark_if_possible(), "we should have cleared it by now");
-  clear_during_initial_mark_pause();
+  clear_during_initial_mark_pause(); // 设置_during_initial_mark_pause为false
   _cur_mark_stop_world_time_ms = mark_init_elapsed_time_ms;
 }
 
@@ -898,7 +898,8 @@ void G1CollectorPolicy::record_concurrent_mark_cleanup_start() {
 }
 
 void G1CollectorPolicy::record_concurrent_mark_cleanup_completed() {
-  _last_young_gc = true;
+    // 之所以在并发清理结束以后将_last_young_gc设置为true，因为一般并发清理结束以后，就希望进行一轮mixed gc
+  _last_young_gc = true; // 并发标记清理结束,这是唯一可以将_last_young_gc设置为true的地方
   _in_marking_window = false;
 }
 
@@ -911,7 +912,7 @@ void G1CollectorPolicy::record_concurrent_pause() {
 
 bool G1CollectorPolicy::need_to_start_conc_mark(const char* source, size_t alloc_word_size) {
   if (_g1->concurrent_mark()->cmThread()->during_cycle()) {
-    return false;
+    return false; // 如果现在已经有并发标记线程正在运行
   }
 
   size_t marking_initiating_used_threshold =
@@ -919,8 +920,10 @@ bool G1CollectorPolicy::need_to_start_conc_mark(const char* source, size_t alloc
   size_t cur_used_bytes = _g1->non_young_capacity_bytes();
   size_t alloc_byte_size = alloc_word_size * HeapWordSize;
 
+  // 如果当前使用的数据字节数再加上新分配的对象的字节数，大于InitiatingHeapOccupancyPercent
   if ((cur_used_bytes + alloc_byte_size) > marking_initiating_used_threshold) {
-    if (gcs_are_young() && !_last_young_gc) {
+    //  _last_young_gc在record_concurrent_mark_cleanup_completed中设置为true，这里的意思是，并发标记结束了，然后young gc又将这个值设置为了false，防止连续进行两次并发标记，导致第二次并发标记没有任何意义
+    if (gcs_are_young() && !_last_young_gc) { // 如果我们当前正处在young gc 阶段(mixed gc阶段不允许进行concurrent mark阶段)，并且不是_last_young_gc，那么就开始进行并发标记.
       ergo_verbose5(ErgoConcCycles,
         "request concurrent cycle initiation",
         ergo_format_reason("occupancy higher than threshold")
@@ -956,6 +959,7 @@ bool G1CollectorPolicy::need_to_start_conc_mark(const char* source, size_t alloc
 // Anything below that is considered to be zero
 #define MIN_TIMER_GRANULARITY 0.0000001
 
+// 记录一次evacuation的结束
 void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, EvacuationInfo& evacuation_info) {
   double end_time_sec = os::elapsedTime();
   assert(_cur_collection_pause_used_regions_at_start >= cset_region_length(),
@@ -975,14 +979,14 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
   }
 #endif // PRODUCT
 
-  last_pause_included_initial_mark = during_initial_mark_pause();
-  if (last_pause_included_initial_mark) {
-    record_concurrent_mark_init_end(0.0);
-  } else if (need_to_start_conc_mark("end of GC")) {
+  last_pause_included_initial_mark = during_initial_mark_pause(); // 读取_during_initial_mark_pause， record_concurrent_mark_init_end()方法将这个参数设置为false
+  if (last_pause_included_initial_mark) { //如果_during_initial_mark_pause是true，那么设置为false
+    record_concurrent_mark_init_end(0.0); // 初始暂停结束，设置_during_initial_mark_pause=false
+  } else if (need_to_start_conc_mark("end of GC")) { // 如果当前的内存状态表示需要进行一轮新的并发标记，那么就设置_initiate_conc_mark_if_possible 为true
     // Note: this might have already been set, if during the last
     // pause we decided to start a cycle but at the beginning of
     // this pause we decided to postpone it. That's OK.
-    set_initiate_conc_mark_if_possible();
+    set_initiate_conc_mark_if_possible();// 如果当前的内存状态表示需要进行一轮新的并发标记，那么就设置_initiate_conc_mark_if_possible 为true
   }
 
   _mmu_tracker->add_pause(end_time_sec - pause_time_ms/1000.0,
@@ -1051,30 +1055,31 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
     new_in_marking_window_im = true;
   }
 
-  if (_last_young_gc) {
+  // _last_young_gc 在 record_concurrent_mark_cleanup_completed()中设置为true，即刚刚结束了并发标记的清理阶段，才会开始判断是否进行mix gc
+  if (_last_young_gc) {  //  这里的含义是，只有当刚刚结束了并发标记，我们才会开始判断是否进行mixed gc
     // This is supposed to to be the "last young GC" before we start
     // doing mixed GCs. Here we decide whether to start mixed GCs or not.
 
-    if (!last_pause_included_initial_mark) {
-      if (next_gc_should_be_mixed("start mixed GCs",
+    if (!last_pause_included_initial_mark) { // 上一次暂停不是初始标记(比如，上一次暂停可能是一个转移的STW), 才有可能进行mixed gc，否则，不可能进行mixed gc，
+      if (next_gc_should_be_mixed("start mixed GCs", // 并且进行一次mix收集是有价值的(可回收的数据量大于配置的默认5%)
                                   "do not start mixed GCs")) {
-        set_gcs_are_young(false);
+        set_gcs_are_young(false);  // 设置_gcs_are_young=true，标志着不进行young gc，而进行 mixed gc
       }
-    } else {
+    } else { // 由于需要进行concurrent gc，因此不能进行 mixed gc
       ergo_verbose0(ErgoMixedGCs,
                     "do not start mixed GCs",
                     ergo_format_reason("concurrent cycle is about to start"));
     }
-    _last_young_gc = false;
+    _last_young_gc = false; // 无论下一轮是否进行mixed gc，都会在_last_young_gc是true的情况下被立刻置为false，直到record_concurrent_mark_cleanup_completed()中再次设置为true，即直到再次进行一次mix gc
   }
 
-  if (!_last_gc_was_young) {
+  if (!_last_gc_was_young) { // 上一次本来就是mix gc，判断是否需要继续进行 mixed gc
     // This is a mixed GC. Here we decide whether to continue doing
     // mixed GCs or not.
 
     if (!next_gc_should_be_mixed("continue mixed GCs",
                                  "do not continue mixed GCs")) {
-      set_gcs_are_young(true);
+      set_gcs_are_young(true); // 上一轮gc是mixed gc，现在，转而进行young gc，因此设置 _gcs_are_young = true
     }
   }
 
@@ -1485,6 +1490,7 @@ bool G1CollectorPolicy::force_initial_mark_if_outside_cycle(
   }
 }
 
+// 决定是否进入一个新的标记cycle，如果是，那么，就设置_during_initial_mark_pause=true
 void
 G1CollectorPolicy::decide_on_conc_mark_initiation() {
   // We are about to decide on whether this pause will be an
@@ -1502,15 +1508,16 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
     // concurrent marking cycle. So we might initiate one.
 
     bool during_cycle = _g1->concurrent_mark()->cmThread()->during_cycle();
-    if (!during_cycle) {
+    if (!during_cycle) { //如果当前没有正在进行的并发标记(避免多轮并发标记被同时运行)
       // The concurrent marking thread is not "during a cycle", i.e.,
       // it has completed the last one. So we can go ahead and
       // initiate a new cycle.
 
-      set_during_initial_mark_pause();
+      // 这里设置during_initial_mark_pause为true,那么在do_collection_pause_at_safepoint()中的最后，就会通知并发标记线程开始进行并发标记
+      set_during_initial_mark_pause(); // 设置_during_initial_mark_pause为true，代表正在惊醒初始标记暂停
       // We do not allow mixed GCs during marking.
-      if (!gcs_are_young()) {
-        set_gcs_are_young(true);
+      if (!gcs_are_young()) { // 标记阶段不允许mixed gc
+        set_gcs_are_young(true); // 标记当前状态为young gc
         ergo_verbose0(ErgoMixedGCs,
                       "end mixed GCs",
                       ergo_format_reason("concurrent cycle is about to start"));
@@ -1860,6 +1867,11 @@ void G1CollectorPolicy::print_collection_set(HeapRegion* list_head, outputStream
 }
 #endif // !PRODUCT
 
+/**
+ * 可回收的部分占总堆内存的比例
+ * @param reclaimable_bytes
+ * @return
+ */
 double G1CollectorPolicy::reclaimable_bytes_perc(size_t reclaimable_bytes) {
   // Returns the given amount of reclaimable bytes (that represents
   // the amount of reclaimable space still to be collected) as a
@@ -1871,7 +1883,7 @@ double G1CollectorPolicy::reclaimable_bytes_perc(size_t reclaimable_bytes) {
 bool G1CollectorPolicy::next_gc_should_be_mixed(const char* true_action_str,
                                                 const char* false_action_str) {
   CollectionSetChooser* cset_chooser = _collectionSetChooser;
-  if (cset_chooser->is_empty()) {
+  if (cset_chooser->is_empty()) { // 如果回收集合中没有任何的region
     ergo_verbose0(ErgoMixedGCs,
                   false_action_str,
                   ergo_format_reason("candidate old regions not available"));
@@ -1881,8 +1893,8 @@ bool G1CollectorPolicy::next_gc_should_be_mixed(const char* true_action_str,
   // Is the amount of uncollected reclaimable space above G1HeapWastePercent?
   size_t reclaimable_bytes = cset_chooser->remaining_reclaimable_bytes();
   double reclaimable_perc = reclaimable_bytes_perc(reclaimable_bytes);
-  double threshold = (double) G1HeapWastePercent;
-  if (reclaimable_perc <= threshold) {
+  double threshold = (double) G1HeapWastePercent; // 默认5%
+  if (reclaimable_perc <= threshold) { // 如果可回收的比例小于G1HeapWastePercent，那么进行 mix gc是不划算的，因此不进行mix gc
     ergo_verbose4(ErgoMixedGCs,
               false_action_str,
               ergo_format_reason("reclaimable percentage not over threshold")
@@ -1894,7 +1906,7 @@ bool G1CollectorPolicy::next_gc_should_be_mixed(const char* true_action_str,
               reclaimable_perc, threshold);
     return false;
   }
-
+  // 当前回收集合的可回收比例大于5%，可以进行mix gc
   ergo_verbose4(ErgoMixedGCs,
                 true_action_str,
                 ergo_format_reason("candidate old regions available")

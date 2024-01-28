@@ -377,8 +377,8 @@ class HeapRegion: public G1OffsetTableContigSpace {
     size_t used_at_mark_start_bytes =
       (prev_top_at_mark_start() - bottom()) * HeapWordSize;
     assert(used_at_mark_start_bytes >= marked_bytes(),
-           "Can't mark more than we have.");
-    return used_at_mark_start_bytes - marked_bytes();
+           "Can't mark more than we have."); // marked_bytes肯定比used_at_mark_start_bytes小，因为我们不可能标记了比我们已经有的还更多的对象
+    return used_at_mark_start_bytes - marked_bytes(); // 当前已经占用的数量，减去标记的数量，剩下的就是垃圾量
   }
 
   // Return the amount of bytes we'll reclaim if we collect this

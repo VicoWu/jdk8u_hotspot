@@ -1874,6 +1874,7 @@ public:
     hr->note_end_of_marking();
     _max_live_bytes += hr->max_live_bytes();
 
+    // 使用量等于垃圾量，说明整个Region都没有有效数据
     if (hr->used() > 0 && hr->max_live_bytes() == 0 && !hr->is_young()) {
       _freed_bytes += hr->used();
       hr->set_containing_set(NULL);
@@ -2195,7 +2196,7 @@ void ConcurrentMark::completeCleanup() {
 
   // No one else should be accessing the _cleanup_list at this point,
   // so it is not necessary to take any locks
-  while (!_cleanup_list.is_empty()) {
+  while (!_cleanup_list.is_empty()) { // cleanup_list中放的是待整体回收的region
     HeapRegion* hr = _cleanup_list.remove_region(true /* from_head */);
     assert(hr != NULL, "Got NULL from a non-empty list");
     hr->par_clear();

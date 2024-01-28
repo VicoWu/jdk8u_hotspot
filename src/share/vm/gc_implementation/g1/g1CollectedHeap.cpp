@@ -1138,7 +1138,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_at_safepoint(size_t word_size,
   } else {
     HeapWord* result = humongous_obj_allocate(word_size, context);
     if (result != NULL && g1_policy()->need_to_start_conc_mark("STW humongous allocation")) {
-      g1_policy()->set_initiate_conc_mark_if_possible();
+      g1_policy()->set_initiate_conc_mark_if_possible(); //如果当前的内存状态需要进行一次新的并发标记，那么就设置_initiate_conc_mark_if_possible为true
     }
     return result;
   }
@@ -3635,7 +3635,7 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
                              gc_cause);
 
   op.set_allocation_context(AllocationContext::current());
-  VMThread::execute(&op);
+  VMThread::execute(&op); // 我们看VMThread::execute，其实会调用op.evaluate()方法
 
   HeapWord* result = op.result();
   bool ret_succeeded = op.prologue_succeeded() && op.pause_succeeded();
@@ -3647,6 +3647,9 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
   return result;
 }
 
+/**
+ * 通知开始进行并发标记
+ */
 void
 G1CollectedHeap::doConcurrentMark() {
   MutexLockerEx x(CGC_lock, Mutex::_no_safepoint_check_flag);
@@ -3909,7 +3912,11 @@ void G1CollectedHeap::reset_taskqueue_stats() {
   }
 }
 #endif // TASKQUEUE_STATS
-
+/**
+ *
+ * 打印比如[GC pause (young|mixed) (initial-mark), 0.62417980 secs] 的信息
+ * 这时候还没有flush，因此还需要配合log_gc_footer进行最终的打印
+ */
 void G1CollectedHeap::log_gc_header() {
   if (!G1Log::fine()) {
     return;
@@ -3944,9 +3951,15 @@ void G1CollectedHeap::log_gc_footer(double pause_time_sec) {
     g1_policy()->print_heap_transition();
     gclog_or_tty->print_cr(", %3.7f secs]", pause_time_sec);
   }
-  gclog_or_tty->flush();
+  gclog_or_tty->flush(); // 打印日志
 }
 
+/**
+ * 进行某种STW的safepoint暂停。这个STW可能是初始标记导致的，也可能是gc导致的
+ * 我们看到，这个方法是被VM_G1IncCollectionPause::doit()调用的，因此说明这个方法只是针对增量gc
+ * @param target_pause_time_ms
+ * @return
+ */
 bool
 G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   assert_at_safepoint(true /* should_be_vm_thread */);
@@ -3972,19 +3985,24 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // This call will decide whether this pause is an initial-mark
   // pause. If it is, during_initial_mark_pause() will return true
   // for the duration of this pause.
-  g1_policy()->decide_on_conc_mark_initiation();
+  // 先决定是否进行并发标记，决定的结果保存在如果_during_initial_mark_pause中
+  g1_policy()->decide_on_conc_mark_initiation(); // 决定是否当前的暂停是由于初始标记导致的暂停
 
+  // 如果当前正在进行初始标记（g1_policy()->during_initial_mark_pause() = true），
+  // 并且正在进行mixed gc(g1_policy()->gcs_are_young() == false()),那么assert将失败
   // We do not allow initial-mark to be piggy-backed on a mixed GC.
   assert(!g1_policy()->during_initial_mark_pause() ||
           g1_policy()->gcs_are_young(), "sanity");
 
+  // 如果当前正在进行并发标记（g1_policy()->mark_in_progress() = true），
+  // 并且正在进行mixed gc(g1_policy()->gcs_are_young() == false()),那么assert将失败
   // We also do not allow mixed GCs during marking.
   assert(!mark_in_progress() || g1_policy()->gcs_are_young(), "sanity");
 
   // Record whether this pause is an initial mark. When the current
   // thread has completed its logging output and it's safe to signal
   // the CM thread, the flag's value in the policy has been reset.
-  bool should_start_conc_mark = g1_policy()->during_initial_mark_pause();
+  bool should_start_conc_mark = g1_policy()->during_initial_mark_pause(); // 是否应该开始并发标记，如果_during_initial_mark_pause=true，那么should_start_conc_mark
 
   // Inner scope for scope based logging, timers, and stats collection
   {
@@ -4157,13 +4175,14 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         collection_set_iterate(&cl);
 #endif // ASSERT
 
+        // 开始进行young gc 的 evacuation
         setup_surviving_young_words();
 
         // Initialize the GC alloc regions.
         _allocator->init_gc_alloc_regions(evacuation_info);
 
         // Actually do the work...
-        evacuate_collection_set(evacuation_info);
+        evacuate_collection_set(evacuation_info); // 进行垃圾收集
 
         free_collection_set(g1_policy()->collection_set(), evacuation_info);
 
@@ -4212,7 +4231,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
           _allocator->increase_used(g1_policy()->bytes_copied_during_gc());
         }
 
-        if (g1_policy()->during_initial_mark_pause()) {
+        if (g1_policy()->during_initial_mark_pause()) { // 进行初始标记
           // We have to do this before we notify the CM threads that
           // they can start working to make sure that all the
           // appropriate initialization is done on the CM object.
@@ -4255,7 +4274,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         // investigate this in CR 7178365.
         double sample_end_time_sec = os::elapsedTime();
         double pause_time_ms = (sample_end_time_sec - sample_start_time_sec) * MILLIUNITS;
-        g1_policy()->record_collection_pause_end(pause_time_ms, evacuation_info);
+        g1_policy()->record_collection_pause_end(pause_time_ms, evacuation_info); // 设置_during_initial_mark_pause 为 false
 
         MemoryService::track_memory_usage();
 
@@ -4344,7 +4363,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // without its logging output interfering with the logging output
   // that came from the pause.
 
-  if (should_start_conc_mark) {
+  if (should_start_conc_mark) { // young gc结束了，并且根据判断，我们的确应该进行并发标记，
     // CAUTION: after the doConcurrentMark() call below,
     // the concurrent marking thread(s) could be running
     // concurrently with us. Make sure that anything after
@@ -4352,7 +4371,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
     // running. Note: of course, the actual marking work will
     // not start until the safepoint itself is released in
     // SuspendibleThreadSet::desynchronize().
-    doConcurrentMark();
+    doConcurrentMark(); // 向并发标记线程发送信号, 这个信号会unblock并发标记线程，查看 ConcurrentMarkThread::sleepBeforeNextCycle()
   }
 
   return true;

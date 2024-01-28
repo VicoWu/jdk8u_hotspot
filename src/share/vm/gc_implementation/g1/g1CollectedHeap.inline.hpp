@@ -135,13 +135,13 @@ inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
                                                      uint* gclocker_retry_count_ret) {
   assert_heap_not_locked_and_not_at_safepoint();
   assert(!isHumongous(word_size), "attempt_allocation() should not "
-         "be called for humongous allocation requests");
+         "be called for humongous allocation requests");  // 大对象不应该通过attempt_allocation来进行分配
 
   AllocationContext_t context = AllocationContext::current();
   HeapWord* result = _allocator->mutator_alloc_region(context)->attempt_allocation(word_size,
                                                                                    false /* bot_updates */);
   if (result == NULL) {
-    result = attempt_allocation_slow(word_size,
+    result = attempt_allocation_slow(word_size, // 尝试进行一次full gc然后再接着进行分配
                                      context,
                                      gc_count_before_ret,
                                      gclocker_retry_count_ret);

@@ -76,7 +76,9 @@ public:
 };
 
 
-
+/**
+ *  并发标记子阶段，这里run()中的代码全部都是并发执行的
+ */
 void ConcurrentMarkThread::run() {
   initialize_in_thread();
   _vtime_start = os::elapsedVTime();
@@ -89,7 +91,7 @@ void ConcurrentMarkThread::run() {
 
   while (!_should_terminate) {
     // wait until started is set.
-    sleepBeforeNextCycle();
+    sleepBeforeNextCycle(); // 等待，直到等到通知，这个通知的发送来自于do_collection_pause_at_safepoint的最后，即Young GC完成了以后
     if (_should_terminate) {
       break;
     }
@@ -114,7 +116,7 @@ void ConcurrentMarkThread::run() {
           gclog_or_tty->print_cr("[GC concurrent-root-region-scan-start]");
         }
 
-        _cm->scanRootRegions();
+        _cm->scanRootRegions();  // 扫描root region，这里的root region应该是survivor region，因为经过上一轮 young gc，实际上除了老年代，所有的young region的对象都进入了survivor
 
         double scan_end = os::elapsedTime();
         if (G1Log::fine()) {
@@ -131,10 +133,10 @@ void ConcurrentMarkThread::run() {
       }
 
       int iter = 0;
-      do {
+      do { // 反复进行并发标记
         iter++;
         if (!cm()->has_aborted()) {
-          _cm->markFromRoots();
+          _cm->markFromRoots(); // 并发标记
         }
 
         double mark_end_time = os::elapsedVTime();
@@ -168,7 +170,7 @@ void ConcurrentMarkThread::run() {
             gclog_or_tty->print_cr("[GC concurrent-mark-restart-for-overflow]");
           }
         }
-      } while (cm()->restart_for_overflow());
+      } while (cm()->restart_for_overflow()); // 如果发生了标记栈溢出，那么我们需要重新进行并发标记
 
       double end_time = os::elapsedVTime();
       // Update the total virtual time before doing this, since it will try
@@ -177,9 +179,9 @@ void ConcurrentMarkThread::run() {
       _vtime_accum = (end_time - _vtime_start);
 
       if (!cm()->has_aborted()) {
-        if (g1_policy->adaptive_young_list_length()) {
+        if (g1_policy->adaptive_young_list_length()) { //加入young region的长度可以调节
           double now = os::elapsedTime();
-          double cleanup_prediction_ms = g1_policy->predict_cleanup_time_ms();
+          double cleanup_prediction_ms = g1_policy->predict_cleanup_time_ms(); // 预计cleanup需要的时间
           jlong sleep_time_ms = mmu_tracker->when_ms(now, cleanup_prediction_ms);
           os::sleep(current_thread, sleep_time_ms, false);
         }
@@ -196,7 +198,7 @@ void ConcurrentMarkThread::run() {
 
       // Check if cleanup set the free_regions_coming flag. If it
       // hasn't, we can just skip the next step.
-      if (g1h->free_regions_coming()) {
+      if (g1h->free_regions_coming()) { //  如果设置了free_regions_coming 标记
         // The following will finish freeing up any regions that we
         // found to be empty during cleanup. We'll do this part
         // without joining the suspendible set. If an evacuation pause
@@ -205,14 +207,14 @@ void ConcurrentMarkThread::run() {
         // place, it would wait for us to process the regions
         // reclaimed by cleanup.
 
-        double cleanup_start_sec = os::elapsedTime();
+        double cleanup_start_sec = os::elapsedTime(); // 记录并发清除开始的时间，这里的并发清除只是用来回收整个分区的垃圾
         if (G1Log::fine()) {
           gclog_or_tty->gclog_stamp(cm()->concurrent_gc_id());
           gclog_or_tty->print_cr("[GC concurrent-cleanup-start]");
         }
 
         // Now do the concurrent cleanup operation.
-        _cm->completeCleanup();
+        _cm->completeCleanup(); // 现在进行并发清除阶段
 
         // Notify anyone who's waiting that there are no more free
         // regions coming. We have to do this before we join the STS
@@ -262,7 +264,7 @@ void ConcurrentMarkThread::run() {
       {
         SuspendibleThreadSetJoiner sts;
         if (!cm()->has_aborted()) {
-          g1_policy->record_concurrent_mark_cleanup_completed();
+          g1_policy->record_concurrent_mark_cleanup_completed(); // 记录并发标记结束
         }
       }
 

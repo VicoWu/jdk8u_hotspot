@@ -670,7 +670,7 @@ void VMThread::execute(VM_Operation* op) {
 
     if (op->evaluate_at_safepoint() && !SafepointSynchronize::is_at_safepoint()) {
       SafepointSynchronize::begin();
-      op->evaluate();
+      op->evaluate(); // 最终执行对应的op的evaluate()方法
       SafepointSynchronize::end();
     } else {
       op->evaluate();
