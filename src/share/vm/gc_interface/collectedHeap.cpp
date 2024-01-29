@@ -261,19 +261,27 @@ void CollectedHeap::check_for_valid_allocation_state() {
 }
 #endif
 
+/**
+ * 尝试先申请新的TLAB，然后再在这个新的TLAB上面分配这个大小为size的对象
+ * @param klass
+ * @param thread
+ * @param size
+ * @return
+ */
 HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thread, size_t size) {
 
   // Retain tlab and allocate object in shared space if
   // the amount free in the tlab is too large to discard.
-  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) {
+    // 记录这一次的慢分配，即tlab无法容纳对象，但是剩余空间又太大导致创建新的tlab太浪费的过程
+  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) { //
     thread->tlab().record_slow_allocation(size);
     return NULL;
   }
-
+  // tlab剩余空间不够，因此需要申请新的tlab
   // Discard tlab and allocate a new one.
   // To minimize fragmentation, the last TLAB may be smaller than the rest.
-  size_t new_tlab_size = thread->tlab().compute_size(size);
-
+  size_t new_tlab_size = thread->tlab().compute_size(size); // 根据待分配对象的大小，确定新的tlab的大小
+  // 卸载当前正在使用的tlab
   thread->tlab().clear_before_allocation();
 
   if (new_tlab_size == 0) {
@@ -281,6 +289,8 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
   }
 
   // Allocate a new TLAB...
+  // 为当前线程分配一个新的tlab，大小为new_tlab_size,返回新的tlab的起始地址，以字为单位
+  // Universe::heap()为G1AllocatedHeap
   HeapWord* obj = Universe::heap()->allocate_new_tlab(new_tlab_size);
   if (obj == NULL) {
     return NULL;
@@ -288,20 +298,21 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
 
   AllocTracer::send_allocation_in_new_tlab_event(klass, new_tlab_size * HeapWordSize, size * HeapWordSize);
 
-  if (ZeroTLAB) {
+  if (ZeroTLAB) { // 如果启用了ZeroTLAB，那么需要对新申请的TLAB进行置0操作
     // ..and clear it.
     Copy::zero_to_words(obj, new_tlab_size);
   } else {
     // ...and zap just allocated object.
-#ifdef ASSERT
+#ifdef ASSERT // 如果是需要调试，那么会在内存中填充badHeapWordVal
     // Skip mangling the space corresponding to the object header to
     // ensure that the returned space is not considered parsable by
     // any concurrent GC thread.
-    size_t hdr_size = oopDesc::header_size();
+    size_t hdr_size = oopDesc::header_size(); // HotSpot中的类oopDesc的静态方法
+    // 从obj + hdr_size开始，长度为new_tlab_size - hdr_size的内存区域填充为badHeapWordVal。这是一种用于标记内存为无效值的技术，通常在开发和调试阶段用于帮助检测错误。
     Copy::fill_to_words(obj + hdr_size, new_tlab_size - hdr_size, badHeapWordVal);
 #endif // ASSERT
   }
-  thread->tlab().fill(obj, obj + size, new_tlab_size);
+  thread->tlab().fill(obj, obj + size, new_tlab_size); // fill方法会设置start，end，top，相当于一系列的初始化操作。而正常的分配(参考allocate_from_tlab()方法)调用的是tlab()->allocate()方法
   return obj;
 }
 
@@ -457,7 +468,7 @@ CollectedHeap::fill_with_object_impl(HeapWord* start, size_t words, bool zap)
 
   if (words >= filler_array_min_size()) {
     fill_with_array(start, words, zap);
-  } else if (words > 0) {
+  } else if (words > 0) { // words大于0，但是小于filler_array_min_size()
     assert(words == min_fill_size(), "unaligned size");
     post_allocation_setup_common(SystemDictionary::Object_klass(), start);
   }

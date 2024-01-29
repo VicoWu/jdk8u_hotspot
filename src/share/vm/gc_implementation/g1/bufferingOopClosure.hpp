@@ -41,6 +41,17 @@
 // The caller must be sure to call "done" to process any unprocessed
 // buffered entriess.
 
+/**
+ * BufferingOops 闭包旨在将定位根的开销与对其应用闭包的开销分开。 它通过维护包含引用的位置数组来实现这一点。
+ *  最初，当数组未满时，将闭包应用于 oop* 位置只是简单地记录数组中的该位置，而不立即对其应用包装的闭包。
+ *  该过程的计算成本相对较小，因此执行该操作所花费的时间主要归因于寻根阶段。
+
+    一旦数组变满，包裹的闭包就会应用于数组中的所有元素。
+    在此过程中，将跟踪将闭包应用于每个元素所花费的时间。 将闭包应用于所有缓冲条目后，该数组将留空以供将来使用。
+
+    需要注意的是，BufferingOops 闭包的调用者必须确保调用“done”方法来处理任何未处理的缓冲条目，确保最终处理所有缓冲位置。
+    这种方法有助于有效管理与定位根并向其应用闭包相关的开销，特别是在需要准确评估这些操作的计算成本的情况下。
+ */
 class BufferingOopClosure: public OopClosure {
   friend class TestBufferingOopClosure;
 protected:

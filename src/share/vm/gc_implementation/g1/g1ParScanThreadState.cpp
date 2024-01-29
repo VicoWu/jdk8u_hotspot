@@ -141,24 +141,33 @@ bool G1ParScanThreadState::verify_task(StarTask ref) const {
 }
 #endif // ASSERT
 
+/**
+ * 调用方法为 G1ParEvacuateFollowersClosure::do_void()
+ * 从_refs中取出元素并处理，会对
+ * 查看 G1ParPushHeapRSClosure::do_oop_nv 可以看到往_refs中插入元素的过程
+ * _refs中的元素是在根扫描的时候插入进来的
+ */
 void G1ParScanThreadState::trim_queue() {
   assert(_evac_failure_cl != NULL, "not set");
 
   StarTask ref;
-  do {
+  do { // 不断循环，直到_refs中的ref被全部处理完
     // Drain the overflow stack first, so other threads can steal.
-    while (_refs->pop_overflow(ref)) {
+    while (_refs->pop_overflow(ref)) { //取出队列中的每一个对象引用
       if (!_refs->try_push_to_taskqueue(ref)) {
-        dispatch_reference(ref);
+        dispatch_reference(ref); // 对这个对象引用进行处理，会对ref对应的对象进行转移操作
       }
     }
 
     while (_refs->pop_local(ref)) {
-      dispatch_reference(ref);
+      dispatch_reference(ref); // 对这个对象引用进行处理，会对ref对应的对象进行转移操作
     }
   } while (!_refs->is_empty());
 }
 
+/**
+ * 调用者是 G1ParScanThreadState::copy_to_survivor_space
+ */
 HeapWord* G1ParScanThreadState::allocate_in_next_plab(InCSetState const state,
                                                       InCSetState* dest,
                                                       size_t word_sz,
@@ -169,6 +178,7 @@ HeapWord* G1ParScanThreadState::allocate_in_next_plab(InCSetState const state,
   // Right now we only have two types of regions (young / old) so
   // let's keep the logic here simple. We can generalize it when necessary.
   if (dest->is_young()) {
+      // 如果目标区域是Young，那么就尝试在Old区域
     HeapWord* const obj_ptr = _g1_par_allocator->allocate(InCSetState::Old,
                                                           word_sz, context);
     if (obj_ptr == NULL) {
@@ -177,31 +187,45 @@ HeapWord* G1ParScanThreadState::allocate_in_next_plab(InCSetState const state,
     // Make sure that we won't attempt to copy any other objects out
     // of a survivor region (given that apparently we cannot allocate
     // any new ones) to avoid coming into this slow path.
+    /**
+     * 将 _tenuring_threshold 设置为 0，以确保不会尝试将任何其他对象从survivor区域，从而避免进入慢速路径。
+     * 因为代码走到这里，说明年轻代已经无法容纳这个对象了，那么后面的对象就不需要再尝试在年轻代区域分配了，直接在老年代区域分配
+     */
     _tenuring_threshold = 0;
-    dest->set_old();
+    dest->set_old(); // 将当前的目标状态改值为Old状态
     return obj_ptr;
-  } else {
+  } else { // 除了InCSetState==young区可以在下一个区域进行分配，其他情况无法实现这个功能
     assert(dest->is_old(), err_msg("Unexpected dest: " CSETSTATE_FORMAT, dest->value()));
     // no other space to try.
     return NULL;
   }
 }
 
+/**
+ * 根据对象的当前年龄，当前InCSetState状态，获取对象的目标InCSetState状态
+ */
 InCSetState G1ParScanThreadState::next_state(InCSetState const state, markOop const m, uint& age) {
-  if (state.is_young()) {
+  if (state.is_young()) { // 如果对象目前在年轻代，则需要根据对象年龄判断对象是否需要晋升到老年代
     age = !m->has_displaced_mark_helper() ? m->age()
                                           : m->displaced_mark_helper()->age();
+    /**
+     * 如果对象的年龄小于MaxTenuringThreshold，那么可以保持住状态，否则就需要晋升
+     */
     if (age < _tenuring_threshold) {
       return state;
     }
   }
-  return dest(state);
+  /**
+   * 返回这个state的目标state
+   * 搜索构造方法 G1ParScanThreadState::G1ParScanThreadState 可以看到_dest数组的构造
+   */
+  return dest(state); // 或者这个state的目标state
 }
 
 oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
-                                                 oop const old,
+                                                 oop const old, //需要移动的对象，oop是一个typedef oopDesc*   oop;
                                                  markOop const old_mark) {
-  const size_t word_sz = old->size();
+  const size_t word_sz = old->size(); // 获取对象的大小
   HeapRegion* const from_region = _g1h->heap_region_containing_raw(old);
   // +1 to make the -1 indexes valid...
   const int young_index = from_region->young_index_in_cset()+1;
@@ -210,19 +234,27 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
   const AllocationContext_t context = from_region->allocation_context();
 
   uint age = 0;
-  InCSetState dest_state = next_state(state, old_mark, age);
-  HeapWord* obj_ptr = _g1_par_allocator->plab_allocate(dest_state, word_sz, context);
+  InCSetState dest_state = next_state(state, old_mark, age); // 根据对象当前的状态，年龄，确定对象的下一个状态
+    /**
+     * 根据对象的下一个状态尝试在plab上进行相应分配
+     */
+  HeapWord* obj_ptr = _g1_par_allocator->plab_allocate(dest_state, word_sz, context); //
 
   // PLAB allocations should succeed most of the time, so we'll
   // normally check against NULL once and that's it.
-  if (obj_ptr == NULL) {
+  if (obj_ptr == NULL) { // 在plab上分配失败
+      /**
+       * 查看方法实现 G1ParGCAllocator::allocate_direct_or_new_plab
+       * 尝试通过创建新的plab或者直接将对象分配在对应区域的堆内存
+       */
     obj_ptr = _g1_par_allocator->allocate_direct_or_new_plab(dest_state, word_sz, context);
     if (obj_ptr == NULL) {
+        // 尝试在下一个state对应的region中分配
       obj_ptr = allocate_in_next_plab(state, &dest_state, word_sz, context);
-      if (obj_ptr == NULL) {
+      if (obj_ptr == NULL) { // 最终失败，进行转移失败的相关处理
         // This will either forward-to-self, or detect that someone else has
         // installed a forwarding pointer.
-        return _g1h->handle_evacuation_failure_par(this, old);
+        return _g1h->handle_evacuation_failure_par(this, old); // 处理转移失败的情况
       }
     }
   }

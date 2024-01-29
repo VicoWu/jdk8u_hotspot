@@ -1833,18 +1833,21 @@ public:
 
 class G1ParNoteEndTask;
 
+/**
+ * 在并发标记结束以后的回调类，用来对Region进行部分的清理
+ */
 class G1NoteEndOfConcMarkClosure : public HeapRegionClosure {
   G1CollectedHeap* _g1;
   size_t _max_live_bytes;
   uint _regions_claimed;
   size_t _freed_bytes;
   FreeRegionList* _local_cleanup_list;
-  HeapRegionSetCount _old_regions_removed;
-  HeapRegionSetCount _humongous_regions_removed;
+  HeapRegionSetCount _old_regions_removed; // 计数器，记录清理了一个老年代区域
+  HeapRegionSetCount _humongous_regions_removed; // 计数器，记录清理了一个举行对象区域(一个巨型对象区域会跨域多个HeapRegion，因此doHeapRegion()方法只是在举行对象的第一个HeapRegion才会处理)
   HRRSCleanupTask* _hrrs_cleanup_task;
   double _claimed_region_time;
   double _max_region_time;
-
+// G1ParNoteEndTask的work()方法中构造G1NoteEndOfConcMarkClosure,搜索G1NoteEndOfConcMarkClosure g1_note_end(
 public:
   G1NoteEndOfConcMarkClosure(G1CollectedHeap* g1,
                              FreeRegionList* local_cleanup_list,
@@ -1862,8 +1865,13 @@ public:
   const HeapRegionSetCount& old_regions_removed() { return _old_regions_removed; }
   const HeapRegionSetCount& humongous_regions_removed() { return _humongous_regions_removed; }
 
+  /**
+   * G1NoteEndOfConcMarkClosure的doHeapRegion方法
+   * @param hr
+   * @return
+   */
   bool doHeapRegion(HeapRegion *hr) {
-    if (hr->continuesHumongous()) {
+    if (hr->continuesHumongous()) { // 这是一个举行对象所占用的多个连续Region的某个region，不考虑
       return false;
     }
     // We use a claim value of zero here because all regions
@@ -1874,20 +1882,27 @@ public:
     hr->note_end_of_marking();
     _max_live_bytes += hr->max_live_bytes();
 
-    // 使用量等于垃圾量，说明整个Region都没有有效数据
+    // 使用量等于垃圾量，说明整个Region都没有有效数据，因此可以以region为单位进行释放操作
     if (hr->used() > 0 && hr->max_live_bytes() == 0 && !hr->is_young()) {
-      _freed_bytes += hr->used();
+      // 这个HeapRegion中有已经使用的对象，但是所有对象都是垃圾对象，并且这个region不是young(可能是old，可能是starts_humongous)
+      _freed_bytes += hr->used();// 将已经使用的字节数全部一次性释放
       hr->set_containing_set(NULL);
-      if (hr->isHumongous()) {
+      if (hr->isHumongous()) { // 是否是巨型对象区域的第一个region(前面已经判断，如果是巨型对象的非首个Region会直接返回，因此只有巨型对象的第一个区域会被处理)
         assert(hr->startsHumongous(), "we should only see starts humongous");
         _humongous_regions_removed.increment(1u, hr->capacity());
         _g1->free_humongous_region(hr, _local_cleanup_list, true);
       } else {
         _old_regions_removed.increment(1u, hr->capacity());
-        _g1->free_region(hr, _local_cleanup_list, true);
+        _g1->free_region(hr, _local_cleanup_list, true); // 释放这个区域
       }
     } else {
-      hr->rem_set()->do_cleanup_work(_hrrs_cleanup_task);
+        //
+        /**
+         * 如果这个Region 不能直接全部释放，那么调用这个region的RSet中的do_cleanup_work进行清理
+         * HRRSCleanupTask是SparsePRTCleanupTask的子类
+         * 其实是将当前的SparsePRT添加到_hrrs_cleanup_task中
+         */
+      hr->rem_set()->do_cleanup_work(_hrrs_cleanup_task); // 进行清理，对于g1gc，调用HeapRegionRemSet::do_cleanup_work
     }
 
     double region_time = (os::elapsedTime() - start);
@@ -1913,6 +1928,9 @@ protected:
   size_t _freed_bytes;
   FreeRegionList* _cleanup_list;
 
+  /**
+   * 并发标记结束以后被构造(在方法 ConcurrentMark::cleanup中调用)，搜索 G1ParNoteEndTask g1_par_note_end_task(g1h, &_cleanup_list);
+   */
 public:
   G1ParNoteEndTask(G1CollectedHeap* g1h,
                    FreeRegionList* cleanup_list) :
@@ -1922,7 +1940,8 @@ public:
   void work(uint worker_id) {
     double start = os::elapsedTime();
     FreeRegionList local_cleanup_list("Local Cleanup List");
-    HRRSCleanupTask hrrs_cleanup_task;
+    HRRSCleanupTask hrrs_cleanup_task; // 构造一个新的HRRSCleanupTask对象,  HRRSCleanupTask是SparsePRTCleanupTask的子类
+    // 构造G1NoteEndOfConcMarkClosure对象，进行一些清理工作
     G1NoteEndOfConcMarkClosure g1_note_end(_g1h, &local_cleanup_list,
                                            &hrrs_cleanup_task);
     if (G1CollectedHeap::use_parallel_gc_threads()) {
@@ -1930,10 +1949,11 @@ public:
                                             _g1h->workers()->active_workers(),
                                             HeapRegion::NoteEndClaimValue);
     } else {
-      _g1h->heap_region_iterate(&g1_note_end);
+      _g1h->heap_region_iterate(&g1_note_end); // 对每个HeapRegion，迭代调用G1NoteEndOfConcMarkClosure::doHeapRegion
     }
     assert(g1_note_end.complete(), "Shouldn't have yielded!");
 
+    // 在G1NoteEndOfConcMarkClosure::doHeapRegion中，清理了那些可以直接清理掉的region，在这里，根据这些清理的情况，更新G1CollectedHeap的对应list信息
     // Now update the lists
     _g1h->remove_from_old_sets(g1_note_end.old_regions_removed(), g1_note_end.humongous_regions_removed());
     {
@@ -1991,6 +2011,9 @@ public:
 
 };
 
+/**
+ * 执行并发清理
+ */
 void ConcurrentMark::cleanup() {
   // world is stopped at this checkpoint
   assert(SafepointSynchronize::is_at_safepoint(),
@@ -2091,6 +2114,7 @@ void ConcurrentMark::cleanup() {
   g1h->reset_gc_time_stamp();
 
   // Note end of marking in all heap regions.
+  // 构造G1ParNoteEndTask
   G1ParNoteEndTask g1_par_note_end_task(g1h, &_cleanup_list);
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     g1h->set_par_threads((int)n_workers);
@@ -2113,7 +2137,7 @@ void ConcurrentMark::cleanup() {
 
   // call below, since it affects the metric by which we sort the heap
   // regions.
-  if (G1ScrubRemSets) {
+  if (G1ScrubRemSets) { // 如果用户设置了G1ScrubRemSets，即清理阶段结束以后对RSet进行清理
     double rs_scrub_start = os::elapsedTime();
     G1ParScrubRemSetTask g1_par_scrub_rs_task(g1h, &_region_bm, &_card_bm);
     if (G1CollectedHeap::use_parallel_gc_threads()) {

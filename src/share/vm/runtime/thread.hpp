@@ -953,14 +953,19 @@ class JavaThread: public Thread {
 
 #if INCLUDE_ALL_GCS
   // Support for G1 barriers
-
+  /**
+   * 线程本地的SATB标记队列。需要与线程本地的脏卡片队列相区别
+   */
   ObjPtrQueue _satb_mark_queue;          // Thread-local log for SATB barrier.
   // Set of all such queues.
-  static SATBMarkQueueSet _satb_mark_queue_set;
+  static SATBMarkQueueSet _satb_mark_queue_set; // 全局静态的SATB标记队列集合
 
+  /**
+   * 线程本地的脏卡片队列。需要与线程本地的SATB标记队列相区别
+   */
   DirtyCardQueue _dirty_card_queue;      // Thread-local log for dirty cards.
   // Set of all such queues.
-  static DirtyCardQueueSet _dirty_card_queue_set;
+  static DirtyCardQueueSet _dirty_card_queue_set; // 全局静态的脏卡片队列集合
 
   void flush_barrier_queues();
 #endif // INCLUDE_ALL_GCS
@@ -1399,14 +1404,20 @@ class JavaThread: public Thread {
   // JNI critical regions. These can nest.
   bool in_critical()    { return _jni_active_critical > 0; }
   bool in_last_critical()  { return _jni_active_critical == 1; }
-  void enter_critical() { assert(Thread::current() == this ||
+  /**
+   * 必须要求当前执行这个方法的线程就是自己,这时候不要求处于安全点，或者，
+   * 尽管当前线程不是自己，但是当前线程是虚拟机线程(JVM内部线程，比如GC等，即虚拟机线程可以让其它线程进入关键区)并且正处于安全点的同步状态
+   * 所以，VM 线程要求其他线程进入关键区，必须要求整个HotSpot已经处于安全点的同步状态
+   */
+
+  void enter_critical() { assert(Thread::current() == this || // 如果是线程自己进入关键区，或者虽然不是自己，但是当前线程是vm线程，同时HotSpot VM处于正在进入安全区(还未完全进入)的状态，那么就可以进入关键区
                                  Thread::current()->is_VM_thread() && SafepointSynchronize::is_synchronizing(),
                                  "this must be current thread or synchronizing");
                           _jni_active_critical++; }
   void exit_critical()  { assert(Thread::current() == this,
-                                 "this must be current thread");
+                                 "this must be current thread"); // 离开关键区必须是线程自己进行，所以，如果是JVM线程让其它线程进入的关键区，但是调用exit_critical离开关键区吧必须线程自己进行
                           _jni_active_critical--;
-                          assert(_jni_active_critical >= 0,
+                          assert(_jni_active_critical >= 0, // 离开关键区统计有问题？
                                  "JNI critical nesting problem?"); }
 
   // Checked JNI, is the programmer required to check for exceptions, specify which function name
@@ -1667,12 +1678,20 @@ public:
 
 #if INCLUDE_ALL_GCS
   // SATB marking queue support
+  /**
+   * 用来存放JavaThread线程本地的SATB 标记队列
+   * 查看 G1SATBCardTableModRefBS::enqueue方法关于写屏障中向SATB本地队列插入的操作
+   */
   ObjPtrQueue& satb_mark_queue() { return _satb_mark_queue; }
   static SATBMarkQueueSet& satb_mark_queue_set() {
     return _satb_mark_queue_set;
   }
 
   // Dirty card queue support
+  /**
+   * 用来存放JavaThread线程本地的转移专用记忆集合DCQ
+   * 查看方法 G1SATBCardTableLoggingModRefBS::write_ref_field_work ,写屏障向线程本地的DCQ中插入元素
+   */
   DirtyCardQueue& dirty_card_queue() { return _dirty_card_queue; }
   static DirtyCardQueueSet& dirty_card_queue_set() {
     return _dirty_card_queue_set;

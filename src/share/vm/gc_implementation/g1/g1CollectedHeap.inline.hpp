@@ -34,28 +34,49 @@
 #include "gc_implementation/g1/heapRegionSet.inline.hpp"
 #include "runtime/orderAccess.inline.hpp"
 #include "utilities/taskqueue.hpp"
-
+/**
+ * 根据对应的InCSetState，获取对应的PLABStats对应
+ * 在 G1CollectedHeap::alloc_buffer_stats中被调用
+ * @param dest
+ * @return
+ */
 PLABStats* G1CollectedHeap::alloc_buffer_stats(InCSetState dest) {
   switch (dest.value()) {
     case InCSetState::Young:
-      return &_survivor_plab_stats;
+      return &_survivor_plab_stats; // 返回Young的PLABStats对象,搜索 G1CollectedHeap::G1CollectedHeap构造方法，查看_survivor_plab_stats的构造
     case InCSetState::Old:
-      return &_old_plab_stats;
+      return &_old_plab_stats; // 返回Old的PLABStats对象,搜索 G1CollectedHeap::G1CollectedHeap构造方法，查看_survivor_plab_stats的构造
     default:
       ShouldNotReachHere();
       return NULL; // Keep some compilers happy
   }
 }
 
+/**
+ * 搜索 G1ParGCAllocator::allocate_direct_or_new_plab 查看调用者
+ * 根据当前的dest状态，分配应该创建的PLAB的大小
+ * 查看G1CollectedHeap::G1CollectedHeap，可以看到分别对于young和old的gclab_word_size
+ */
 size_t G1CollectedHeap::desired_plab_sz(InCSetState dest) {
+    /**
+     * 根据目标区域的状态InCSetState, 获取对应区域的PLATStats对象，然后获取这个区域的plab的大小，以字为单位
+     */
   size_t gclab_word_size = alloc_buffer_stats(dest)->desired_plab_sz();
   // Prevent humongous PLAB sizes for two reasons:
   // * PLABs are allocated using a similar paths as oops, but should
   //   never be in a humongous region
   // * Allowing humongous PLABs needlessly churns the region free lists
+  // gclab_word_size始终不应该大于大对象的word_size
   return MIN2(_humongous_object_threshold_in_words, gclab_word_size);
 }
 
+/**
+ * 根据对象的目标状态，选择在那一块儿区域进行对象分配，然后直接在对应内存中进行对象分配(而不是通过plab分配)
+ * @param dest
+ * @param word_size
+ * @param context
+ * @return
+ */
 HeapWord* G1CollectedHeap::par_allocate_during_gc(InCSetState dest,
                                                   size_t word_size,
                                                   AllocationContext_t context) {
@@ -130,22 +151,43 @@ inline bool G1CollectedHeap::obj_in_cs(oop obj) {
   return r != NULL && r->in_collection_set();
 }
 
+/**
+ * 这个方法不会负责大对象的分配，大对象的分配由方法attempt_allocation_humongous()负责
+ *
+ * 注意将该方法与 G1AllocRegion::attempt_allocation()区分，两个方法同名，但是处于不同的层次
+ * 从G1CollectedHeap::mem_allocate()可以看到，方法G1CollectedHeap::attempt_allocation()的是TLAB分配失败后才会尝试调用的
+ * @param word_size
+ * @param gc_count_before_ret
+ * @param gclocker_retry_count_ret
+ * @return
+ */
 inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
                                                      uint* gc_count_before_ret,
                                                      uint* gclocker_retry_count_ret) {
+    // 不可以处于安全点，在Heap_lock上不可以枷锁
   assert_heap_not_locked_and_not_at_safepoint();
+  // 大对象不由这个方法负责
   assert(!isHumongous(word_size), "attempt_allocation() should not "
          "be called for humongous allocation requests");  // 大对象不应该通过attempt_allocation来进行分配
 
+  // 进行一次非TLAB的内存分配
   AllocationContext_t context = AllocationContext::current();
-  HeapWord* result = _allocator->mutator_alloc_region(context)->attempt_allocation(word_size,
-                                                                                   false /* bot_updates */);
-  if (result == NULL) {
+  // 这里的_allocator实现是G1DefaultAllocator，因此多态地调用了G1DefaultAllocator->mutator_alloc_region()
+  // mutator_alloc_region是专门用来给用户线程分配内存的方法，即在eden去分配内存的方法
+  // 在GC过程中，还会在其他区域比如survivor区域分配，也会在old区域分配，分别使用的方式是survivor_gc_alloc_region(), old_gc_alloc_region()
+  HeapWord* result = _allocator
+          ->mutator_alloc_region(context) // 返回MutatorAllocRegion对象
+                  // 调用MutatorAllocRegion::attempt_allocation(),实际上是调用父类方法G1AllocRegion::attempt_allocation()，
+                  // 由于是young 区，因此bot_update是false
+          ->attempt_allocation(word_size, false /* bot_updates */);
+  if (result == NULL) { //  尝试分配但是失败，因此调用G1CollectedHeap::attempt_allocation_slow()进行慢分配
+    // 这里会通过上锁的方式调用G1CollectedHeap::attempt_allocation_slow()进行分配，如果分配失败，方法中会直接进行gc
     result = attempt_allocation_slow(word_size, // 尝试进行一次full gc然后再接着进行分配
                                      context,
                                      gc_count_before_ret,
                                      gclocker_retry_count_ret);
   }
+  // 分配结束。无论成功与否，无论上锁与否，执行到这里，Heap_lock必须已经释放了
   assert_heap_not_locked();
   if (result != NULL) {
     dirty_young_block(result, word_size);
@@ -153,13 +195,24 @@ inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
   return result;
 }
 
+/**
+ * 调用者 G1CollectedHeap::par_allocate_during_gc
+ * 是在尝试了PLAB或者TLAB以后直接在堆中进行分配
+ * @param word_size
+ * @param context
+ * @return
+ */
 inline HeapWord* G1CollectedHeap::survivor_attempt_allocation(size_t word_size,
                                                               AllocationContext_t context) {
   assert(!isHumongous(word_size),
          "we should not be seeing humongous-size allocations in this path");
 
-  HeapWord* result = _allocator->survivor_gc_alloc_region(context)->attempt_allocation(word_size,
-                                                                                       false /* bot_updates */);
+  /**
+   *
+   */
+  HeapWord* result = _allocator
+          ->survivor_gc_alloc_region(context) // 返回对应的SurvivorGCAllocRegion对象,是G1AllocRegion的子对象
+          ->attempt_allocation(word_size,false /* bot_updates */); // 搜索 G1AllocRegion::attempt_allocation 查看具体实现
   if (result == NULL) {
     MutexLockerEx x(FreeList_lock, Mutex::_no_safepoint_check_flag);
     result = _allocator->survivor_gc_alloc_region(context)->attempt_allocation_locked(word_size,
@@ -171,11 +224,20 @@ inline HeapWord* G1CollectedHeap::survivor_attempt_allocation(size_t word_size,
   return result;
 }
 
+/**
+ * 调用者 G1CollectedHeap::par_allocate_during_gc
+ * @param word_size
+ * @param context
+ * @return
+ */
 inline HeapWord* G1CollectedHeap::old_attempt_allocation(size_t word_size,
                                                          AllocationContext_t context) {
   assert(!isHumongous(word_size),
          "we should not be seeing humongous-size allocations in this path");
-
+  /**
+   * 返回的是OldGCAllocRegion对象，而OldGCAllocRegion类是G1AllocRegion 的子类，
+   *    因此这里实际上调用的是inline HeapWord* G1AllocRegion::attempt_allocation方法
+   */
   HeapWord* result = _allocator->old_gc_alloc_region(context)->attempt_allocation(word_size,
                                                                                   true /* bot_updates */);
   if (result == NULL) {

@@ -519,8 +519,13 @@ void Klass::klass_oop_store(volatile oop* p, oop v) {
   klass_update_barrier_set(v);
 }
 
+/**
+ * 支持klass对gc的支持，对于g1gc，会传入一个G1ParCopyClosure
+ * 实现 搜索 void Klass::oops_do(OopClosure* cl)
+ * @param cl
+ */
 void Klass::oops_do(OopClosure* cl) {
-  cl->do_oop(&_java_mirror);
+  cl->do_oop(&_java_mirror); // 调用对应的klass的mirror的Class对象，在这个对象上apply对应的G1ParCopyClosure
 }
 
 void Klass::remove_unshareable_info() {

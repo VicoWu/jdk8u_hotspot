@@ -165,7 +165,6 @@ void assert_lock_strong(const Monitor * lock) {
   fatal(err_msg("must own lock %s", lock->name()));
 }
 #endif
-
 #define def(var, type, pri, vm_block) {                           \
   var = new type(Mutex::pri, #var, vm_block);                     \
   assert(_num_mutex < MAX_NUM_MUTEX,                              \

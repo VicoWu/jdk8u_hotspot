@@ -41,7 +41,7 @@ class ar_ext_msg;
 // and a lock will need to be taken when the active region needs to be
 // replaced.
 
-class G1AllocRegion VALUE_OBJ_CLASS_SPEC {
+class G1AllocRegion VALUE_OBJ_CLASS_SPEC { // 子类包括了MutatorAllocRegion, SurvivorGCAllocRegion， OldGCAllocRegion
   friend class ar_ext_msg;
 
 private:
@@ -75,6 +75,11 @@ private:
   size_t _used_bytes_before;
 
   // When true, indicates that allocate calls should do BOT updates.
+  /**
+   * 从几个G1AllocRegion的实现可以看到，只有OldGCAllocRegion的_bot_updates是true，
+   * 而SurvivorGCAllocRegion 和 MutatorGCAllocRegion
+   * 的_bot_updates都是false
+   */
   const bool _bot_updates;
 
   // Useful for debugging and tracing.
@@ -109,7 +114,7 @@ private:
                                       bool bot_updates);
 
   // Retire the active allocating region. If fill_up is true then make
-  // sure that the region is full before we retire it so that noone
+  // sure that the region is full before we retire it so that no one
   // else can allocate out of it.
   void retire(bool fill_up);
 
@@ -191,16 +196,25 @@ public:
   void trace(const char* str, size_t word_size = 0, HeapWord* result = NULL) { }
 #endif // G1_ALLOC_REGION_TRACING
 };
-
+/**
+ * 下面的MutatorAllocRegion， SurvivorGCAllocRegion，OldGCAllocRegion都是G1AlloRegion的子类，他们的生命周期并不代表
+ * 一次Region的分配，而是代表多次region的分配，通过内部变量_alloc_region来作为当前active的eden,survivor和old region。
+ * HeapRegion类的一个instance才代表一个Region
+ * G1Allocator对象维护了各个G1AllocRegion的实现类
+ * MutatorAllocRegion, SurvivorGCAllocRegion， OldGCAllocRegion都是 G1AllocRegion的子类
+ */
 class MutatorAllocRegion : public G1AllocRegion {
 protected:
-  virtual HeapRegion* allocate_new_region(size_t word_size, bool force);
-  virtual void retire_region(HeapRegion* alloc_region, size_t allocated_bytes);
+  virtual HeapRegion* allocate_new_region(size_t word_size, bool force); // 具体实现，搜索 MutatorAllocRegion::allocate_new_region
+  virtual void retire_region(HeapRegion* alloc_region, size_t allocated_bytes);// 具体实现，搜索 MutatorAllocRegion::retire_region
 public:
   MutatorAllocRegion()
     : G1AllocRegion("Mutator Alloc Region", false /* bot_updates */) { }
 };
 
+/**
+ * MutatorAllocRegion, SurvivorGCAllocRegion， OldGCAllocRegion都是 G1AllocRegion的子类
+ */
 class SurvivorGCAllocRegion : public G1AllocRegion {
 protected:
   virtual HeapRegion* allocate_new_region(size_t word_size, bool force);
@@ -210,6 +224,9 @@ public:
   : G1AllocRegion("Survivor GC Alloc Region", false /* bot_updates */) { }
 };
 
+/**
+ * MutatorAllocRegion, SurvivorGCAllocRegion， OldGCAllocRegion都是 G1AllocRegion的子类
+ */
 class OldGCAllocRegion : public G1AllocRegion {
 protected:
   virtual HeapRegion* allocate_new_region(size_t word_size, bool force);

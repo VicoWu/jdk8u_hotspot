@@ -37,6 +37,11 @@ class G1SATBCardTableLoggingModRefBS;
 // This barrier is specialized to use a logging barrier to support
 // snapshot-at-the-beginning marking.
 
+/**
+ * Card Table Modification Reference Barrier Set ， 卡表修改引用栅栏集合
+ * 主要用写屏障来支持SATB的写操作。
+ * 需要跟子类G1SATBCardTableLoggingModRefBS相区别，子类G1SATBCardTableLoggingModRefBS主要负责RSet的写屏障
+ */
 class G1SATBCardTableModRefBS: public CardTableModRefBSForCTRS {
 protected:
   enum G1CardValues {
@@ -107,12 +112,17 @@ public:
     return (val & (clean_card_mask_val() | claimed_card_val())) == claimed_card_val();
   }
 
+  /**
+   * 查看clean_card_val和claimed_card_val的实现可以看到，enum CardValues使用二进制的某一个位是否为1来标记当前的卡片的状态是否为该为的对应状态
+   * 这是因为一个卡片可能同时处于CardValues中的一个或者多个状态
+   * @param card_index
+   */
   void set_card_claimed(size_t card_index) {
       jbyte val = _byte_map[card_index];
-      if (val == clean_card_val()) {
-        val = (jbyte)claimed_card_val();
+      if (val == clean_card_val()) { // 如果卡片是clean的状态，则直接设置为已经处理的状态，clean 的值为-1
+        val = (jbyte)claimed_card_val(); // claimed的状态值为2
       } else {
-        val |= (jbyte)claimed_card_val();
+        val |= (jbyte)claimed_card_val(); // 将claim状态为设置为1，同时保留其他状态位的值
       }
       _byte_map[card_index] = val;
   }

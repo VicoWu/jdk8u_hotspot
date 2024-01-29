@@ -56,8 +56,11 @@ class VM_CMS_Operation: public VM_Operation {
 
   bool lost_race() const;
 
+  /**
+  * 获取java_lang_ref_Reference类的静态对象锁，该锁用于处理软引用
+  */
   // java.lang.ref.Reference support
-  void acquire_pending_list_lock();
+  void acquire_pending_list_lock(); //
   void release_and_notify_pending_list_lock();
 
  public:

@@ -652,6 +652,11 @@ public:
   // Check the current value of the young list RSet lengths and
   // compare it against the last prediction. If the current value is
   // higher, recalculate the young list target length prediction.
+  /**
+   * 检查年轻列表 RSet 长度的当前值并将其与上次预测进行比较。
+   * 如果当前值较高，则重新计算年轻列表目标长度预测。
+   * 搜索 G1CollectorPolicy::revise_young_list_target_length_if_necessary 查看具体实现
+   */
   void revise_young_list_target_length_if_necessary();
 
   // This should be called after the heap is resized.
@@ -785,10 +790,12 @@ public:
 #endif // !PRODUCT
 
   bool initiate_conc_mark_if_possible()       { return _initiate_conc_mark_if_possible;  }
-  void set_initiate_conc_mark_if_possible()   { _initiate_conc_mark_if_possible = true;  }
+  void set_initiate_conc_mark_if_possible()   { _initiate_conc_mark_if_possible = true;  } // 当分配了大对象或其他情况，会设置该值为true
   void clear_initiate_conc_mark_if_possible() { _initiate_conc_mark_if_possible = false; }
 
   bool during_initial_mark_pause()      { return _during_initial_mark_pause;  }
+  // 在evacuation pause中，如果_initiate_conc_mark_if_possible是true，那么就借道进行一次初始标记暂停，
+  // 同时设置_during_initial_mark_pause 为 true
   void set_during_initial_mark_pause()  { _during_initial_mark_pause = true;  }
   void clear_during_initial_mark_pause(){ _during_initial_mark_pause = false; }
 
@@ -796,6 +803,10 @@ public:
   // new cycle, as long as we are not already in one. It's best if it
   // is called during a safepoint when the test whether a cycle is in
   // progress or not is stable.
+  /**
+   * 如果我们不处于一个并发标记的cycle中，那么设置_initiate_conc_mark_if_possible为true，返回true
+   * 否则，如果当前已经处于一个并发标记cycle中，返回false
+   */
   bool force_initial_mark_if_outside_cycle(GCCause::Cause gc_cause);
 
   // This is called at the very beginning of an evacuation pause (it
@@ -804,7 +815,12 @@ public:
   // marking thread has completed its work during the previous cycle,
   // it will set during_initial_mark_pause() to so that the pause does
   // the initial-mark work and start a marking cycle.
-  void decide_on_conc_mark_initiation(); // 这个方法在转移暂停开始的时候被调用，如果上一轮的并发标记已经结束，那么_during_initial_mark_pause就会被设置为True
+  /**
+   * 这个方法在转移暂停开始的时候被调用，如果上一轮的并发标记已经结束，
+   * 并且_initiate_conc_mark_if_possible是true，
+   * 那么_during_initial_mark_pause就会被设置为True
+   */
+  void decide_on_conc_mark_initiation();
 
   // If an expansion would be appropriate, because recent GC overhead had
   // exceeded the desired limit, return an amount to expand by.
@@ -829,6 +845,10 @@ public:
 
   bool is_young_list_full();
 
+  /**
+   * 查看 G1CollectorPolicy::can_expand_young_list
+   * @return
+   */
   bool can_expand_young_list();
 
   uint young_list_max_length() {

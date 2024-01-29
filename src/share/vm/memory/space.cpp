@@ -86,6 +86,9 @@ void DirtyCardToOopClosure::walk_mem_region(MemRegion mr,
   // version of oop_iterate() for all but the extremal objects
   // (for which we need to call the MemRegion version of
   // oop_iterate()) To be done post-beta XXX
+  /**
+   * 每次迭代都将 bottom 增加到下一个块的起始地址，块的大小由 _sp->block_size(bottom) 决定。
+   */
   for (; bottom < top; bottom += _sp->block_size(bottom)) {
     // As in the case of contiguous space above, we'd like to
     // just use the value returned by oop_iterate to increment the
@@ -95,7 +98,13 @@ void DirtyCardToOopClosure::walk_mem_region(MemRegion mr,
     // block alignment or minimum block size restrictions. XXX
     if (_sp->block_is_obj(bottom) &&
         !_sp->obj_allocated_since_save_marks(oop(bottom))) {
-      oop(bottom)->oop_iterate(_cl, mr);
+        /**
+         * 这里的_cl 是 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
+         * 我们可以搜索 G1ParPushHeapRSClosure::do_oop_nv 查看这个Closure是怎么处理一个oop的
+         * 其实就是看看这个oop指向的对象的地址是否在回收集合或者大对象集合中，如果是，就把这个引用推送到 _par_scan_state中
+         */
+      oop(bottom) // 获取bottom对应的对象指针
+        ->oop_iterate(_cl, mr); //
     }
   }
 }
@@ -167,7 +176,7 @@ void DirtyCardToOopClosure::do_MemRegion(MemRegion mr) {
          "overlap!");
 
   // Walk the region if it is not empty; otherwise there is nothing to do.
-  if (!extended_mr.is_empty()) {
+  if (!extended_mr.is_empty()) { // 对这个扩展的MemRegion进行遍历，遍历的闭包是G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
     walk_mem_region(extended_mr, bottom_obj, top);
   }
 

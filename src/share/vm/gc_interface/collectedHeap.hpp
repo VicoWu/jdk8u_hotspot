@@ -135,7 +135,10 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   virtual void resize_all_tlabs();
 
   // Allocate from the current thread's TLAB, with broken-out slow path.
+  // 尝试从当前线程的TLAB分配对象，如果分配失败，可能使用slow path进行分配
   inline static HeapWord* allocate_from_tlab(KlassHandle klass, Thread* thread, size_t size);
+
+  // 使用tlab slow path分配内存
   static HeapWord* allocate_from_tlab_slow(KlassHandle klass, Thread* thread, size_t size);
 
   // Allocate an uninitialized block of the given size, or returns NULL if
@@ -327,6 +330,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // The obj and array allocate methods are covers for these methods.
   // mem_allocate() should never be
   // called to allocate TLABs, only individual objects.
+  // 原始的内存分配方法，这个方法不可以用来分配TLAB，只用来分配单独的对象。
+  // 这是一个virtual方法，因此需要参考具体的实现类比如G1CollectedHeap方法
   virtual HeapWord* mem_allocate(size_t size,
                                  bool* gc_overhead_limit_was_exceeded) = 0;
 
@@ -488,7 +493,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Increment total number of GC collections (started)
   // Should be protected but used by PSMarkSweep - cleanup for 1.4.2
-  void increment_total_collections(bool full = false) {
+  void increment_total_collections(bool full = false) { // 在G1CollectedHeap::do_collection 和 G1CollectedHeap::do_collection_pause_at_safepoint中被调用
     _total_collections++;
     if (full) {
       increment_total_full_collections();

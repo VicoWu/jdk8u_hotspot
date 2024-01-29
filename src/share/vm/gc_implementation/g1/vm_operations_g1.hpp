@@ -52,6 +52,9 @@ public:
   AllocationContext_t  allocation_context() { return _allocation_context; }
 };
 
+/**
+ * VM_G1CollectFull是需要STW的
+ */
 class VM_G1CollectFull: public VM_GC_Operation {
 public:
   VM_G1CollectFull(uint gc_count_before,
@@ -65,6 +68,9 @@ public:
   }
 };
 
+/**
+ * full gc的操作类,只要带有ForAllocation，说明都是先尝试进行gc，然后再分配对象
+ */
 class VM_G1CollectForAllocation: public VM_G1OperationWithAllocRequest {
 public:
   VM_G1CollectForAllocation(uint         gc_count_before,
@@ -78,6 +84,10 @@ public:
 
 class VM_G1IncCollectionPause: public VM_G1OperationWithAllocRequest {
 private:
+    /**
+     * 构造的时候决定是否需要进行_should_initiate_conc_mark.搜索VM_G1IncCollectionPause op，参考collect()方法
+     *
+     */
   bool         _should_initiate_conc_mark;
   bool         _should_retry_gc;
   double       _target_pause_time_ms;
@@ -89,9 +99,9 @@ public:
                           double         target_pause_time_ms,
                           GCCause::Cause gc_cause);
   virtual VMOp_Type type() const { return VMOp_G1IncCollectionPause; }
-  virtual bool doit_prologue();
-  virtual void doit();
-  virtual void doit_epilogue();
+  virtual bool doit_prologue(); // 都是继承自VM_Operation的
+  virtual void doit();// 都是继承自VM_Operation的
+  virtual void doit_epilogue();// 都是继承自VM_Operation的
   virtual const char* name() const {
     return "garbage-first incremental collection pause";
   }

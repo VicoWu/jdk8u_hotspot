@@ -38,6 +38,11 @@ G1SATBCardTableModRefBS::G1SATBCardTableModRefBS(MemRegion whole_heap,
   _kind = G1SATBCT;
 }
 
+/**
+ * 通过写屏障拦截用户的写操作，然后向SATB队列中插入元素
+ * 对应的，RSet的G1SATBCardTableLoggingModRefBS::write_ref_field_work 则是通过写屏障拦截用户的写操作，然后修改对应的RSet
+ * @param pre_val
+ */
 void G1SATBCardTableModRefBS::enqueue(oop pre_val) {
   // Nulls should have been already filtered.
   assert(pre_val->is_oop(true), "Error");
@@ -46,7 +51,10 @@ void G1SATBCardTableModRefBS::enqueue(oop pre_val) {
   Thread* thr = Thread::current();
   if (thr->is_Java_thread()) {
     JavaThread* jt = (JavaThread*)thr;
-    jt->satb_mark_queue().enqueue(pre_val);
+    /**
+     * 搜索 ObjPtrQueue& satb_mark_queue()
+     */
+    jt->satb_mark_queue().enqueue(pre_val); // 每个Java线程都有一个自己独立的satb_mark_queue，向这个队列中插入satb的一条记录
   } else {
     MutexLockerEx x(Shared_SATB_Q_lock, Mutex::_no_safepoint_check_flag);
     JavaThread::satb_mark_queue_set().shared_satb_queue()->enqueue(pre_val);
@@ -173,25 +181,37 @@ void G1SATBCardTableLoggingModRefBS::initialize(G1RegionToSpaceMapper* mapper) {
   }
 }
 
+/**
+ * 这个方法的调用发生在已经完成了对对象的赋值操作处理以后
+ * 用来写入对应的卡片信息到DCQ中
+ * @param field
+ * @param new_val
+ * @param release
+ */
 void
 G1SATBCardTableLoggingModRefBS::write_ref_field_work(void* field,
                                                      oop new_val,
                                                      bool release) {
-  volatile jbyte* byte = byte_for(field);
-  if (*byte == g1_young_gen) {
+  volatile jbyte* byte = byte_for(field); // 获取源对象地址，比如a.field = b ， 那么 byte就是a的地址
+  if (*byte == g1_young_gen) { // 对于a.field = b ,假如a在young区，那么不用处理
     return;
   }
-  OrderAccess::storeload();
-  if (*byte != dirty_card) {
+  OrderAccess::storeload(); // store-load写屏障，保证数据可见性
+  if (*byte != dirty_card) { // 检查该字节是否已经标记为 dirty_card，如果不是，则将其标记为 dirty_card。
     *byte = dirty_card;
     Thread* thr = Thread::current();
-    if (thr->is_Java_thread()) {
+    /**
+     * 根据当前线程类型，将该字节指针放入相应的脏卡队列中：
+        如果当前线程是 Java 线程，则将该字节指针放入该线程的脏卡队列中。
+        如果当前线程不是 Java 线程，则将该字节指针放入共享脏卡队列中。
+     */
+    if (thr->is_Java_thread()) { // 如果是java线程，那么就放到线程本地的DCQ中
       JavaThread* jt = (JavaThread*)thr;
-      jt->dirty_card_queue().enqueue(byte);
-    } else {
+      jt->dirty_card_queue().enqueue(byte); // 将源对象地址存入到这个Java线程本地的转移专用记忆集合日志中，后续会有Refine线程来进行处理
+    } else { // 不是Java线程，就使用公共的_shared_dirty_card_queue中
       MutexLockerEx x(Shared_DirtyCardQ_lock,
                       Mutex::_no_safepoint_check_flag);
-      _dcqs.shared_dirty_card_queue()->enqueue(byte);
+      _dcqs.shared_dirty_card_queue()->enqueue(byte); // 如果不是Java线程，那么就放到DCQS的对应的_shared_dirty_card_queue()中
     }
   }
 }

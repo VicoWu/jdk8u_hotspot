@@ -40,6 +40,9 @@
 
 class MetaWord;
 
+/*
+ * MemRegion一般用来表达一个Region'内部的某一部分子区域，提供了一些简单的交集、并集的运算功能
+ */
 class MemRegion VALUE_OBJ_CLASS_SPEC {
   friend class VMStructs;
 private:

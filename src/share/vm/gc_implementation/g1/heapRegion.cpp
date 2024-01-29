@@ -138,14 +138,14 @@ void HeapRegion::setup_heap_region_size(size_t initial_heap_size, size_t max_hea
   guarantee(GrainBytes == 0, "we should only set it once");
   // The cast to int is safe, given that we've bounded region_size by
   // MIN_REGION_SIZE and MAX_REGION_SIZE.
-  GrainBytes = (size_t)region_size;
+  GrainBytes = (size_t)region_size; // 设置一个region的大小
 
   guarantee(GrainWords == 0, "we should only set it once");
   GrainWords = GrainBytes >> LogHeapWordSize;
   guarantee((size_t) 1 << LogOfHRGrainWords == GrainWords, "sanity");
 
   guarantee(CardsPerRegion == 0, "we should only set it once");
-  CardsPerRegion = GrainBytes >> CardTableModRefBS::card_shift;
+  CardsPerRegion = GrainBytes >> CardTableModRefBS::card_shift; // 一个Region中的卡片数量，是用Region的大小右移9位得到，这说明一个卡片对应了512B的内存区域
 }
 
 void HeapRegion::reset_after_compaction() {

@@ -63,13 +63,17 @@ public:
   void set_par_scan_thread_state(G1ParScanThreadState* par_scan_state);
 };
 
+/**
+ * 搜索 G1ParPushHeapRSClosure::do_oop_nv 可以看到，这个类的基本职责就是查看对象引用是否指向回收集合或者大对象，
+ *  如果是，则通过 push_on_queue 记录到 G1ParScanThreadState的_ref中去
+ */
 class G1ParPushHeapRSClosure : public G1ParClosureSuper {
 public:
   G1ParPushHeapRSClosure(G1CollectedHeap* g1,
                          G1ParScanThreadState* par_scan_state):
     G1ParClosureSuper(g1, par_scan_state) { }
 
-  template <class T> void do_oop_nv(T* p);
+  template <class T> void do_oop_nv(T* p); // 具体实现 搜索 G1ParPushHeapRSClosure::do_oop_nv
   virtual void do_oop(oop* p)          { do_oop_nv(p); }
   virtual void do_oop(narrowOop* p)    { do_oop_nv(p); }
 };
@@ -88,14 +92,20 @@ public:
 };
 
 // Add back base class for metadata
+// 子类有G1ParCopyClosure
 class G1ParCopyHelper : public G1ParClosureSuper {
 protected:
-  Klass* _scanned_klass;
+  Klass* _scanned_klass; // 当前正在处理的类
   ConcurrentMark* _cm;
 
   // Mark the object if it's not already marked. This is used to mark
   // objects pointed to by roots that are guaranteed not to move
   // during the GC (i.e., non-CSet objects). It is MT-safe.
+  /**
+   * 搜搜 G1ParCopyHelper::mark_object查看具体实现，搜索 do_mark_object == G1MarkFromRoot查看调用者
+   *
+   * 如果尚未标记该对象，则对其进行标记。 这用于标记根所指向的对象，这些对象保证在 GC 期间不会移动（即非 CSet 对象）。 它是 MT 安全的。
+   */
   void mark_object(oop obj);
 
   // Mark the object if it's not already marked. This is used to mark
@@ -109,10 +119,16 @@ protected:
   template <class T> void do_klass_barrier(T* p, oop new_obj);
 };
 
+/**
+ * 搜索 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work 查看方法具体实现
+ */
 template <G1Barrier barrier, G1Mark do_mark_object>
 class G1ParCopyClosure : public G1ParCopyHelper {
+    /**
+     * 搜 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work 查看方法具体实现
+     */
 private:
-  template <class T> void do_oop_work(T* p);
+  template <class T> void do_oop_work(T* p); // 具体实现在父类方法G1ParCopyHelper中
 
 public:
   G1ParCopyClosure(G1CollectedHeap* g1, G1ParScanThreadState* par_scan_state,
@@ -122,8 +138,12 @@ public:
   }
 
   template <class T> void do_oop_nv(T* p) { do_oop_work(p); }
-  virtual void do_oop(oop* p)       { do_oop_nv(p); }
-  virtual void do_oop(narrowOop* p) { do_oop_nv(p); }
+  virtual void do_oop(oop* p)       { // 最终还是调用do_oop_work
+      do_oop_nv(p);
+  }
+  virtual void do_oop(narrowOop* p) { // 最终还是调用do_oop_work
+      do_oop_nv(p);
+  }
 
   G1CollectedHeap*      g1()  { return _g1; };
   G1ParScanThreadState* pss() { return _par_scan_state; }

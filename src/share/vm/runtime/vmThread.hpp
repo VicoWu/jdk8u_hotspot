@@ -90,6 +90,9 @@ class VMOperationQueue : public CHeapObj<mtInternal> {
 // like scavenge, garbage_collect etc.
 //
 
+/**
+ * 单个 VMThread（原始线程）生成所有其他线程，并且本身被其他线程用来卸载繁重的 vm 操作，如 scavenge、garbage_collect 等。
+ */
 class VMThread: public NamedThread {
  private:
   static ThreadPriority _current_priority;
@@ -109,6 +112,7 @@ class VMThread: public NamedThread {
   bool is_GC_thread() const                      { return true; }
 
   // The ever running loop for the VMThread
+  // 在run()方法中被调用
   void loop();
 
   // Called to stop the VM thread
@@ -116,7 +120,7 @@ class VMThread: public NamedThread {
   static bool should_terminate()                  { return _should_terminate; }
   static bool is_terminated()                     { return _terminated == true; }
 
-  // Execution of vm operation
+  // Execution of vm operation ，这是一个静态方法，_vm_queue也是静态方法
   static void execute(VM_Operation* op);
 
   // Returns the current vm operation if any.
@@ -137,7 +141,7 @@ class VMThread: public NamedThread {
   static PerfCounter* perf_accumulated_vm_operation_time()               { return _perf_accumulated_vm_operation_time; }
 
   // Entry for starting vm thread
-  virtual void run();
+  virtual void run(); // 查看vmThread.cpp看具体的方法实现
 
   // Creations/Destructions
   static void create();

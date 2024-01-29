@@ -28,7 +28,10 @@
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/g1HotCardCache.hpp"
 #include "runtime/java.hpp"
-
+/**
+ * ConcurrentG1Refine的构造方法，会负责构造 ConcurrentG1RefineThread线程池， 同时设置对应的DCQS的白绿黄红区域
+ * 在 jint G1CollectedHeap::initialize() 中构造的，在这个CocurrentG1Refine构造的时候，会构造 ConcurrentG1RefineThread线程池
+ */
 ConcurrentG1Refine::ConcurrentG1Refine(G1CollectedHeap* g1h, CardTableEntryClosure* refine_closure) :
   _threads(NULL), _n_threads(0),
   _hot_card_cache(g1h)
@@ -60,6 +63,9 @@ ConcurrentG1Refine::ConcurrentG1Refine(G1CollectedHeap* g1h, CardTableEntryClosu
   uint worker_id_offset = DirtyCardQueueSet::num_par_ids();
 
   ConcurrentG1RefineThread *next = NULL;
+  /**
+   * 开始构造ConcurrentG1RefineThread线程池
+   */
   for (uint i = _n_threads - 1; i != UINT_MAX; i--) {
     ConcurrentG1RefineThread* t = new ConcurrentG1RefineThread(this, next, refine_closure, worker_id_offset, i);
     assert(t != NULL, "Conc refine should have been created");

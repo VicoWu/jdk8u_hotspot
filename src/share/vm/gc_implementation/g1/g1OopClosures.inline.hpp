@@ -95,17 +95,37 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
   }
 }
 
+/**
+ * 这个方法是在根扫描的过程中调用的, 类G1ParPushHeapRSClosure 的构造
+ *  需要搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)
+ * @tparam T
+ * @param p
+ */
 template <class T>
 inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p);
+  T heap_oop = oopDesc::load_heap_oop(p); // 从指针 p 所指向的内存位置加载一个堆对象指针
 
-  if (!oopDesc::is_null(heap_oop)) {
+  if (!oopDesc::is_null(heap_oop)) { // 如果指针不为空，表示指针指向了一个有效的堆对象
+      /**
+       * 解码非空的堆对象指针，将其存储在变量 obj 中
+       * oopDesc::decode_heap_oop_not_null 是一个静态函数，用于将加载的堆对象指针解码为对应的堆对象。
+       */
     oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
     if (_g1->is_in_cset_or_humongous(obj)) {
+        /**
+         * Prefetch::write(obj->mark_addr(), 0);：
+            这段代码通过 obj->mark_addr() 获取对象的标记位地址，然后使用 Prefetch::write() 预取指令将标记位所在的内存页加载到处理器的高速缓存中。
+                 参数 0 表示预取的方式，通常用于写操作。预取可以在处理器空闲时提前将数据加载到高速缓存，以减少后续读取操作的延迟。
+
+         Prefetch::read(obj->mark_addr(), (HeapWordSize*2));：
+            这段代码类似地使用 Prefetch::read() 预取指令，将对象的标记位所在内存页加载到高速缓存中。
+                不同的是，参数 HeapWordSize*2 表示预取的方式为读取，且预取的范围是标记位所在的内存页的两倍大小。这样做可以预取更多的相关数据，提高访问性能。
+         */
       Prefetch::write(obj->mark_addr(), 0);
       Prefetch::read(obj->mark_addr(), (HeapWordSize*2));
 
       // Place on the references queue
+      // 将指针 p 放入引用队列中，以便后续的扫描操作
       _par_scan_state->push_on_queue(p);
     } else {
       assert(!_g1->obj_in_cs(obj), "checking");

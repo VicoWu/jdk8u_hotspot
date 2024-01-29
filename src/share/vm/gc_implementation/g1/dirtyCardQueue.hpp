@@ -78,11 +78,18 @@ public:
 };
 
 
-
+/**
+ * DirtyCardQueueSet继承了DirtyCardQueueSet
+ * DirtyCardQueue继承了PtrQueue
+ */
 class DirtyCardQueueSet: public PtrQueueSet {
   // The closure used in mut_process_buffer().
   CardTableEntryClosure* _mut_process_closure;
 
+  /**
+   * _shared_dirty_card_queue也是一个PrtQueue，但是它比较特殊，是属于DirtyCardQueueSet的特殊的一个全局的PrtQueue
+   *    只有这个变量才会设置lock变量，代表自己是一个属于DircyCardQueueSet的全局的PrtQueue，因此可能存在多线程竞争关系
+   */
   DirtyCardQueue _shared_dirty_card_queue;
 
   // Override.
@@ -127,6 +134,19 @@ public:
   // but is only partially completed before a "yield" happens, the
   // partially completed buffer (with its processed elements set to NULL)
   // is returned to the completed buffer set, and this call returns false.
+  /**
+   * 如果存在一些已完成的缓冲区DCQ，则取出这个DCQ，然后将指定的闭包应用于其所有元素，清空那些已处理的元素。
+   *   如果处理了所有元素，则返回“true”。
+   *   如果没有已完成的缓冲区，则返回 false。
+   *   如果已完成的缓冲区存在，但在“yield”发生之前仅部分完成，则部分完成的缓冲区（其已处理元素设置为 NULL）将返回到已完成的缓冲区集，并且此调用返回 false。
+   *
+   *   查看具体实现 DirtyCardQueueSet::apply_closure_to_completed_buffer
+   * @param cl
+   * @param worker_i
+   * @param stop_at
+   * @param during_pause
+   * @return
+   */
   bool apply_closure_to_completed_buffer(CardTableEntryClosure* cl,
                                          uint worker_i = 0,
                                          int stop_at = 0,

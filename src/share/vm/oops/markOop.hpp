@@ -127,6 +127,9 @@ class markOopDesc: public oopDesc {
          epoch_shift              = hash_shift
   };
 
+  /**
+   * 关于right_n_bits， 搜索 right_n_bits(n)   (nth_bit(n) - 1)
+   */
   enum { lock_mask                = right_n_bits(lock_bits),
          lock_mask_in_place       = lock_mask << lock_shift,
          biased_lock_mask         = right_n_bits(lock_bits + biased_lock_bits),
@@ -287,11 +290,11 @@ class markOopDesc: public oopDesc {
     return (ObjectMonitor*) (value() ^ monitor_value);
   }
   bool has_displaced_mark_helper() const {
-    return ((value() & unlocked_value) == 0);
+    return ((value() & unlocked_value) == 0); // unlocked_value = 1
   }
   markOop displaced_mark_helper() const {
     assert(has_displaced_mark_helper(), "check");
-    intptr_t ptr = (value() & ~monitor_value);
+    intptr_t ptr = (value() & ~monitor_value); // monitor_value = 2
     return *(markOop*)ptr;
   }
   void set_displaced_mark_helper(markOop m) const {

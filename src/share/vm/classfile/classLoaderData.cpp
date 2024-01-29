@@ -70,13 +70,24 @@
 
 ClassLoaderData * ClassLoaderData::_the_null_class_loader_data = NULL;
 
+/**
+ * 我们通过方法void ClassLoaderData::add_class(Klass* k) 可以看到，
+ *      一个ClassLoaderData通过_klass链接了自己所管理的各种klass对象，即各种不同的class
+ * @param h_class_loader
+ * @param is_anonymous
+ * @param dependencies
+ */
 ClassLoaderData::ClassLoaderData(Handle h_class_loader, bool is_anonymous, Dependencies dependencies) :
   _class_loader(h_class_loader()),
   _is_anonymous(is_anonymous),
   // An anonymous class loader data doesn't have anything to keep
   // it from being unloaded during parsing of the anonymous class.
   // The null-class-loader should always be kept alive.
-  _keep_alive(is_anonymous || h_class_loader.is_null()),
+  /**
+   * 空类加载器是一个特殊的类加载器，代表了一种无需加载的情况，通常用于系统类和基本类的加载。
+     保持空类加载器活跃（即不被回收）可以确保在解析匿名类期间，相关的匿名类加载器数据不会被意外回收。
+   */
+  _keep_alive(is_anonymous || h_class_loader.is_null()), //
   _metaspace(NULL), _unloading(false), _klasses(NULL),
   _claimed(0), _jmethod_ids(NULL), _handles(), _deallocate_list(NULL),
   _next(NULL), _dependencies(dependencies),
@@ -136,22 +147,45 @@ void ClassLoaderData::ChunkedHandleList::oops_do(OopClosure* f) {
 }
 
 bool ClassLoaderData::claim() {
-  if (_claimed == 1) {
+  if (_claimed == 1) { // 已经被占用
     return false;
   }
-
+  /**
+   * 尝试将 _claimed 的值从 0 更改为 1。如果成功，表示当前线程已成功占用该类加载器数据，并返回 true。
+   * 否则，表示在当前线程操作 _claimed 的过程中，其他线程已经将其设置为 1，当前线程无法占用该类加载器数据，因此返回 false。
+   */
   return (int) Atomic::cmpxchg(1, &_claimed, 0) == 0;
 }
 
+/**
+ * 调用位置在 G1CLDClosure(G1ParCopyClosure<G1BarrierNone, do_mark_object>* oop_closure 中。
+ *
+ *  从调用位置看到，f和klass_closure都是G1ParCopyClosure，只不过前者拦截器是G1BarrierNone，后者是G1BarrierKlass
+ * @param f 这里的_oop_closure其实就是 G1ParCopyClosure，每一个G1CLDClosure都封装了一个 G1ParCopyClosure,拦截器是G1BarrierNone
+ * @param klass_closure 这是一个G1KlassScanClosure，里面包含了一个G1ParCopyClosure，这个G1ParCopyClosure的拦截器是G1BarrierKlass
+ * @param must_claim 是否需要主张占用对应的的ClassLoaderData
+ */
 void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool must_claim) {
-  if (must_claim && !claim()) {
+  if (must_claim && !claim()) { // 并发标记阶段，must_claim = true, 但是我们发现这个CLD已经被其他线程占用，返回false
     return;
   }
-
+  /**
+   * f是G1ParCopyClosure, 对这个CLD对应的classLoader对象去apply 没有拦截的G1ParCopyClosure
+   */
   f->do_oop(&_class_loader);
+  /**
+   * 对这个CLD所依赖的所有的CLD去apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
+   */
   _dependencies.oops_do(f);
+  /**
+   * 对这个常量池数组apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
+   */
   _handles.oops_do(f);
   if (klass_closure != NULL) {
+      /**
+       * 对对这个CLD以_klass为链表头指针链接起来的所有klass挨个去apply G1KlassScanClosure
+       * 搜索 void ClassLoaderData::classes_do
+       */
     classes_do(klass_closure);
   }
 }
@@ -160,9 +194,14 @@ void ClassLoaderData::Dependencies::oops_do(OopClosure* f) {
   f->do_oop((oop*)&_list_head);
 }
 
+/**
+ * 调用者是 void ClassLoaderData::oops_do
+ * 对这个ClassLoaderData中以_klasses链接起来的所有的klass 去apply klass_closure,
+ * 即对于这个CLD的每一个klass，调用 G1KlassScanClosure的 do_klass方法（搜索g1CollectedHeap中的 void do_klass(Klass* klass) ）
+ */
 void ClassLoaderData::classes_do(KlassClosure* klass_closure) {
-  for (Klass* k = _klasses; k != NULL; k = k->next_link()) {
-    klass_closure->do_klass(k);
+  for (Klass* k = _klasses; k != NULL; k = k->next_link()) { // 对这个ClassLoaderData中以_klasses链接起来的所有的klass去apply klass_closure
+    klass_closure->do_klass(k); // 调用 G1KlassScanClosure的do_klass()方法, 可以搜索 class G1KlassScanClosure : public KlassClosure 查看对应的do_klass方法
     assert(k != k->next_link(), "no loops!");
   }
 }
@@ -302,10 +341,10 @@ void ClassLoaderDataGraph::clear_claimed_marks() {
 
 void ClassLoaderData::add_class(Klass* k) {
   MutexLockerEx ml(metaspace_lock(),  Mutex::_no_safepoint_check_flag);
-  Klass* old_value = _klasses;
-  k->set_next_link(old_value);
+  Klass* old_value = _klasses; // 临时保存kclasses
+  k->set_next_link(old_value); // 通过设置 Klass 对象的 next_link 指针，将新的 Klass 对象链接到 ClassLoaderData 实例的 Klass 对象链表的头部中
   // link the new item into the list
-  _klasses = k;
+  _klasses = k; // 将新的对象设置为链表头部
 
   if (TraceClassLoaderData && Verbose && k->class_loader_data() != NULL) {
     ResourceMark rm;
@@ -646,11 +685,17 @@ void ClassLoaderDataGraph::cld_do(CLDClosure* cl) {
   }
 }
 
+/**
+ * 方法在 G1RootProcessor::process_java_roots中被调用
+ * 根据keep_alive，判断是使用strong 还是 weak的 CLDClosure
+ * @param strong
+ * @param weak
+ */
 void ClassLoaderDataGraph::roots_cld_do(CLDClosure* strong, CLDClosure* weak) {
   for (ClassLoaderData* cld = _head;  cld != NULL; cld = cld->_next) {
-    CLDClosure* closure = cld->keep_alive() ? strong : weak;
+    CLDClosure* closure = cld->keep_alive() ? strong : weak; // 遍历当前所有的ClassLoaderData，如果是keep_alive的，那么就使用 strong，如果不是keep_alive的，就使用strong
     if (closure != NULL) {
-      closure->do_cld(cld);
+      closure->do_cld(cld); // 搜索 class G1CLDClosure : public CLDClosure,查看方法do_cld
     }
   }
 }

@@ -77,6 +77,10 @@ class G1RootProcessor : public StackObj {
                          CodeBlobClosure* blobs,
                          bool process_string_table);
 
+  /**
+   * 搜索 G1RootProcessor::process_java_roots
+   * 调用者是 G1RootProcessor::evacuate_roots
+   */
   void process_java_roots(OopClosure* scan_non_heap_roots,
                           CLDClosure* thread_stack_clds,
                           CLDClosure* scan_strong_clds,
@@ -124,6 +128,9 @@ public:
   // Apply scan_rs to all locations in the union of the remembered sets for all
   // regions in the collection set
   // (having done "set_region" to indicate the region in which the root resides),
+  /**
+   * 将 G1ParPushHeapRSClosure scan_rs 闭包应用于回收集合中的所有Region的Rset的并集中的所有位置（已完成“set_region”以指示根所在的区域），
+   */
   void scan_remembered_sets(G1ParPushHeapRSClosure* scan_rs,
                             OopClosure* scan_non_heap_weak_roots,
                             uint worker_i);

@@ -112,12 +112,12 @@ void ThreadLocalAllocBuffer::accumulate_statistics() {
 // for example, clear_before_allocation().
 void ThreadLocalAllocBuffer::make_parsable(bool retire) {
   if (end() != NULL) {
-    invariants();
-
+    invariants(); //检查当前TLAB的不变性
     if (retire) {
-      myThread()->incr_allocated_bytes(used_bytes());
+      myThread()->incr_allocated_bytes(used_bytes()); //将已分配字节累加到当前线程的已分配自己统计值中
     }
 
+    // 调用静态方法fill_with_object, 将剩余部分的数据
     CollectedHeap::fill_with_object(top(), hard_end(), retire);
 
     if (retire || ZeroTLAB) {  // "Reset" the TLAB

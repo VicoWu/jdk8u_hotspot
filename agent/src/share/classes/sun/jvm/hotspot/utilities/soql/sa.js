@@ -65,7 +65,7 @@ sa.typedb = sa.vm.typeDataBase;
 sa.codeCache = sa.vm.codeCache;
 // 'objHeap' is different from 'heap'!. 
 // This is SA's Oop factory and heap-walker
-sa.objHeap = sa.vm.objectHeap;
+sa.objHeap = sa.vm.objectHeap; // ordinary object pointer ， 普通对象指针的大小，64位操作系统中，这个值一般是8，一个对象指针长度是8字节
 
 // few useful global variables
 var OS = sa.vm.OS;

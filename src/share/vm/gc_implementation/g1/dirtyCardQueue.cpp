@@ -45,19 +45,29 @@ bool DirtyCardQueue::apply_closure(CardTableEntryClosure* cl,
   return res;
 }
 
+/**
+ * 搜索 bool DirtyCardQueueSet::
+apply_closure_to_completed_buffer_helper 查看调用者
+ buf中的数据是位于[index, sz]之间
+ 这是一个静态方法，用来对一个void** buf代表的转移专用记忆集合 去apply对应的Closure
+ */
 bool DirtyCardQueue::apply_closure_to_buffer(CardTableEntryClosure* cl,
                                              void** buf,
                                              size_t index, size_t sz,
                                              bool consume,
                                              uint worker_i) {
   if (cl == NULL) return true;
-  for (size_t i = index; i < sz; i += oopSize) {
+  for (size_t i = index; i < sz; i += oopSize) { // 处理从index 到 sz之间的所有的卡片，注意,sz的大小是以byte为单位，所以每次step的粒度是oopSize
     int ind = byte_index_to_index((int)i);
-    jbyte* card_ptr = (jbyte*)buf[ind];
+    jbyte* card_ptr = (jbyte*)buf[ind]; // 根据索引值获取对应的卡片地址，我们从prtQueue的enqueue中可以看到，在DCQ中存放的是引用者的地址,比如a.field=b，那么存放的是a的地址
     if (card_ptr != NULL) {
       // Set the entry to null, so we don't do it again (via the test
       // above) if we reconsider this buffer.
       if (consume) buf[ind] = NULL;
+      /**
+       * 调用对应的RefineRecordRefsIntoCSCardTableEntryClosure的do_card_ptr()方法
+       * 搜索 bool do_card_ptr(jbyte* card_ptr, uint worker_i)
+       */
       if (!cl->do_card_ptr(card_ptr, worker_i)) return false;
     }
   }
@@ -91,7 +101,11 @@ void DirtyCardQueueSet::initialize(CardTableEntryClosure* cl, Monitor* cbl_mon, 
   PtrQueueSet::initialize(cbl_mon, fl_lock, process_completed_threshold,
                           max_completed_queue, fl_owner);
   set_buffer_size(G1UpdateBufferSize);
-  _shared_dirty_card_queue.set_lock(lock);
+  /**
+   * 设置锁变量，标记自己虽然是 PrtQueue，但是是一个属于DirtyCardQueueSet 的全局PrtQueue，是存在多线程竞争关系的
+   * 在方法 DirtyCardQueueSet::concatenate_logs 中可以看到_shared_dirty_card_queue的使用
+   */
+  _shared_dirty_card_queue.set_lock(lock); // 实现方法参考 void set_lock(Mutex* lock) { _lock = lock; }
   _free_ids = new FreeIdSet((int) num_par_ids(), _cbl_mon);
 }
 
@@ -160,11 +174,17 @@ bool DirtyCardQueueSet::mut_process_buffer(void** buf) {
 }
 
 
+/**
+ * 获取以DCQS中的以_completed_buffers_head为链表的第一个节点_completed_buffers_head
+ */
+
 BufferNode*
 DirtyCardQueueSet::get_completed_buffer(int stop_at) {
   BufferNode* nd = NULL;
   MutexLockerEx x(_cbl_mon, Mutex::_no_safepoint_check_flag);
-
+  /**
+   * 可以看到，如果_n_completed_buffers==0,即已经处理完了，此时stop_at=0，那么就会返回null
+   */
   if ((int)_n_completed_buffers <= stop_at) {
     _process_completed = false;
     return NULL;
@@ -175,29 +195,41 @@ DirtyCardQueueSet::get_completed_buffer(int stop_at) {
     _completed_buffers_head = nd->next();
     if (_completed_buffers_head == NULL)
       _completed_buffers_tail = NULL;
-    _n_completed_buffers--;
+    _n_completed_buffers--; // 取出了一个节点，因此数量减去1
     assert(_n_completed_buffers >= 0, "Invariant");
   }
   debug_only(assert_completed_buffer_list_len_correct_locked());
   return nd;
 }
 
+/**
+ * 调用方法 搜索 DirtyCardQueueSet::apply_closure_to_completed_buffer
+ * @param cl
+ * @param worker_i
+ * @param nd
+ * @return
+ */
 bool DirtyCardQueueSet::
 apply_closure_to_completed_buffer_helper(CardTableEntryClosure* cl,
                                          uint worker_i,
                                          BufferNode* nd) {
   if (nd != NULL) {
-    void **buf = BufferNode::make_buffer_from_node(nd);
-    size_t index = nd->index();
+      /**
+       * 根据当前的BufferNode获取对应的buf双指针
+       * 一个void **buf 是属于一个PtrQueue对象的，而不是属于一个PtrQueueSet的
+       */
+    void **buf = BufferNode::make_buffer_from_node(nd); //
+    size_t index = nd->index(); // 在**buf中的索引，当前的索引位置。前面说过，往一个buf中写入数据是从 _nd一直向0写数据，所以当前的有效数据位于[index, _sz]之间
     bool b =
+            // 调用静态方法DirtyCardQueue::apply_closure_to_buffer， 对于这个buf，去apply对应的CardTableEntryClosure
       DirtyCardQueue::apply_closure_to_buffer(cl, buf,
                                               index, _sz,
                                               true, worker_i);
     if (b) {
-      deallocate_buffer(buf);
+      deallocate_buffer(buf); // 调用者是 void PtrQueueSet::deallocate_buffer(void** buf) {
       return true;  // In normal case, go on to next buffer.
     } else {
-      enqueue_complete_buffer(buf, index);
+      enqueue_complete_buffer(buf, index); // 重新把刚刚的buf加入到DCQS的队列中
       return false;
     }
   } else {
@@ -205,15 +237,24 @@ apply_closure_to_completed_buffer_helper(CardTableEntryClosure* cl,
   }
 }
 
+/**
+ * 获取这个DCQS在stop_at位置的BufferNode，然后在这个位置apply对应的CardTableEntryClosure(具体实现类是RefineRecordRefsIntoCSCardTableEntryClosure)
+ * 调用位置 查看 G1CollectedHeap::iterate_dirty_card_closure，可以看到，当前的DCQS对象是Java_Thread的全局DCQS对象，
+ *          这时候stop_at = 0，表示处理所有， 对应的closure 是 RefineRecordRefsIntoCSCardTableEntryClosure
+ * 同时Refine现成也会调用这个方法来处理DCQS,调用方法在ConcurrentG1RefineThread::run 中，
+ *          但是Refine现成处理的时候stop_at是green_zone，对应的closure 是 RefineCardTableEntryClosure
+ * RefineRecordRefsIntoCSCardTableEntryClosure 和 RefineCardTableEntryClosure 都是CardTableEntryClosure的子类
+ */
 bool DirtyCardQueueSet::apply_closure_to_completed_buffer(CardTableEntryClosure* cl,
                                                           uint worker_i,
                                                           int stop_at,
                                                           bool during_pause) {
   assert(!during_pause || stop_at == 0, "Should not leave any completed buffers during a pause");
-  BufferNode* nd = get_completed_buffer(stop_at);
-  bool res = apply_closure_to_completed_buffer_helper(cl, worker_i, nd);
-  if (res) Atomic::inc(&_processed_buffers_rs_thread);
-  return res;
+  BufferNode* nd = get_completed_buffer(stop_at); // 这里stop_at不起任何作用，get_completed_buffer永远只是把DCQS的头结点取出来，如果DCQS中没有元素了，返回null
+  bool res = apply_closure_to_completed_buffer_helper(cl, worker_i, nd); // 如果nd==null，返回false
+  if (res)
+      Atomic::inc(&_processed_buffers_rs_thread);
+  return res; // 返回值是res。 从上层调用者可以看到，只要返回true，证明DCQS中还有元素，从而反复调用这个方法apply_closure_to_completed_buffer()
 }
 
 void DirtyCardQueueSet::apply_closure_to_all_completed_buffers(CardTableEntryClosure* cl) {

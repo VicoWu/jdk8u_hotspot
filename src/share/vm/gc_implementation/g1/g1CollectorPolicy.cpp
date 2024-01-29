@@ -303,6 +303,7 @@ G1CollectorPolicy::G1CollectorPolicy() :
   assert(GCTimeRatio > 0,
          "we should have set it to a default value set_g1_gc_flags() "
          "if a user set it to 0");
+  // G1GC中GCTimeRatio默认是9，比如，用户程序运行时间是9，gc时间是9，那么_gc_overhead_perc=0.1，代表gc消耗的时间占整体时间的比例
   _gc_overhead_perc = 100.0 * (1.0 / (1.0 + GCTimeRatio));
 
   uintx reserve_perc = G1ReservePercent;
@@ -468,6 +469,13 @@ void G1CollectorPolicy::initialize_gc_policy_counters() {
   _gc_policy_counters = new GCPolicyCounters("GarbageFirst", 1, 3);
 }
 
+/**
+ * @param young_length 年轻代的长度（从calculate_young_list_target_length方法可以看到，这里指的是准备新分配的年轻代区域数量，不包含已分配的年轻代的region数量）。
+ * @param base_time_ms  基准暂停时间，即当前垃圾收集暂停的预计时间。
+ * @param base_free_regions  基准时的可用空闲区域数量。
+ * @param target_pause_time_ms 目标暂停时间，即期望的垃圾收集暂停时间。
+ * @return
+ */
 bool G1CollectorPolicy::predict_will_fit(uint young_length,
                                          double base_time_ms,
                                          uint base_free_regions,
@@ -535,7 +543,7 @@ uint G1CollectorPolicy::calculate_young_list_desired_max_length() {
 }
 
 void G1CollectorPolicy::update_young_list_target_length(size_t rs_lengths) {
-  if (rs_lengths == (size_t) -1) {
+  if (rs_lengths == (size_t) -1) { // 如果rs_lengths是-1，那么我们需要进行一次重新的预测
     // if it's set to the default value (-1), we should predict it;
     // otherwise, use the given value.
     rs_lengths = (size_t) get_new_prediction(_rs_lengths_seq);
@@ -569,12 +577,12 @@ void G1CollectorPolicy::update_young_list_target_length(size_t rs_lengths) {
   uint young_list_target_length = 0;
   if (adaptive_young_list_length()) {
     if (gcs_are_young()) {
-      young_list_target_length =
+      young_list_target_length = // 根据采样的结果rs_lengths， 计算young list的目标长度，这个目标长度的含义是，这样的长度可以确保在当前的rs_lengths情况下满足用户允许的暂停时间，同时也能回收最多的Region
                         calculate_young_list_target_length(rs_lengths,
                                                            base_min_length,
                                                            desired_min_length,
                                                            desired_max_length);
-      _rs_lengths_prediction = rs_lengths;
+      _rs_lengths_prediction = rs_lengths;// 当前采样的结果作为下一次的预测值
     } else {
       // Don't calculate anything and let the code below bound it to
       // the desired_min_length, i.e., do the next GC as soon as
@@ -583,7 +591,7 @@ void G1CollectorPolicy::update_young_list_target_length(size_t rs_lengths) {
   } else {
     // The user asked for a fixed young gen so we'll fix the young gen
     // whether the next GC is young or mixed.
-    young_list_target_length = _young_list_fixed_length;
+    young_list_target_length = _young_list_fixed_length; // 无法使用自适应的年轻代长度，那只能使用固定长度作为年轻代的长度
   }
 
   // Make sure we don't go over the desired max length, nor under the
@@ -599,11 +607,24 @@ void G1CollectorPolicy::update_young_list_target_length(size_t rs_lengths) {
   assert(young_list_target_length > recorded_survivor_regions(),
          "we should be able to allocate at least one eden region");
   assert(young_list_target_length >= absolute_min_length, "post-condition");
-  _young_list_target_length = young_list_target_length;
+  _young_list_target_length = young_list_target_length;  // 更新_young_list_target_length
 
   update_max_gc_locker_expansion();
 }
 
+/**
+ *  首先，代码确保当前的策略允许自适应调整新生代长度，并且当前的垃圾收集是针对年轻代的。
+    接着，代码根据一系列参数计算出新生代的目标长度，以确保垃圾收集的时间不会超过给定的目标暂停时间，同时新生代的长度最长
+    如果最小的新生代长度可以在目标暂停时间内完成垃圾收集，则进一步检查是否最大的新生代长度也能在目标暂停时间内完成。如果可以，则将最小新生代长度设置为最大新生代长度。
+    如果最大新生代长度不能在目标暂停时间内完成垃圾收集，则进行二分搜索以找到最优的新生代长度，使得垃圾收集的时间不会超过目标暂停时间。
+    最后，返回计算出的新生代目标长度。
+    这段代码通过分析当前堆的状态和预测垃圾收集的时间来动态地调整新生代的长度，以确保垃圾收集的效率和性能。
+ * @param rs_lengths
+ * @param base_min_length
+ * @param desired_min_length
+ * @param desired_max_length
+ * @return
+ */
 uint
 G1CollectorPolicy::calculate_young_list_target_length(size_t rs_lengths,
                                                      uint base_min_length,
@@ -623,18 +644,25 @@ G1CollectorPolicy::calculate_young_list_target_length(size_t rs_lengths,
   // will be reflected in the predictions by the
   // survivor_regions_evac_time prediction.
   assert(desired_min_length > base_min_length, "invariant");
+  /**
+   * 调整 min_young_length 和 max_young_length 不包括已经分配的 young 区域（这样，除去了已经分配的年轻代区域，min_young_length和max_young_length就反映了我们需要新分配的最小和最大 eden 区域）。
+   * base_min_length 将反映在 Survivor_regions_evac_time 预测的预测中。
+   */
   uint min_young_length = desired_min_length - base_min_length;
   assert(desired_max_length > base_min_length, "invariant");
   uint max_young_length = desired_max_length - base_min_length;
 
+  // 计算目标停顿时间，我们预测年轻代长度的目的就是根据年轻代的长度预测值，计算对应的回收时间，然后看回收时间是否在目标停顿时间以内
   double target_pause_time_ms = _mmu_tracker->max_gc_time() * 1000.0;
-  double survivor_regions_evac_time = predict_survivor_regions_evac_time();
-  size_t pending_cards = (size_t) get_new_prediction(_pending_cards_seq);
-  size_t adj_rs_lengths = rs_lengths + predict_rs_length_diff();
-  size_t scanned_cards = predict_young_card_num(adj_rs_lengths);
+  double survivor_regions_evac_time = predict_survivor_regions_evac_time(); // 计算survivor区域的撤离时间
+  size_t pending_cards = (size_t) get_new_prediction(_pending_cards_seq); // 挂起的卡片数量
+
+  size_t adj_rs_lengths = rs_lengths + predict_rs_length_diff(); // 根据预测的rs length的差异，调整当前采样得到的rs_length
+  size_t scanned_cards = predict_young_card_num(adj_rs_lengths); // 根据调整的rs length
   double base_time_ms =
     predict_base_elapsed_time_ms(pending_cards, scanned_cards) +
     survivor_regions_evac_time;
+
   uint available_free_regions = _free_regions_at_end_of_collection;
   uint base_free_regions = 0;
   if (available_free_regions > _reserve_regions) {
@@ -655,8 +683,11 @@ G1CollectorPolicy::calculate_young_list_target_length(size_t rs_lengths,
       // The maximum young length will fit into the target pause time.
       // We are done so set min young length to the maximum length (as
       // the result is assumed to be returned in min_young_length).
+      /**
+       * 最大年轻长度将适合目标暂停时间。 我们完成了，将min_young_length设置为最大长度（因为假设结果在base_min_length + min_young_length）。
+       */
       min_young_length = max_young_length;
-    } else {
+    } else {  // 采用二分查找
       // The maximum possible number of young regions will not fit within
       // the target pause time so we'll search for the optimal
       // length. The loop invariants are:
@@ -674,13 +705,13 @@ G1CollectorPolicy::calculate_young_list_target_length(size_t rs_lengths,
 
       assert(min_young_length < max_young_length, "invariant");
       uint diff = (max_young_length - min_young_length) / 2;
-      while (diff > 0) {
+      while (diff > 0) { // 不断进行二分，直到预测能否符合要求
         uint young_length = min_young_length + diff;
         if (predict_will_fit(young_length, base_time_ms,
-                             base_free_regions, target_pause_time_ms)) {
-          min_young_length = young_length;
+                             base_free_regions, target_pause_time_ms)) { // 对于目前的[min,max]的中间值进行预测，查看以这个中间值作为 需要新增的年轻代region的数量是否满足用户的停顿时间要求
+          min_young_length = young_length; // 已经满足要求，尝试增加region数量
         } else {
-          max_young_length = young_length;
+          max_young_length = young_length; // 不满足要求，尝试减少region数量
         }
         assert(min_young_length <  max_young_length, "invariant");
         diff = (max_young_length - min_young_length) / 2;
@@ -701,11 +732,11 @@ G1CollectorPolicy::calculate_young_list_target_length(size_t rs_lengths,
              "min_young_length, the result of the binary search, should be "
              "optimal, so no larger length should fit into the pause target");
     }
-  } else {
+  } else { // 即使最小长度也无法满足停顿时间，没有别的选择，还是把base_min_length + min_young_length作为结果返回
     // Even the minimum length doesn't fit into the pause time
     // target, return it as the result nevertheless.
   }
-  return base_min_length + min_young_length;
+  return base_min_length + min_young_length; // min_young_length只是计算得到的需要新分配的eden区域的region数量
 }
 
 double G1CollectorPolicy::predict_survivor_regions_evac_time() {
@@ -718,13 +749,29 @@ double G1CollectorPolicy::predict_survivor_regions_evac_time() {
   return survivor_regions_evac_time;
 }
 
+/**
+ * 根据刚刚采样完成的结果，来修正新生代的young list的大小
+ */
 void G1CollectorPolicy::revise_young_list_target_length_if_necessary() {
   guarantee( adaptive_young_list_length(), "should not call this otherwise" );
-
+  /**
+   * 获取刚刚采样完成的结果_last_sampled_rs_lengths，即整个新生代的所有Region的RS的大小之和
+   * 在采样过程中，方法YoungList::rs_length_sampling_next()更新了_last_sampled_rs_lengths
+   */
   size_t rs_lengths = _g1->young_list()->sampled_rs_lengths();
+  /**
+   * 如果最新的采样结果   大于 上次的预测值，那么我们需要根据新的采样结果，重新计算_young_list_target_length
+   * 如果最新的采样结果 不大于 上次的预测值，那么我们并不更新_young_list_target_length
+   */
   if (rs_lengths > _rs_lengths_prediction) {
     // add 10% to avoid having to recalculate often
+    /**
+     * 设置预测值，增加10%，避免过于频繁的多次计算，因为我们在update_young_list_target_length()会用 rs_lengths_prediction 更新 _rs_lengths_prediction
+     */
     size_t rs_lengths_prediction = rs_lengths * 1100 / 1000;
+    /**
+     * 在这里会更新预测值_rs_lengths_prediction的大小，即更新_young_list_target_length，同时用rs_lengths_prediction 更新 _rs_lengths_prediction
+     */
     update_young_list_target_length(rs_lengths_prediction);
   }
 }
@@ -959,7 +1006,11 @@ bool G1CollectorPolicy::need_to_start_conc_mark(const char* source, size_t alloc
 // Anything below that is considered to be zero
 #define MIN_TIMER_GRANULARITY 0.0000001
 
-// 记录一次evacuation的结束
+/**
+ * 记录一次evacuation的结束,这次evacuation pause可能附带(借道)了一次初始标记暂停
+ * 结束以后，如果刚刚借道进行了初始标记暂停，那么就把_during_initial_mark_pause重新设置为false，
+ * 如果刚刚没有进行初始标记暂停，仅仅是进行了转移，并且当前内存状态显示我们需要一次并发标记，那么会设置_initiate_conc_mark_if_possible为true
+ */
 void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, EvacuationInfo& evacuation_info) {
   double end_time_sec = os::elapsedTime();
   assert(_cur_collection_pause_used_regions_at_start >= cset_region_length(),
@@ -969,7 +1020,7 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
   size_t cur_used_bytes = _g1->used();
   assert(cur_used_bytes == _g1->recalculate_used(), "It should!");
   bool last_pause_included_initial_mark = false;
-  bool update_stats = !_g1->evacuation_failed();
+  bool update_stats = !_g1->evacuation_failed(); // 只要最近的一次转移是成功的，那么就需要根据这次的转移信息更新响应的统计信息，这个统计信息会被用来进行暂停时间预测以及更新新生代region的数量
 
 #ifndef PRODUCT
   if (G1YoungSurvRateVerbose) {
@@ -978,11 +1029,14 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
     // do that for any other surv rate groups too
   }
 #endif // PRODUCT
-
-  last_pause_included_initial_mark = during_initial_mark_pause(); // 读取_during_initial_mark_pause， record_concurrent_mark_init_end()方法将这个参数设置为false
+  // 读取_during_initial_mark_pause的值，即刚刚的pause是否附带了初始标记暂停
+  // record_concurrent_mark_init_end()方法会将这个参数设置为false
+  last_pause_included_initial_mark = during_initial_mark_pause();
   if (last_pause_included_initial_mark) { //如果_during_initial_mark_pause是true，那么设置为false
     record_concurrent_mark_init_end(0.0); // 初始暂停结束，设置_during_initial_mark_pause=false
-  } else if (need_to_start_conc_mark("end of GC")) { // 如果当前的内存状态表示需要进行一轮新的并发标记，那么就设置_initiate_conc_mark_if_possible 为true
+  } else if (need_to_start_conc_mark("end of GC")) { //
+    // 如果当前的内存状态表示需要进行一轮新的并发标记，
+    // 那么就重新设置_initiate_conc_mark_if_possible 为true
     // Note: this might have already been set, if during the last
     // pause we decided to start a cycle but at the beginning of
     // this pause we decided to postpone it. That's OK.
@@ -1055,12 +1109,17 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
     new_in_marking_window_im = true;
   }
 
-  // _last_young_gc 在 record_concurrent_mark_cleanup_completed()中设置为true，即刚刚结束了并发标记的清理阶段，才会开始判断是否进行mix gc
+  // _last_young_gc 在 record_concurrent_mark_cleanup_completed()中设置为true，
+  // 即刚刚结束了并发标记的最后的清理阶段，才会开始判断是否进行mix gc
   if (_last_young_gc) {  //  这里的含义是，只有当刚刚结束了并发标记，我们才会开始判断是否进行mixed gc
     // This is supposed to to be the "last young GC" before we start
     // doing mixed GCs. Here we decide whether to start mixed GCs or not.
 
-    if (!last_pause_included_initial_mark) { // 上一次暂停不是初始标记(比如，上一次暂停可能是一个转移的STW), 才有可能进行mixed gc，否则，不可能进行mixed gc，
+    /**
+     *  上一次暂停没有初始标记(比如，上一次暂停可能仅仅是一个转移的STW),
+     *  才有可能进行mixed gc，否则，不可能进行mixed gc，因为mixed gc不允许和一次刚刚进行了初始标记暂停的evacuation pause一起执行
+     */
+    if (!last_pause_included_initial_mark) {
       if (next_gc_should_be_mixed("start mixed GCs", // 并且进行一次mix收集是有价值的(可回收的数据量大于配置的默认5%)
                                   "do not start mixed GCs")) {
         set_gcs_are_young(false);  // 设置_gcs_are_young=true，标志着不进行young gc，而进行 mixed gc
@@ -1070,7 +1129,12 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
                     "do not start mixed GCs",
                     ergo_format_reason("concurrent cycle is about to start"));
     }
-    _last_young_gc = false; // 无论下一轮是否进行mixed gc，都会在_last_young_gc是true的情况下被立刻置为false，直到record_concurrent_mark_cleanup_completed()中再次设置为true，即直到再次进行一次mix gc
+    /**
+     * 无论下一轮是否进行mixed gc，都会在_last_young_gc是true的情况下被立刻置为false，直到record_concurrent_mark_cleanup_completed()中再次设置为true，
+     * 即无论evaucation pause再执行多少次(比如，都是young gc的evacuation pause)，由于这期间的并发标记一直没有做完，所以_last_young_gc都还是false，这时候就不需要
+     * 再进行执行上面if (_last_young_gc) {....}的代码，即不会判断是否需要mix gc，因此并发标记还没有执行完，而mix gc需要依赖并发标记
+     */
+    _last_young_gc = false;
   }
 
   if (!_last_gc_was_young) { // 上一次本来就是mix gc，判断是否需要继续进行 mixed gc
@@ -1108,9 +1172,9 @@ void G1CollectorPolicy::record_collection_pause_end(double pause_time_ms, Evacua
     if (_max_rs_lengths > 0) {
       double cards_per_entry_ratio =
         (double) cards_scanned / (double) _max_rs_lengths;
-      if (_last_gc_was_young) {
+      if (_last_gc_was_young) { // 如果上一次gc是young gc，那么我们需要更新_young_cards_per_entry_ratio_seq,以便对接下来的暂停时间预测提供信息
         _young_cards_per_entry_ratio_seq->add(cards_per_entry_ratio);
-      } else {
+      } else { // 如果上一次gc是mix gc，那么我们需要更新_mixed_cards_per_entry_ratio_seq,以便对接下来的暂停时间预测提供信息
         _mixed_cards_per_entry_ratio_seq->add(cards_per_entry_ratio);
       }
     }
@@ -1382,9 +1446,9 @@ void G1CollectorPolicy::update_recent_gc_times(double end_time_sec,
 }
 
 size_t G1CollectorPolicy::expansion_amount() {
-  double recent_gc_overhead = recent_avg_pause_time_ratio() * 100.0;
-  double threshold = _gc_overhead_perc;
-  if (recent_gc_overhead > threshold) {
+  double recent_gc_overhead = recent_avg_pause_time_ratio() * 100.0; // 最近的gc开销
+  double threshold = _gc_overhead_perc; // gc占用整个jvm时间的比例
+  if (recent_gc_overhead > threshold) { // 最近的gc开销大于用户配置的允许的gc开销
     // We will double the existing space, or take
     // G1ExpandByPercentOfAvailable % of the available expansion
     // space, whichever is smaller, bounded below by a minimum
@@ -1468,19 +1532,21 @@ void G1CollectorPolicy::update_survivors_policy() {
   _tenuring_threshold = _survivors_age_table.compute_tenuring_threshold(
         HeapRegion::GrainWords * _max_survivor_regions);
 }
-
+/**
+ * 如果并发标记进行中，就返回false，如果不是进行中，那么就设置_initiate_conc_mark_if_possible
+ */
 bool G1CollectorPolicy::force_initial_mark_if_outside_cycle(
                                                      GCCause::Cause gc_cause) {
   bool during_cycle = _g1->concurrent_mark()->cmThread()->during_cycle();
-  if (!during_cycle) {
+  if (!during_cycle) { // 如果当前并发标记不是进行中的
     ergo_verbose1(ErgoConcCycles,
                   "request concurrent cycle initiation",
                   ergo_format_reason("requested by GC cause")
                   ergo_format_str("GC cause"),
                   GCCause::to_string(gc_cause));
-    set_initiate_conc_mark_if_possible();
+    set_initiate_conc_mark_if_possible(); // 设置_initiate_conc_mark_if_possible为true
     return true;
-  } else {
+  } else { // 如果当前并发标记是进行中的
     ergo_verbose1(ErgoConcCycles,
                   "do not request concurrent cycle initiation",
                   ergo_format_reason("concurrent cycle already in progress")
@@ -1490,7 +1556,8 @@ bool G1CollectorPolicy::force_initial_mark_if_outside_cycle(
   }
 }
 
-// 决定是否进入一个新的标记cycle，如果是，那么，就设置_during_initial_mark_pause=true
+// 决定是否进入一个新的标记cycle，如果是，那么，就设置_during_initial_mark_pause=true，
+// 这样，在一次evacuation pause中，就会借道进行一次初始标记暂停
 void
 G1CollectorPolicy::decide_on_conc_mark_initiation() {
   // We are about to decide on whether this pause will be an
@@ -1501,7 +1568,7 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
   // the end of the pause (it's only set for the duration of an
   // initial-mark pause).
   assert(!during_initial_mark_pause(), "pre-condition");
-
+  // 如果_initiate_conc_mark_if_possible是true
   if (initiate_conc_mark_if_possible()) {
     // We had noticed on a previous pause that the heap occupancy has
     // gone over the initiating threshold and we should start a
@@ -1513,8 +1580,8 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
       // it has completed the last one. So we can go ahead and
       // initiate a new cycle.
 
-      // 这里设置during_initial_mark_pause为true,那么在do_collection_pause_at_safepoint()中的最后，就会通知并发标记线程开始进行并发标记
-      set_during_initial_mark_pause(); // 设置_during_initial_mark_pause为true，代表正在惊醒初始标记暂停
+      // 这里设置during_initial_mark_pause为true,那么在do_collection_pause_at_safepoint()中的最后，即完成了初始标记pause以后，就会通知并发标记线程开始进行并发标记
+      set_during_initial_mark_pause(); // 设置_during_initial_mark_pause为true，代表正在进行初始标记暂停，那么待会儿在暂停的时候就会借道进行初始标记
       // We do not allow mixed GCs during marking.
       if (!gcs_are_young()) { // 标记阶段不允许mixed gc
         set_gcs_are_young(true); // 标记当前状态为young gc
@@ -1525,7 +1592,7 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
 
       // And we can now clear initiate_conc_mark_if_possible() as
       // we've already acted on it.
-      clear_initiate_conc_mark_if_possible();
+      clear_initiate_conc_mark_if_possible(); // 已经设置了during_initial_mark_pause，这个变量的本次使命完成，重新设置为false,直到比如evacuation pause结束以后发现需要进行gc，或者目前分配了大对象
 
       ergo_verbose0(ErgoConcCycles,
                   "initiate concurrent cycle",
@@ -1733,6 +1800,11 @@ void G1CollectorPolicy::finalize_incremental_cset_building() {
   _inc_cset_predicted_elapsed_time_ms_diffs = 0.0;
 }
 
+/**
+ * 这个方法在add_region_to_incremental_cset_common中被盗用
+ * @param hr
+ * @param rs_length
+ */
 void G1CollectorPolicy::add_to_incremental_cset_info(HeapRegion* hr, size_t rs_length) {
   // This routine is used when:
   // * adding survivor regions to the incremental cset at the end of an
@@ -1745,9 +1817,12 @@ void G1CollectorPolicy::add_to_incremental_cset_info(HeapRegion* hr, size_t rs_l
   // VM thread, or in-between safepoints by mutator threads (when
   // retiring the current allocation region) or a concurrent
   // refine thread (RSet sampling).
-
+  // 预测这个Region的消耗时间
   double region_elapsed_time_ms = predict_region_elapsed_time_ms(hr, gcs_are_young());
   size_t used_bytes = hr->used();
+  /**
+   * 将这个Region的RSet长度、消耗时间、和使用的字节数全部统计到G1CollectionPolicy中去
+   */
   _inc_cset_recorded_rs_lengths += rs_length;
   _inc_cset_predicted_elapsed_time_ms += region_elapsed_time_ms;
   _inc_cset_bytes_used_before += used_bytes;
@@ -1756,8 +1831,8 @@ void G1CollectorPolicy::add_to_incremental_cset_info(HeapRegion* hr, size_t rs_l
   // in the heap region in case we have to remove this region from
   // the incremental collection set, or it is updated by the
   // rset sampling code
-  hr->set_recorded_rs_length(rs_length);
-  hr->set_predicted_elapsed_time_ms(region_elapsed_time_ms);
+  hr->set_recorded_rs_length(rs_length); // 设置当前 HeapRegion的rs_length
+  hr->set_predicted_elapsed_time_ms(region_elapsed_time_ms); // 设置当前HeapRegion的消耗时间
 }
 
 void G1CollectorPolicy::update_incremental_cset_info(HeapRegion* hr,
@@ -1778,17 +1853,22 @@ void G1CollectorPolicy::update_incremental_cset_info(HeapRegion* hr,
 
   ssize_t old_rs_length = (ssize_t) hr->recorded_rs_length();
   ssize_t rs_lengths_diff = (ssize_t) new_rs_length - old_rs_length;
-  _inc_cset_recorded_rs_lengths_diffs += rs_lengths_diff;
+  _inc_cset_recorded_rs_lengths_diffs += rs_lengths_diff; // 将新旧RS的长度的差异记录到_inc_cset_recorded_rs_lengths_diffs
 
-  double old_elapsed_time_ms = hr->predicted_elapsed_time_ms();
+  double old_elapsed_time_ms = hr->predicted_elapsed_time_ms(); // 旧的预测的消耗时间
   double new_region_elapsed_time_ms = predict_region_elapsed_time_ms(hr, gcs_are_young());
   double elapsed_ms_diff = new_region_elapsed_time_ms - old_elapsed_time_ms;
-  _inc_cset_predicted_elapsed_time_ms_diffs += elapsed_ms_diff;
+  _inc_cset_predicted_elapsed_time_ms_diffs += elapsed_ms_diff; // 将新旧预测值的差异记录到_inc_cset_predicted_elapsed_time_ms_diffs
 
   hr->set_recorded_rs_length(new_rs_length);
-  hr->set_predicted_elapsed_time_ms(new_region_elapsed_time_ms);
+  hr->set_predicted_elapsed_time_ms(new_region_elapsed_time_ms); // 更新当前HeapRegion的回收消耗时间
 }
 
+/**
+ * 在G1CollectorPolicy::add_region_to_incremental_cset_lhs() 和 G1CollectorPolicy::add_region_to_incremental_cset_rhs()中调用了该方法
+ * 这个方法
+ * @param hr
+ */
 void G1CollectorPolicy::add_region_to_incremental_cset_common(HeapRegion* hr) {
   assert(hr->is_young(), "invariant");
   assert(hr->young_index_in_cset() > -1, "should have already been set");
@@ -1801,19 +1881,25 @@ void G1CollectorPolicy::add_region_to_incremental_cset_common(HeapRegion* hr) {
   // and cached in the heap region here (initially) and (subsequently)
   // by the Young List sampling code.
 
-  size_t rs_length = hr->rem_set()->occupied();
-  add_to_incremental_cset_info(hr, rs_length);
+  size_t rs_length = hr->rem_set()->occupied(); // 获取这个HeapRegion的CSet的已占用长度
+  add_to_incremental_cset_info(hr, rs_length); //  将这个HeapRegion的长度信息增加到Policy的全局统计信息中去，并添加到这个HeapRegion的相应统计信息中去
 
   HeapWord* hr_end = hr->end();
   _inc_cset_max_finger = MAX2(_inc_cset_max_finger, hr_end);
 
   assert(!hr->in_collection_set(), "invariant");
-  hr->set_in_collection_set(true);
+  hr->set_in_collection_set(true); // 设置该HeapRegion已经在CollectionSet中的标记位为true
   assert( hr->next_in_collection_set() == NULL, "invariant");
 
   _g1->register_young_region_with_in_cset_fast_test(hr);
 }
 
+/**
+ * add_region_to_incremental_cset_rhs(HeapRegion* hr) 方法用于将区域添加到增量式并发标记阶段的右侧（RHS）。右侧通常用于添加幸存者（Survivor）区域。在方法中：
+    首先，检查要添加的区域是否是幸存者区域。
+    然后，调用 add_region_to_incremental_cset_common(hr) 方法执行通用的添加区域操作。
+    最后，将区域添加到并发集的右侧，并更新 _inc_cset_tail 指针。
+ */
 // Add the region at the RHS of the incremental cset
 void G1CollectorPolicy::add_region_to_incremental_cset_rhs(HeapRegion* hr) {
   // We should only ever be appending survivors at the end of a pause
@@ -1827,11 +1913,18 @@ void G1CollectorPolicy::add_region_to_incremental_cset_rhs(HeapRegion* hr) {
     assert(_inc_cset_head == NULL, "invariant");
     _inc_cset_head = hr;
   } else {
-    _inc_cset_tail->set_next_in_collection_set(hr);
+    _inc_cset_tail->set_next_in_collection_set(hr); // 添加到右侧
   }
   _inc_cset_tail = hr;
 }
 
+/**
+ * add_region_to_incremental_cset_lhs(HeapRegion* hr) 方法用于将区域添加到增量式并发标记阶段的左侧（LHS）。左侧通常用于添加伊甸区域（Eden）区域。在方法中：
+
+    首先，检查要添加的区域是否是伊甸区域。
+    然后，调用 add_region_to_incremental_cset_common(hr) 方法执行通用的添加区域操作。
+    最后，将区域添加到并发集的左侧，并更新 _inc_cset_head 指针。
+ */
 // Add the region to the LHS of the incremental cset
 void G1CollectorPolicy::add_region_to_incremental_cset_lhs(HeapRegion* hr) {
   // Survivors should be added to the RHS at the end of a pause
@@ -1841,7 +1934,7 @@ void G1CollectorPolicy::add_region_to_incremental_cset_lhs(HeapRegion* hr) {
   add_region_to_incremental_cset_common(hr);
 
   // Add the region at the left hand side
-  hr->set_next_in_collection_set(_inc_cset_head);
+  hr->set_next_in_collection_set(_inc_cset_head); // 添加到左侧
   if (_inc_cset_head == NULL) {
     assert(_inc_cset_tail == NULL, "Invariant");
     _inc_cset_tail = hr;

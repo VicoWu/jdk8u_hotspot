@@ -28,8 +28,17 @@
 #include "gc_implementation/shared/parGCAllocBuffer.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
 
+/**
+ * 在 G1ParGCAllocator::plab_allocate中被调用
+ * @param word_sz
+ * @param alignment_in_bytes
+ * @return
+ */
 HeapWord* ParGCAllocBuffer::allocate_aligned(size_t word_sz, unsigned short alignment_in_bytes) {
 
+    /**
+     * 搜索 CollectedHeap::align_allocation_or_fail查看具体实现
+     */
   HeapWord* res = CollectedHeap::align_allocation_or_fail(_top, _end, alignment_in_bytes);
   if (res == NULL) {
     return NULL;

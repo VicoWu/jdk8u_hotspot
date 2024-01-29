@@ -41,7 +41,7 @@
 class G1CodeBlobClosure : public CodeBlobClosure {
   class HeapRegionGatheringOopClosure : public OopClosure {
     G1CollectedHeap* _g1h;
-    OopClosure* _work;
+    OopClosure* _work;  // 封装了一个G1ParCopyClosure的实现
     nmethod* _nm;
 
     template <typename T>
@@ -122,6 +122,15 @@ G1RootProcessor::G1RootProcessor(G1CollectedHeap* g1h) :
     _lock(Mutex::leaf, "G1 Root Scanning barrier lock", false),
     _n_workers_discovered_strong_classes(0) {}
 
+/**
+ * 搜 _root_processor->evacuate_roots 查看调用位置
+ * @param scan_non_heap_roots
+ * @param scan_non_heap_weak_roots
+ * @param scan_strong_clds
+ * @param scan_weak_clds
+ * @param trace_metadata
+ * @param worker_i
+ */
 void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
                                      OopClosure* scan_non_heap_weak_roots,
                                      CLDClosure* scan_strong_clds,
@@ -132,6 +141,9 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   double ext_roots_start = os::elapsedTime();
   G1GCPhaseTimes* phase_times = _g1h->g1_policy()->phase_times();
 
+  /**
+   * BufferingOopClosure closure只是对其他closure的一种封装，用来通过batch的方式加速迭代，将迭代和处理两件事情在时间上分开
+   */
   BufferingOopClosure buf_scan_non_heap_roots(scan_non_heap_roots);
   BufferingOopClosure buf_scan_non_heap_weak_roots(scan_non_heap_weak_roots);
 
@@ -141,8 +153,13 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   // CodeBlobClosures are not interoperable with BufferingOopClosures
   G1CodeBlobClosure root_code_blobs(scan_non_heap_roots);
 
+  // 处理Java 根
+  /**
+   * 搜索 G1RootProcessor::process_java_roots 查看具体实现
+   * 只有当trace_metadata = true， weak_cld_cl和 strong_cld_cl才会使用，否则为null
+   */
   process_java_roots(strong_roots,
-                     trace_metadata ? scan_strong_clds : NULL,
+                     trace_metadata ? scan_strong_clds : NULL, // 如果需要跟踪metadata，那么用来处理线程栈的cld的闭包就是scan_strong_clds，否则是null
                      scan_strong_clds,
                      trace_metadata ? NULL : scan_weak_clds,
                      &root_code_blobs,
@@ -154,8 +171,9 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   if (trace_metadata) {
     worker_has_discovered_all_strong_classes();
   }
-
+  // 处理 VM的根
   process_vm_roots(strong_roots, weak_roots, phase_times, worker_i);
+  // 处理string table 根
   process_string_table_roots(weak_roots, phase_times, worker_i);
   {
     // Now the CM ref_processor roots.
@@ -250,14 +268,23 @@ void G1RootProcessor::process_all_roots_no_string_table(OopClosure* oops,
   process_all_roots(oops, clds, blobs, false);
 }
 
-
-void G1RootProcessor::process_java_roots(OopClosure* strong_roots,
-                                         CLDClosure* thread_stack_clds,
-                                         CLDClosure* strong_clds,
-                                         CLDClosure* weak_clds,
-                                         CodeBlobClosure* strong_code,
+/**
+ *   调用者是 G1RootProcessor::evacuate_roots
+ *   strong_roots：一个用于处理强根的 OopClosure。
+ *   thread_stack_clds：一个用于处理线程栈上的类加载器数据（CLD）根的 CLDClosure。
+ *   strong_clds：一个用于处理强 CLD 的 CLDClosure。
+ *   weak_clds：一个用于处理弱 CLD 的 CLDClosure。
+ *   strong_code：一个用于处理强代码块的 CodeBlobClosure。
+ *   phase_times：一个指向 G1GCPhaseTimes 的指针，用于跟踪阶段时间。
+ *   worker_i：一个工作线程的标识符。
+ */
+void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用于处理强根的 OopClosure。
+                                         CLDClosure* thread_stack_clds, // 一个用于处理线程栈上的类加载器数据（CLD）根的 CLDClosure。
+                                         CLDClosure* strong_clds, // 一个用于处理强 CLD 的 CLDClosure， 如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
+                                         CLDClosure* weak_clds, // 一个用于处理弱 CLD 的 CLDClosure
+                                         CodeBlobClosure* strong_code, // 一个用于处理强代码块的 CodeBlobClosure
                                          G1GCPhaseTimes* phase_times,
-                                         uint worker_i) {
+                                         uint worker_i // 工作线程的id) {
   assert(thread_stack_clds == NULL || weak_clds == NULL, "There is overlap between those, only one may be set");
   // Iterating over the CLDG and the Threads are done early to allow us to
   // first process the strong CLDs and nmethods and then, after a barrier,
@@ -265,12 +292,22 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots,
   {
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::CLDGRoots, worker_i);
     if (!_process_strong_tasks.is_task_claimed(G1RP_PS_ClassLoaderDataGraph_oops_do)) {
+        /**
+         * 调用 ClassLoaderDataGraph::roots_cld_do 静态方法来迭代 CLDG 根，并根据提供的闭包（strong_clds 和 weak_clds）进行应用。
+         * 在整个CLDG上的每一个ClassLoaderData上apply G1CLDClosure，其实是针对每一个CLD调用void do_cld(ClassLoaderData* cld)
+         * 搜索 ClassLoaderDataGraph::roots_cld_do 查看方法的具体实现
+         * 查看静态方法的具体实现，可以看到，如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
+         */
       ClassLoaderDataGraph::roots_cld_do(strong_clds, weak_clds);
     }
   }
 
   {
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::ThreadRoots, worker_i);
+    /**
+     * 处理线程根：在此阶段，函数处理在线程栈上发现的根。它利用 Threads::possibly_parallel_oops_do 方法，
+     * 可能并行处理强根（strong_roots）、CLD（thread_stack_clds）和代码块（strong_code）。
+     */
     Threads::possibly_parallel_oops_do(strong_roots, thread_stack_clds, strong_code);
   }
 }
@@ -347,6 +384,10 @@ void G1RootProcessor::process_code_cache_roots(CodeBlobClosure* code_closure,
   }
 }
 
+/**
+ * 搜搜 _root_processor->scan_remembered_sets 查看调用位置
+ * 将 G1ParPushHeapRSClosure scan_rs 闭包应用于回收集合中的所有Region的Rset的并集中的所有位置（已完成“set_region”以指示根所在的区域）
+ */
 void G1RootProcessor::scan_remembered_sets(G1ParPushHeapRSClosure* scan_rs,
                                            OopClosure* scan_non_heap_weak_roots,
                                            uint worker_i) {
@@ -355,7 +396,7 @@ void G1RootProcessor::scan_remembered_sets(G1ParPushHeapRSClosure* scan_rs,
 
   // Now scan the complement of the collection set.
   G1CodeBlobClosure scavenge_cs_nmethods(scan_non_heap_weak_roots);
-
+  // 搜 G1RemSet::oops_into_collection_set_do 查看方法实现
   _g1h->g1_rem_set()->oops_into_collection_set_do(scan_rs, &scavenge_cs_nmethods, worker_i);
 }
 

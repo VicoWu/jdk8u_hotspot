@@ -41,7 +41,16 @@
 // unsynchronized reads/iterations, as long as expansions caused by
 // insertions only enqueue old versions for deletions, but do not delete
 // old versions synchronously.
-
+/**
+ * 一个对当前Region(Owning Region)的稀疏PRT的RSHashTable的Entry。
+ *  我们通过方法 RSHashTable::add_card 可以看到，一个SparsePRTEntry其实对应了一个外部指过来的Region_index，
+ *      而一个外部的region可能有多个对应的卡片指向了当前的owning region，因此，卡片索引存放在了_cards[]中，
+ *          我们通过方法SparsePRTEntry::AddCardResult SparsePRTEntry::add_card可以看到向这个SparsePRTEntry中添加卡片索引的过程
+ * 查看RSHashTable::add_card 了解向稀疏PRT中添加对象的逻辑
+ *
+ * 这个映射关系的key是其他Region的卡片索引，映射关系的value是其他区域的一系列卡片，这一系列卡片指向了当前的Region(Owning Region)
+   这些表仅在并行访问时才会扩展——删除可以在单线程代码中完成。 这允许我们允许不同步的读取/迭代，只要插入引起的扩展仅将旧版本排入队列进行删除，但不同步删除旧版本。
+ */
 class SparsePRTEntry: public CHeapObj<mtGC> {
 public:
   enum SomePublicConstants {
@@ -49,18 +58,22 @@ public:
     UnrollFactor  =  4
   };
 private:
-  RegionIdx_t _region_ind;
+  RegionIdx_t _region_ind; // 当前的这个SparsePRTEntry对应的Region的索引
   int         _next_index;
-  CardIdx_t   _cards[1];
+  CardIdx_t   _cards[1]; // 当前的这个SparsePRTEntry对应的卡片索引的列表
   // WARNING: Don't put any data members beyond this line. Card array has, in fact, variable length.
   // It should always be the last data member.
 public:
   // Returns the size of the entry, used for entry allocation.
   static size_t size() { return sizeof(SparsePRTEntry) + sizeof(CardIdx_t) * (cards_num() - 1); }
   // Returns the size of the card array.
+  // 静态方法，返回卡片数量
   static int cards_num() {
     // The number of cards should be a multiple of 4, because that's our current
     // unrolling factor.
+    /**
+     * 经过~(UnrollFactor - 1)，变成了低位为0、高位为1的数，然后通过G1RSetSparseRegionEntries进行与操作，变成了大小肯定是4的整数倍的数字
+     */
     static const int s = MAX2<int>(G1RSetSparseRegionEntries & ~(UnrollFactor - 1), UnrollFactor);
     return s;
   }
@@ -90,7 +103,7 @@ public:
     found,
     added
   };
-  inline AddCardResult add_card(CardIdx_t card_index);
+  inline AddCardResult add_card(CardIdx_t card_index); // add_card是非常频繁的操作，因此定义为内联函数
 
   // Copy the current entry's cards into "cards".
   inline void copy_cards(CardIdx_t* cards) const;
@@ -99,7 +112,6 @@ public:
 
   inline CardIdx_t card(int i) const { return _cards[i]; }
 };
-
 
 class RSHashTable : public CHeapObj<mtGC> {
 
@@ -111,8 +123,8 @@ class RSHashTable : public CHeapObj<mtGC> {
 
   size_t _capacity;
   size_t _capacity_mask;
-  size_t _occupied_entries;
-  size_t _occupied_cards;
+  size_t _occupied_entries; // entry的数量，一个entry是一个SparsePRTEntry对象，在RSHashTable中代表了一个外部region对当前region的引用关系。一个SparsePRTEntry会挂载很多的cards
+  size_t _occupied_cards; // cards的数量
 
   SparsePRTEntry* _entries;
   int* _buckets;
@@ -165,7 +177,7 @@ public:
   size_t capacity() const      { return _capacity;       }
   size_t capacity_mask() const { return _capacity_mask;  }
   size_t occupied_entries() const { return _occupied_entries; }
-  size_t occupied_cards() const   { return _occupied_cards;   }
+  size_t occupied_cards() const   { return _occupied_cards;   } // void RSHashTable::add_entry(SparsePRTEntry* e) {
   size_t mem_size() const;
 
   SparsePRTEntry* entry(int i) const { return (SparsePRTEntry*)((char*)_entries + SparsePRTEntry::size() * i); }
@@ -213,10 +225,10 @@ class SparsePRT VALUE_OBJ_CLASS_SPEC {
   //  Iterations are done on the _cur hash table, since they only need to
   //  see entries visible at the start of a collection pause.
   //  All other operations are done using the _next hash table.
-  RSHashTable* _cur;
-  RSHashTable* _next;
+  RSHashTable* _cur; // 搜索class RSHashTable获取它的定义，它的key是SparsePRTEntry
+  RSHashTable* _next; // 扩展以后的RSHashTable
 
-  HeapRegion* _hr;
+  HeapRegion* _hr; // 当前SparsePRT对应的HeapRegion
 
   enum SomeAdditionalPrivateConstants {
     InitialCapacity = 16
@@ -235,7 +247,7 @@ class SparsePRT VALUE_OBJ_CLASS_SPEC {
   void set_next_expanded(SparsePRT* nxt) { _next_expanded = nxt; }
 
   bool should_be_on_expanded_list();
-
+  // 注意，_head_expanded_list是一个静态变量，即全局只有一个， 并不属于一个SparsePRT对象
   static SparsePRT* _head_expanded_list;
 
 public:
@@ -243,7 +255,7 @@ public:
 
   ~SparsePRT();
 
-  size_t occupied() const { return _next->occupied_cards(); }
+  size_t occupied() const { return _next->occupied_cards(); } // 所以，这里是统计对应的RSHashTable中总的card的数量，而不是entry的数量
   size_t mem_size() const;
 
   // Attempts to ensure that the given card_index in the given region is in
@@ -333,7 +345,7 @@ private:
 public:
   SparsePRTCleanupTask() : _head(NULL), _tail(NULL) { }
 
-  void add(SparsePRT* sprt);
+  void add(SparsePRT* sprt);  //  实现void SparsePRTCleanupTask::add(SparsePRT* sprt)
   SparsePRT* head() { return _head; }
   SparsePRT* tail() { return _tail; }
 };

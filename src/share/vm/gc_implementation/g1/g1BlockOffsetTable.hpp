@@ -178,9 +178,25 @@ public:
   }
 
   enum SomePublicConstants {
+      /**
+       * 以字节为单位的偏移数组的大小为2的多少次方，2^9=512
+       * 搜索 G1BlockOffsetSharedArray::index_for_raw 可以看到LogN的含义，给定一个以字节为单位的偏移量，如果右移9位，就得到这个地址在字节数组中的index
+       */
     LogN = 9,
+    /**
+     * 以HeapWord(字)的大小为单位的偏移数组的位数
+     * LogN 表示偏移数组的大小（以2为底的对数），而 LogHeapWordSize 表示 HeapWord 的大小（以2为底的对数）。
+     *  因此，LogN_words 表示偏移数组索引的位数，它等于偏移数组大小的对数减去 HeapWord 的大小的对数，这样就可以确定偏移数组的索引位数
+     * 假如LogHeapWordSize=3，即一个HeapWord的大小为2 ^ 3 = 8字节，那么LogN_words = 9 - 3 = 6，即一个偏移数组只能表示2^6=64个HeapWord
+     */
     LogN_words = LogN - LogHeapWordSize,
+    /**
+     * 偏移数组的大小（以字节为单位），假如LogN = 9，那么N_Bytes=256
+     */
     N_bytes = 1 << LogN,
+    /**
+     * 偏移数组的大小(以HeapWord为单位),，假如LogN_words = 6，那么N_words = 64个word
+     */
     N_words = 1 << LogN_words
   };
 
@@ -198,6 +214,11 @@ public:
 
   // Return the address indicating the start of the region corresponding to
   // "index" in "_offset_array".
+  /**
+   * 具体实现 搜索 HeapWord* BlockOffsetSharedArray::address_for_index
+   * @param index
+   * @return
+   */
   inline HeapWord* address_for_index(size_t index) const;
   // Variant of address_for_index that does not check the index for validity.
   inline HeapWord* address_for_index_raw(size_t index) const {
@@ -219,10 +240,10 @@ private:
 
   // This is the array, which can be shared by several BlockOffsetArray's
   // servicing different
-  G1BlockOffsetSharedArray* _array;
+  G1BlockOffsetSharedArray* _array; // 被多个G1BlockOffsetArray共享的一个array
 
   // The space that owns this subregion.
-  G1OffsetTableContigSpace* _gsp;
+  G1OffsetTableContigSpace* _gsp;// 注意， HeapRegion是G1OffsetTableContigSpace的子类
 
   // The portion [_unallocated_block, _sp.end()) of the space that
   // is a single block known not to contain any objects.
@@ -316,17 +337,35 @@ public:
 // A subtype of BlockOffsetArray that takes advantage of the fact
 // that its underlying space is a ContiguousSpace, so that its "active"
 // region can be more efficiently tracked (than for a non-contiguous space).
-class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
+class G1BlockOffsetArrayContigSpace:  G1BlockOffsetArray {
   friend class VMStructs;
 
   // allocation boundary at which offset array must be updated
+  /**
+   * G1BlockOffsetpublicArrayContigSpace 的变量
+   * _next_offset_threshold是一个界限，如果内存分配超过了这个界限，意味着偏移数组需要被更新
+   */
+
   HeapWord* _next_offset_threshold;
+  /**
+   * G1BlockOffsetpublicArrayContigSpace的变量
+   * 与上面的界限_next_offset_threshold所对应的偏移数组的偏移量
+   */
   size_t    _next_offset_index;      // index corresponding to that boundary
 
   // Work function to be called when allocation start crosses the next
   // threshold in the contig space.
+  /**
+   * 调用方是 G1BlockOffsetArrayContigSpace::alloc_block
+   * 这个方法的全称是 G1BlockOffsetpublicArrayContigSpace::alloc_block_work1
+   * 这个方法的调用发生在下一个分配将会跨越threshold
+   */
   void alloc_block_work1(HeapWord* blk_start, HeapWord* blk_end) {
-    alloc_block_work2(&_next_offset_threshold, &_next_offset_index,
+      /**
+       * 搜索 G1BlockOffsetArray::alloc_block_work2
+       */
+    alloc_block_work2(&_next_offset_threshold,
+                      &_next_offset_index, // 偏移数组的下一个索引值，将在这个索引值的地方写入偏移量
                       blk_start, blk_end);
   }
 
@@ -356,10 +395,25 @@ class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
   // when "blk_start" ("blk" for second version) is "NULL".  In this
   // implementation, that's true because NULL is represented as 0, and thus
   // never exceeds the "_next_offset_threshold".
+  /**
+   * 方法的全称为 G1BlockOffsetArrayContigSpace::alloc_block
+   * 这个方法的调用者是下面的重载方法 alloc_block
+   */
   void alloc_block(HeapWord* blk_start, HeapWord* blk_end) {
-    if (blk_end > _next_offset_threshold)
+      /**
+       * 如果分配的block的结束位置需要跨越_next_offset_threshold，那么需要调用alloc_block_work1，专门处理跨域_threshold的分配
+       * 如果这个分配地址没有超过 _next_offset_threshold，那么就不需要做任何处理，即不需要更新块偏移表
+       */
+    if (blk_end > _next_offset_threshold) //
       alloc_block_work1(blk_start, blk_end);
   }
+
+  /**
+   * 查看调用者 HeapWord* G1OffsetTableContigSpace::allocate
+   * G1BlockOffsetArrayContigSpace::alloc_block
+   * @param blk
+   * @param size
+   */
   void alloc_block(HeapWord* blk, size_t size) {
      alloc_block(blk, blk+size);
   }

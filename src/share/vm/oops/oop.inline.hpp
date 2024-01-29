@@ -188,6 +188,11 @@ inline bool check_obj_alignment(oop obj) {
   return cast_from_oop<intptr_t>(obj) % MinObjAlignmentInBytes == 0;
 }
 
+/**
+ * 将对象的地址编码为一个narrowOop地址以节省空间
+ * @param v
+ * @return
+ */
 inline narrowOop oopDesc::encode_heap_oop_not_null(oop v) {
   assert(!is_null(v), "oop value can never be zero");
   assert(check_obj_alignment(v), "Address not aligned");
@@ -206,6 +211,9 @@ inline narrowOop oopDesc::encode_heap_oop(oop v) {
   return (is_null(v)) ? (narrowOop)0 : encode_heap_oop_not_null(v);
 }
 
+/**
+ * 如果是narrowoop，那么对其进行decode，返回对应的wide oop
+ */
 inline oop oopDesc::decode_heap_oop_not_null(narrowOop v) {
   assert(!is_null(v), "narrow oop value can never be zero");
   address base = Universe::narrow_oop_base();
@@ -219,7 +227,7 @@ inline oop oopDesc::decode_heap_oop(narrowOop v) {
   return is_null(v) ? (oop)NULL : decode_heap_oop_not_null(v);
 }
 
-inline oop oopDesc::decode_heap_oop_not_null(oop v) { return v; }
+inline oop oopDesc::decode_heap_oop_not_null(oop v) { return v; } // 如果不是narrowoop，那么直接返回，如果是narrow oop，需要进行相应的解码工作
 inline oop oopDesc::decode_heap_oop(oop v)  { return v; }
 
 // Load an oop out of the Java heap as is without decoding.
@@ -250,9 +258,20 @@ inline void oopDesc::encode_store_heap_oop_not_null(narrowOop* p, oop v) {
 inline void oopDesc::encode_store_heap_oop_not_null(oop* p, oop v) { *p = v; }
 
 // Encode and store a heap oop allowing for null.
+/**
+ * 将 v 进行编码并存储到指针 p 指向的内存位置。
+ *  由于p是一个narrow 地址，因此存入的新地址也必须进行narrow编码，从而保持一致
+ * @param p
+ * @param v
+ */
 inline void oopDesc::encode_store_heap_oop(narrowOop* p, oop v) {
-  *p = encode_heap_oop(v);
+  *p = encode_heap_oop(v); // 将 oop 对象指针 v 编码后存储到 narrowOop 类型的指针 p 所指向的位置
 }
+/**
+ * 将 v 进行编码并存储到指针 p 指向的内存位置。如果指针p本身就是一个wide point，那么根本就不用编码，直接存放原始指针就行
+ * @param p
+ * @param v
+ */
 inline void oopDesc::encode_store_heap_oop(oop* p, oop v) { *p = v; }
 
 // Store heap oop as is for volatile fields.
@@ -713,6 +732,10 @@ inline int oopDesc::oop_iterate(OopClosureType* blk) {                     \
   return klass()->oop_oop_iterate##nv_suffix(this, blk);               \
 }                                                                          \
                                                                            \
+/**
+ * oopDesc对象的oop_iterate方法，在这个oopDesc上apply对应的closure
+ */
+
 inline int oopDesc::oop_iterate(OopClosureType* blk, MemRegion mr) {       \
   SpecializationStats::record_call();                                      \
   return klass()->oop_oop_iterate##nv_suffix##_m(this, blk, mr);       \

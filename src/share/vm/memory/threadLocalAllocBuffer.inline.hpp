@@ -32,22 +32,27 @@
 #include "utilities/copy.hpp"
 
 inline HeapWord* ThreadLocalAllocBuffer::allocate(size_t size) {
-  invariants();
+  invariants(); // 检查当前的TLAB是否符合一些不变式，就是top的位置是否位于start和end之间
   HeapWord* obj = top();
-  if (pointer_delta(end(), obj) >= size) {
+  if (pointer_delta(end(), obj) >= size) { // 剩余空间大于对象大小
     // successful thread-local allocation
 #ifdef ASSERT
     // Skip mangling the space corresponding to the object header to
     // ensure that the returned space is not considered parsable by
     // any concurrent GC thread.
+    /**
+     * Copy::fill_to_words(obj + hdr_size, size - hdr_size, badHeapWordVal);: 使用 Copy::fill_to_words 将从 obj + hdr_size 开始、
+     * 长度为 size - hdr_size 的空间填充为 badHeapWordVal
+     * 。这个过程破坏了分配的空间，以防止其他并发的垃圾收集线程误将其视为有效的对象。这是一种安全机制，确保在调试模式下能更容易地检测到对已释放空间的引用。
+     */
     size_t hdr_size = oopDesc::header_size();
     Copy::fill_to_words(obj + hdr_size, size - hdr_size, badHeapWordVal);
 #endif // ASSERT
     // This addition is safe because we know that top is
     // at least size below end, so the add can't wrap.
-    set_top(obj + size);
+    set_top(obj + size); // 更新top
 
-    invariants();
+    invariants(); // 再次检查不变式
     return obj;
   }
   return NULL;
@@ -60,8 +65,8 @@ inline size_t ThreadLocalAllocBuffer::compute_size(size_t obj_size) {
   // The "last" tlab may be smaller to reduce fragmentation.
   // unsafe_max_tlab_alloc is just a hint.
   const size_t available_size = Universe::heap()->unsafe_max_tlab_alloc(myThread()) /
-                                                  HeapWordSize;
-  size_t new_tlab_size = MIN2(available_size, desired_size() + aligned_obj_size);
+                                                  HeapWordSize; // heap内存剩余的word 大小
+  size_t new_tlab_size = MIN2(available_size, desired_size() + aligned_obj_size); // 期望大小和可用大小的较小值
 
   // Make sure there's enough room for object and filler int[].
   const size_t obj_plus_filler_size = aligned_obj_size + alignment_reserve();
@@ -88,6 +93,8 @@ void ThreadLocalAllocBuffer::record_slow_allocation(size_t obj_size) {
   // a risk that a thread that repeatedly allocates objects of one
   // size will get stuck on this slow path.
 
+  // 这里的意思是，如果我们不把refile_waste_limit进行欺骗性增大，那么很有可能JVM在不断创建同等大小的对象，然后一直走slow这条调用线路，导致性能下降。
+  // 因此，在这里，我们欺骗性的增加refile_waste_limit的大小，这样，如果JVM不断创建同等大小的对象，最后，就不会再走这条调用线路。
   set_refill_waste_limit(refill_waste_limit() + refill_waste_limit_increment());
 
   _slow_allocations++;

@@ -1139,7 +1139,7 @@ UNSAFE_ENTRY(jclass, Unsafe_DefineAnonymousClass(JNIEnv *env, jobject unsafe, jc
   // this point.   The mirror and any instances of this class have to keep
   // it alive afterwards.
   if (anon_klass() != NULL) {
-    anon_klass->class_loader_data()->set_keep_alive(false);
+    anon_klass->class_loader_data()->set_keep_alive(false); // 这个匿名类的ClassLoaderData是可以被卸载的
   }
 
   // let caller initialize it as needed...

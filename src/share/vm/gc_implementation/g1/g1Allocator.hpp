@@ -52,10 +52,12 @@ public:
    virtual void init_gc_alloc_regions(EvacuationInfo& evacuation_info) = 0;
    virtual void release_gc_alloc_regions(uint no_of_gc_workers, EvacuationInfo& evacuation_info) = 0;
    virtual void abandon_gc_alloc_regions() = 0;
-
-   virtual MutatorAllocRegion*    mutator_alloc_region(AllocationContext_t context) = 0;
-   virtual SurvivorGCAllocRegion* survivor_gc_alloc_region(AllocationContext_t context) = 0;
-   virtual OldGCAllocRegion*      old_gc_alloc_region(AllocationContext_t context) = 0;
+   // 为用户线程分配eden区域的region
+   virtual MutatorAllocRegion*    mutator_alloc_region(AllocationContext_t context) = 0; // 纯虚函数声明，其默认实现都在G1DefaultAllocator中
+   // 分配survivor区域的region，这个肯定是gc线程触发的
+   virtual SurvivorGCAllocRegion* survivor_gc_alloc_region(AllocationContext_t context) = 0;// 纯虚函数声明，其默认实现都在G1DefaultAllocator中
+   // 分配old 区域的region
+   virtual OldGCAllocRegion*      old_gc_alloc_region(AllocationContext_t context) = 0;// 纯虚函数声明，其默认实现都在G1DefaultAllocator中
    virtual size_t                 used() = 0;
    virtual bool                   is_retained_old_region(HeapRegion* hr) = 0;
 
@@ -105,19 +107,25 @@ protected:
 
   HeapRegion* _retained_old_gc_alloc_region;
 public:
-  G1DefaultAllocator(G1CollectedHeap* heap) : G1Allocator(heap), _retained_old_gc_alloc_region(NULL) { }
+  G1DefaultAllocator(G1CollectedHeap* heap) : G1Allocator(heap), _retained_old_gc_alloc_region(NULL) { } // 在构造G1DefaultAllocator的时候，传入了G1CollectedHeap对内存实现
 
-  virtual void init_mutator_alloc_region();
-  virtual void release_mutator_alloc_region();
+  virtual void init_mutator_alloc_region(); // 见g1Allocator.cpp中方法的实现
+  virtual void release_mutator_alloc_region();// 见g1Allocator.cpp中方法的实现
 
-  virtual void init_gc_alloc_regions(EvacuationInfo& evacuation_info);
-  virtual void release_gc_alloc_regions(uint no_of_gc_workers, EvacuationInfo& evacuation_info);
+  virtual void init_gc_alloc_regions(EvacuationInfo& evacuation_info);// 见g1Allocator.cpp中方法的实现
+  virtual void release_gc_alloc_regions(uint no_of_gc_workers, EvacuationInfo& evacuation_info);// 见g1Allocator.cpp中方法的实现
   virtual void abandon_gc_alloc_regions();
 
-  virtual bool is_retained_old_region(HeapRegion* hr) {
+  virtual bool is_retained_old_region(HeapRegion* hr) { // 见g1Allocator.cpp中方法的实现
     return _retained_old_gc_alloc_region == hr;
   }
 
+  /**
+   * 可以看到，这个方法只是返回当前的_mutator_alloc_region，并不是去分配一个region
+   * 而_mutator_alloc_region的值是在init_mutator_alloc_region()方法中进行初始化的，一个MutatorAllocRegion对象维护了当前region的信息
+   * @param context
+   * @return
+   */
   virtual MutatorAllocRegion* mutator_alloc_region(AllocationContext_t context) {
     return &_mutator_alloc_region;
   }
@@ -149,7 +157,11 @@ private:
   bool _retired;
 
 public:
-  G1ParGCAllocBuffer(size_t gclab_word_size);
+    /**
+     * 构造方法实现 G1ParGCAllocBuffer::G1ParGCAllocBuffer
+     * @param gclab_word_size
+     */
+  G1ParGCAllocBuffer(size_t gclab_word_size);  // 声明这个G1ParGCAllocBuffer的构造函数
   virtual ~G1ParGCAllocBuffer() {
     guarantee(_retired, "Allocation buffer has not been retired");
   }
@@ -183,6 +195,12 @@ protected:
   size_t _alloc_buffer_waste;
   size_t _undo_waste;
 
+  /**
+   * 搜索 G1ParGCAllocator::allocate_direct_or_new_plab 查看调用者
+   * 用来统计这个G1ParGCAllocator所维护的所有的G1ParGCAllocBuffer的总的浪费空间，
+   *    比如我们在创建一个新的plab的时候，会把当前即将丢弃的plab的剩余空间加进来
+   * @param waste
+   */
   void add_to_alloc_buffer_waste(size_t waste) { _alloc_buffer_waste += waste; }
   void add_to_undo_waste(size_t waste)         { _undo_waste += waste; }
 
@@ -217,29 +235,67 @@ public:
   // Allocate word_sz words in dest, either directly into the regions or by
   // allocating a new PLAB. Returns the address of the allocated memory, NULL if
   // not successful.
+  /**
+   * 查看方法实现 G1ParGCAllocator::allocate_direct_or_new_plab
+   * 在 G1ParScanThreadState::copy_to_survivor_space中被调用
+   */
   HeapWord* allocate_direct_or_new_plab(InCSetState dest,
                                         size_t word_sz,
                                         AllocationContext_t context);
 
   // Allocate word_sz words in the PLAB of dest.  Returns the address of the
   // allocated memory, NULL if not successful.
+  /**
+   * TLAB（Thread Local Allocation Buffer）：
+        TLAB 是针对单个线程的，每个线程都有自己的 TLAB。
+        TLAB 是在 Java 虚拟机堆内存中为每个线程分配的一块小空间，用于线程本地的对象分配。
+        当一个线程需要分配对象时，首先尝试在自己的 TLAB 上进行分配。如果 TLAB 空间不足，则需要重新申请一个 TLAB。
+        TLAB 的使用可以减少线程之间的竞争，提高对象分配的效率。
+     PLAB（Parallel Local Allocation Buffer）：
+        PLAB 是针对并行垃圾回收算法的，在并行垃圾回收中，每个线程都有自己的 PLAB。
+        PLAB 也是用于线程本地的对象分配，但是与 TLAB 不同的是，PLAB 是为并行垃圾回收中的线程分配的。
+        PLAB 的作用类似于 TLAB，都是为了减少线程之间的竞争，提高对象分配的效率。
+     这个方法的全称是 G1ParGCAllocator::plab_allocate
+   * @param dest
+   * @param word_sz
+   * @param context
+   * @return
+   */
   HeapWord* plab_allocate(InCSetState dest,
                           size_t word_sz,
                           AllocationContext_t context) {
+      /**
+       * 搜索 virtual G1ParGCAllocBuffer* alloc_buffer
+       * 根据对象状态，取出对应状态的对象所应该分配的目标区域的G1ParGCAllocBuffer对象，该对象负责在这个区域中进行内存分配
+       */
     G1ParGCAllocBuffer* buffer = alloc_buffer(dest, context);
     if (_survivor_alignment_bytes == 0) {
-      return buffer->allocate(word_sz);
+      return buffer->allocate(word_sz); // ParGCAllocBuffer::allocate
     } else {
+        /**
+         * 方法的实现 搜索  ParGCAllocBuffer::allocate_aligned
+         */
       return buffer->allocate_aligned(word_sz, _survivor_alignment_bytes);
     }
   }
 
+  /**
+   * 调用者是 G1ParScanThreadState::allocate_in_next_plab
+   * @param dest
+   * @param word_sz
+   * @param context
+   * @return
+   */
   HeapWord* allocate(InCSetState dest, size_t word_sz,
                      AllocationContext_t context) {
+      /**
+       * 尝试在dest(Young或者old)区域进行分配
+       */
     HeapWord* const obj = plab_allocate(dest, word_sz, context);
     if (obj != NULL) {
-      return obj;
+      return obj; // 分配成功，返回对象
     }
+    // 分配失败，尝试为dest区域创建新的plab，或者直接将对象分配在堆内存中
     return allocate_direct_or_new_plab(dest, word_sz, context);
   }
 
@@ -256,13 +312,21 @@ public:
 };
 
 class G1DefaultParGCAllocator : public G1ParGCAllocator {
+    // 这三个变量在构造函数 G1DefaultParGCAllocator::G1DefaultParGCAllocator 中初始化
   G1ParGCAllocBuffer  _surviving_alloc_buffer;
   G1ParGCAllocBuffer  _tenured_alloc_buffer;
   G1ParGCAllocBuffer* _alloc_buffers[InCSetState::Num];
 
+  /**
+   * 声明了构造函数，构造函数调用是G1DefaultParGCAllocator::G1DefaultParGCAllocator
+   */
 public:
   G1DefaultParGCAllocator(G1CollectedHeap* g1h);
 
+  /**
+   * G1DefaultParGCAllocator维护了一个存放G1ParGCAllocBuffer*指针的数组_alloc_buffers，
+   * 数组的每一个元素是一个G1ParGCAllocBuffer指针，对应了某一个InCSetState状态的G1ParGCAllocBuffer对象
+   */
   virtual G1ParGCAllocBuffer* alloc_buffer(InCSetState dest, AllocationContext_t context) {
     assert(dest.is_valid(),
            err_msg("Allocation buffer index out-of-bounds: " CSETSTATE_FORMAT, dest.value()));

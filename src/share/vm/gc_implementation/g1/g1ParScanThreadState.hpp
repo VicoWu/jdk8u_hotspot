@@ -41,6 +41,10 @@ class outputStream;
 class G1ParScanThreadState : public StackObj {
  private:
   G1CollectedHeap* _g1h;
+  /**
+   * 这是一个 OverflowTaskQueue对象
+   * 搜索 push_on_queue可以看到往这里添加引用的过程，搜索 G1ParScanThreadState::trim_queue，可以看到从queue中弹出引用进行处理的过程
+   */
   RefToScanQueue*  _refs;
   DirtyCardQueue   _dcq;
   G1SATBCardTableModRefBS* _ct_bs;
@@ -51,7 +55,7 @@ class G1ParScanThreadState : public StackObj {
   ageTable          _age_table;
   InCSetState       _dest[InCSetState::Num];
   // Local tenuring threshold.
-  uint              _tenuring_threshold;
+  uint              _tenuring_threshold; // 初始化的时候(查看构造方法 G1ParScanThreadState::G1ParScanThreadState)，是根据Policy设置了晋升的年龄值
   G1ParScanClosure  _scanner;
 
   size_t            _alloc_buffer_waste;
@@ -106,6 +110,16 @@ class G1ParScanThreadState : public StackObj {
   bool verify_task(StarTask ref) const;
 #endif // ASSERT
 
+  /**
+   * 这个方法是类G1ParScanThreadState的方法
+   * 搜索 G1ParPushHeapRSClosure::do_oop_nv 方法 可以看到根扫描过程中往这个队列中添加引用的过程
+   *    比如 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)就将G1ParScanThreadState作为自己的成员
+   *
+   * 搜索 G1ParScanThreadState::trim_queue() 可以看到从_refs中取出元素处理的过程，
+   *    其实就是在根扫描完成以后进行转移的时候通过G1ParEvacuateFollowersClosure调用的
+   * @tparam T
+   * @param ref
+   */
   template <class T> void push_on_queue(T* ref) {
     assert(verify_ref(ref), "sanity");
     _refs->push(ref);
@@ -197,6 +211,12 @@ class G1ParScanThreadState : public StackObj {
   inline void do_oop_partial_array(oop* p);
 
   // This method is applied to the fields of the objects that have just been copied.
+  /**
+   * 搜索 template <class T> void G1ParScanThreadState::do_oop_evac 查看具体实现，这是一个内联方法
+   * @tparam T
+   * @param p
+   * @param from
+   */
   template <class T> inline void do_oop_evac(T* p, HeapRegion* from);
 
   template <class T> inline void deal_with_reference(T* ref_to_scan);
@@ -213,8 +233,7 @@ class G1ParScanThreadState : public StackObj {
                                   AllocationContext_t const context);
 
   inline InCSetState next_state(InCSetState const state, markOop const m, uint& age);
- public:
-
+ public: // 方法实现，搜索 G1ParScanThreadState::copy_to_survivor_space
   oop copy_to_survivor_space(InCSetState const state, oop const obj, markOop const old_mark);
 
   void trim_queue();

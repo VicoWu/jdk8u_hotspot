@@ -83,16 +83,19 @@ typedef GenericTaskQueueSet<RefToScanQueue, mtGC> RefToScanQueueSet;
 typedef int RegionIdx_t;   // needs to hold [ 0..max_regions() )
 typedef int CardIdx_t;     // needs to hold [ 0..CardsPerRegion )
 
+/**
+ * 一个Region只有一个YoungList对象
+ */
 class YoungList : public CHeapObj<mtGC> {
 private:
   G1CollectedHeap* _g1h;
 
-  HeapRegion* _head;
+  HeapRegion* _head; //头指针
 
   HeapRegion* _survivor_head;
   HeapRegion* _survivor_tail;
 
-  HeapRegion* _curr;
+  HeapRegion* _curr; //进行采样遍历的游标指针
 
   uint        _length;
   uint        _survivor_length;
@@ -125,9 +128,21 @@ public:
   size_t       survivor_used_bytes() {
     return (size_t) survivor_length() * HeapRegion::GrainBytes;
   }
-
+  /**
+   * 具体实现查看方法YoungList::rs_length_sampling_init()
+   * 设置采样的初始位置的指针
+   */
   void rs_length_sampling_init();
+  /**
+   * 只要当前的cursor还不是null，即还没有遍历完所有的young list region
+   * 具体方法查看YoungList::rs_length_sampling_more()
+   * @return
+   */
   bool rs_length_sampling_more();
+  /**
+   * 对当前的cursor指针指向的region进行采样
+   * 具体方法查看YoungList::rs_length_sampling_next()
+   */
   void rs_length_sampling_next();
 
   void reset_sampled_info() {
@@ -506,9 +521,20 @@ protected:
   //   humongous allocation requests should go to mem_allocate() which
   //   will satisfy them with a special path.
 
-  virtual HeapWord* allocate_new_tlab(size_t word_size);
+  /**
+   * 分配tlab，不可以在safepoint，不可以持有Heap_lock。如果在当前region分配失败，尝试获取一个新的region。如果失败，尝试进行gc pause然后重新尝试分配
+   * @param word_size
+   * @return
+   */
+  virtual HeapWord* allocate_new_tlab(size_t word_size); // 尝试将对象分配到TLAB上
 
-  virtual HeapWord* mem_allocate(size_t word_size,
+  /**
+   * 分配非-TLAB的内存结构，不可以在safepoint，不可以持有Heap_lock。如果在当前region分配失败，尝试获取一个新的region。如果失败，尝试进行gc pause然后重新尝试分配
+   * @param word_size
+   * @param gc_overhead_limit_was_exceeded
+   * @return
+   */
+  virtual HeapWord* mem_allocate(size_t word_size,  // 尝试将对象分配到普通的Region中
                                  bool*  gc_overhead_limit_was_exceeded);
 
   // The following three methods take a gc_count_before_ret
@@ -523,6 +549,14 @@ protected:
   // First-level mutator allocation attempt: try to allocate out of
   // the mutator alloc region without taking the Heap_lock. This
   // should only be used for non-humongous allocations.
+  /**
+   * 第一层的用户mutator线程的分配尝试，只为小对象分配服务，不占据Heap_lock。
+   * 需要跟G1AllocRegion层面的attempt_allocation方法 区分
+   * @param word_size
+   * @param gc_count_before_ret
+   * @param gclocker_retry_count_ret
+   * @return
+   */
   inline HeapWord* attempt_allocation(size_t word_size,
                                       uint* gc_count_before_ret,
                                       uint* gclocker_retry_count_ret);
@@ -530,6 +564,14 @@ protected:
   // Second-level mutator allocation attempt: take the Heap_lock and
   // retry the allocation attempt, potentially scheduling a GC
   // pause. This should only be used for non-humongous allocations.
+  /**
+   * 第二层的为用户mutator线程尝试分配，只为小对象分配服务。它会有Heap_lock并且会有重试，因此可能会触发GC暂停。
+   * @param word_size
+   * @param context
+   * @param gc_count_before_ret
+   * @param gclocker_retry_count_ret
+   * @return
+   */
   HeapWord* attempt_allocation_slow(size_t word_size,
                                     AllocationContext_t context,
                                     uint* gc_count_before_ret,
@@ -537,6 +579,7 @@ protected:
 
   // Takes the Heap_lock and attempts a humongous allocation. It can
   // potentially schedule a GC pause.
+  // 获取Heap_lock，然后尝试分配大对象
   HeapWord* attempt_allocation_humongous(size_t word_size,
                                          uint* gc_count_before_ret,
                                          uint* gclocker_retry_count_ret);
@@ -545,6 +588,7 @@ protected:
   // at the end of a successful GC). expect_null_mutator_alloc_region
   // specifies whether the mutator alloc region is expected to be NULL
   // or not.
+  // 在安全点进行用户的mutator线程分配内存，比如，刚刚进行了gc
   HeapWord* attempt_allocation_at_safepoint(size_t word_size,
                                             AllocationContext_t context,
                                             bool expect_null_mutator_alloc_region);
@@ -708,6 +752,16 @@ public:
   // the FullGCCount_lock in case a Java thread is waiting for a full
   // GC to happen (e.g., it called System.gc() with
   // +ExplicitGCInvokesConcurrent).
+  /**
+   * 这在并发周期或完整 GC 结束时调用，以更新已完成的旧标记周期数。
+   * 这两者可以以嵌套方式发生，即，我们开始一个并发循环，在其中途发生一次 Full GC，首先结束，然后该循环注意到发生了一次 Full GC，也结束了。
+   * 并发参数是一个布尔值，可以帮助我们在方法中进行更严格的一致性检查。
+   *    如果并发为 false，则调用者是嵌套中的内部调用者（即 Full GC）。
+   *    如果并发为 true，则调用者是此嵌套（即并发循环）中的外部调用者。
+   *    目前不支持进一步嵌套。
+   * 如果 Java 线程正在等待完整 GC 发生（例如，它使用 +ExplicitGCInvokesConcurrent 调用 System.gc()），此调用的结束还会通知 FullGCCount_lock。
+   * @param concurrent
+   */
   void increment_old_marking_cycles_completed(bool concurrent);
 
   uint old_marking_cycles_completed() {
@@ -776,6 +830,7 @@ protected:
   // The guts of the incremental collection pause, executed by the vm
   // thread. It returns false if it is unable to do the collection due
   // to the GC locker being active, true otherwise
+  // 增量的回收暂停，必须是vm_trhread执行
   bool do_collection_pause_at_safepoint(double target_pause_time_ms);
 
   // Actually do the work of evacuating the collection set.
@@ -798,6 +853,9 @@ protected:
   // references into the current collection set. This is used to
   // update the remembered sets of the regions in the collection
   // set in the event of an evacuation failure.
+  /**
+   * DirtyCardQueueSet 用于保存 包含当前回收集合中的引用的卡片。 这用于在疏散失败的情况下更新回收集合中Region的RSet。
+   */
   DirtyCardQueueSet _into_cset_dirty_card_queue_set;
 
   // After a collection pause, make the regions in the CS into free
@@ -1009,6 +1067,10 @@ public:
   // references into the current collection set. This is used to
   // update the remembered sets of the regions in the collection
   // set in the event of an evacuation failure.
+  /**
+   * DirtyCardQueueSet 用于保存 包含当前回收集合中的引用的卡片。 这用于在疏散失败的情况下更新回收集合中Region的RSet。
+   * @return
+   */
   DirtyCardQueueSet& into_cset_dirty_card_queue_set()
         { return _into_cset_dirty_card_queue_set; }
 
@@ -1095,9 +1157,14 @@ public:
   // allocation, via inlined code (by exporting the address of the top and
   // end fields defining the extent of the contiguous allocation region.)
   // But G1CollectedHeap doesn't yet support this.
-
+  /**
+   * 内存是否已经处于 在不进行gc的情况下已经无法继续扩展，那么返回true，否则返回false
+   * 这里的意思是，由于G1GC不支持一篇连续的非阻塞的内存分配，而是把内存分成一个个region，所以，对于G1GC，当可用内存为0，返回true，否则，返回false
+   *
+   * uint available() const { return max_length() - length(); }
+   */
   virtual bool is_maximal_no_gc() const {
-    return _hrm.available() == 0;
+    return _hrm.available() == 0; // hrm.available()返回目前可用的region数量，因此，is_maximal_no_gc()返回的是可用的region数量等于0
   }
 
   // The current number of regions in the heap.
@@ -1210,7 +1277,7 @@ public:
   // Perform a collection of the heap; intended for use in implementing
   // "System.gc".  This probably implies as full a collection as the
   // "CollectedHeap" supports.
-  virtual void collect(GCCause::Cause cause);
+  virtual void collect(GCCause::Cause cause); // 在这个方法里，用户执行了System.gc()，就会调用这个方法
 
   // The same as above but assume that the caller holds the Heap_lock.
   void collect_locked(GCCause::Cause cause);
@@ -1343,12 +1410,22 @@ public:
 
   // Given the id of a worker, obtain or calculate a suitable
   // starting region for iterating over the current collection set.
+  /**
+   * 查看具体实现，搜索 G1CollectedHeap::start_cset_region_for_worker
+   * @param worker_i
+   * @return
+   */
   HeapRegion* start_cset_region_for_worker(uint worker_i);
 
   // Iterate over the regions (if any) in the current collection set.
   void collection_set_iterate(HeapRegionClosure* blk);
 
   // As above but starting from region r
+  /**
+   * 具体实现查看 G1CollectedHeap::collection_set_iterate_from
+   * @param r
+   * @param blk
+   */
   void collection_set_iterate_from(HeapRegion* r, HeapRegionClosure *blk);
 
   HeapRegion* next_compaction_region(const HeapRegion* from) const;
@@ -1480,6 +1557,7 @@ public:
   void set_region_short_lived_locked(HeapRegion* hr);
   // add appropriate methods for any other surv rate groups
 
+  // 一个堆中只有一个YoungList对象，维护了当前年轻代所有的region
   YoungList* young_list() const { return _young_list; }
 
   // debugging

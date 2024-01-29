@@ -70,9 +70,9 @@
 class VM_GC_Operation: public VM_Operation {
  protected:
   BasicLock      _pending_list_basic_lock; // for refs pending list notification (PLL)
-  uint           _gc_count_before;         // gc count before acquiring PLL
-  uint           _full_gc_count_before;    // full gc count before acquiring PLL
-  bool           _full;                    // whether a "full" collection
+  uint           _gc_count_before;         // 在获取Pending List Lock以前的gc count PLL
+  uint           _full_gc_count_before;    //  在获取Pending List Lock以前的gc count PLL
+  bool           _full;                    // 是否是一个full collection
   bool           _prologue_succeeded;      // whether doit_prologue succeeded
   GCCause::Cause _gc_cause;                // the putative cause for this gc op
   bool           _gc_locked;               // will be set if gc was locked

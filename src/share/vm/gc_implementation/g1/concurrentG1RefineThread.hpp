@@ -32,6 +32,9 @@ class CardTableEntryClosure;
 class ConcurrentG1Refine;
 
 // The G1 Concurrent Refinement Thread (could be several in the future).
+/**
+ *  这个类在ConcurrentG1Refine::ConcurrentG1Refine中被构造
+ */
 
 class ConcurrentG1RefineThread: public ConcurrentGCThread {
   friend class VMStructs;
@@ -46,7 +49,7 @@ class ConcurrentG1RefineThread: public ConcurrentGCThread {
   // when the number of the rset update buffer crosses a certain threshold. A successor
   // would self-deactivate when the number of the buffers falls below the threshold.
   bool _active;
-  ConcurrentG1RefineThread* _next;
+  ConcurrentG1RefineThread* _next; // Refine线程池的下一个线程，所以，每个线程只能通知下一个线程启动
   Monitor* _monitor;
   ConcurrentG1Refine* _cg1r;
 

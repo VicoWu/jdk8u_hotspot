@@ -84,47 +84,74 @@ void VM_GC_Operation::release_and_notify_pending_list_lock() {
 // resulting in multiple gc requests.  We only want to do one of them.
 // In case a GC locker is active and the need for a GC is already signalled,
 // we want to skip this GC attempt altogether, without doing a futile
-// safepoint operation.
+// safepoint operation. 避免无意义的安全点操作
+// 这里skip的原因是，构造VM_GC_Operation的时候的gc数量不等于实时的gc的数量，说明中间已经进行过gc，没必要重复进行无意义的gc
 bool VM_GC_Operation::skip_operation() const {
-  bool skip = (_gc_count_before != Universe::heap()->total_collections());
-  if (_full && skip) {
-    skip = (_full_gc_count_before != Universe::heap()->total_full_collections());
+  bool skip = (_gc_count_before != Universe::heap()->total_collections()); // 如果获取PLL以前统计的gc数量(即构造这个VM_GC_Operation对象时的GC数量)已经不等于当前实时的gc数量，说明中间经历了多次gc
+  if (_full && skip) { // 尽管整个gc的数量不一致(skip = true)，但是，目前这个VM_GC_Operation是用来进行full gc，那么，只要full gc的数量不一致，skip依然可以为false
+    skip = (_full_gc_count_before != Universe::heap()->total_full_collections()); // full gc 的数量统计也不对
   }
+  // skip 是false，说明构造VM_GC_Operation的时候整个gc的数量等于目前的gc数量，或者，尽管整体数量不等，但是当前进行的是full gc并且full gc的数量等于目前实时的full gc的数量
+  // is_active_and_needs_gc()的内在含义是，当前有线程处在临界区，并且内存是需要gc的状态，当线程离开临界区的时候，肯定会触发一次gc请求(查看代码jni_unlock())
+  // 中间的确没有进行过其他gc，并且当前有现成在临界区并且内存状态需要gc(需要gc的意思是，有回收尝试进行，发现is_active=true，因此设置needs_gc=true并放弃)，并且已经进行了signal，并且GCLocker是活跃的
   if (!skip && GC_locker::is_active_and_needs_gc()) {
-    skip = Universe::heap()->is_maximal_no_gc();
-    assert(!(skip && (_gc_cause == GCCause::_gc_locker)),
+      // 堆可以扩展，skip == false；堆无法扩展，skip == true
+      skip = Universe::heap()->is_maximal_no_gc(); // 如果可用region的数量等于0，即堆内存已经无法扩展达到最大状态，那么就skip，如果可用的region数量不等于0，即还有可用内存，那么就需要执行本次gc
+    // 如果skip为true，_gc_cause不可以是GCCause::_gc_locker，搜索Universe::heap()->collect(GCCause::_gc_locker)，
+    // 在GC_Locker::jni_unlock中，会发起一个gc,有可能是并发gc，也有可能是G1IncCollectionPause等
+    /**
+    * skip==true代表堆已经无法扩展，GC_Locker处于活跃状态，并且GC_Locker发起了一次请求
+    */
+    assert(!(skip && (_gc_cause == GCCause::_gc_locker)), // 从jni_unlock()可以看到，只有当is_active为false并且needs_gc()为true的时候，_gc_cause才会为GCCause::_gc_locker
            "GC_locker cannot be active when initiating GC");
+    /**
+     * !(skip && (_gc_cause == GCCause::_gc_locker))：对上述条件取否定。即，如果需要跳过垃圾回收，
+     * 且是由 GC locker 触发的，那么断言会失败，因为这意味着在 GC locker 活动的情况下仍然试图触发垃圾回收。
+
+    "GC_locker cannot be active when initiating GC"：断言失败时输出的错误消息，说明触发垃圾回收时，不允许 GC locker 处于活动状态。
+
+        这个断言的目的是确保在 GC locker 处于活动状态时，不会触发垃圾回收，因为 GC locker 本身可能会在一些关键区域执行代码，而在这些区域触发垃圾回收可能导致不一致的状态。
+        因此，这个断言确保了在垃圾回收被触发时，不会同时存在 GC locker 的活动。如果条件不满足，会触发断言错误。在生产环境中，这样的断言通常用于调试目的，以便尽早发现潜在问题。
+     */
+
   }
   return skip;
 }
 
+/**
+ * 这个doit_prologue会在子类的doit_prologue中被率先调用，比如
+ * @return
+ */
 bool VM_GC_Operation::doit_prologue() {
+    // 必须是Java Thread
   assert(Thread::current()->is_Java_thread(), "just checking");
   assert(((_gc_cause != GCCause::_no_gc) &&
-          (_gc_cause != GCCause::_no_cause_specified)), "Illegal GCCause");
+          (_gc_cause != GCCause::_no_cause_specified)), "Illegal GCCause"); // 必须有gc cause
 
   // To be able to handle a GC the VM initialization needs to be completed.
-  if (!is_init_completed()) {
+  if (!is_init_completed()) { // 在初始化完成以前就出发了这个操作，这可能是由于newSize太小导致
     vm_exit_during_initialization(
       err_msg("GC triggered before VM initialization completed. Try increasing "
               "NewSize, current value " UINTX_FORMAT "%s.",
               byte_size_in_proper_unit(NewSize),
               proper_unit_for_byte_size(NewSize)));
   }
-
+  //  确保获取了Reference的Pending List Lock
   acquire_pending_list_lock();
   // If the GC count has changed someone beat us to the collection
   // Get the Heap_lock after the pending_list_lock.
-  Heap_lock->lock();
+  Heap_lock->lock(); // 锁堆内存
 
   // Check invocations
+  // skip本次执行，判断的主要标准是构造VM_GC_Operation对象的时候传入的回收次数信息，
+  // 和当前实时的回收次数信息是否一致，如果不一致，说明中间已经进行过gc，因此没必要再重复进行gc
   if (skip_operation()) {
     // skip collection
-    Heap_lock->unlock();
-    release_and_notify_pending_list_lock();
-    _prologue_succeeded = false;
-  } else {
-    _prologue_succeeded = true;
+    Heap_lock->unlock(); // 释放Heap_Lock
+    release_and_notify_pending_list_lock(); // 释放PLL
+    _prologue_succeeded = false; // 返回false
+  } else { //继续执行
+    _prologue_succeeded = true; // 返回true
     SharedHeap* sh = SharedHeap::heap();
     if (sh != NULL) sh->_thread_holds_heap_lock_for_gc = true;
   }

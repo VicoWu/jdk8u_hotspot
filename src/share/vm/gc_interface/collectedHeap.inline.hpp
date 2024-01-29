@@ -123,7 +123,7 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
 
   HeapWord* result = NULL;
   if (UseTLAB) {
-    result = allocate_from_tlab(klass, THREAD, size);
+    result = allocate_from_tlab(klass, THREAD, size); // 从TLAB分配内存，中间有可能  TLAB分配失败
     if (result != NULL) {
       assert(!HAS_PENDING_EXCEPTION,
              "Unexpected exception, will result in uninitialized storage");
@@ -131,14 +131,15 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
     }
   }
   bool gc_overhead_limit_was_exceeded = false;
-  result = Universe::heap()->mem_allocate(size,
-                                          &gc_overhead_limit_was_exceeded);
+  // 使用TLAB分配失败，尝试使用普通的内存分配方式
+  result = Universe::heap()->mem_allocate(size, // 在这里，可能会抛出我们熟悉的Java heap space异常
+                                          &gc_overhead_limit_was_exceeded);  // 这里调用的是具体的CollectHeap的实现类，比如G1CollectedHeap
   if (result != NULL) {
     NOT_PRODUCT(Universe::heap()->
       check_for_non_bad_heap_word_value(result, size));
     assert(!HAS_PENDING_EXCEPTION,
            "Unexpected exception, will result in uninitialized storage");
-    THREAD->incr_allocated_bytes(size * HeapWordSize);
+    THREAD->incr_allocated_bytes(size * HeapWordSize); // 更新当前线程的allocated_bytes方法
 
     AllocTracer::send_allocation_outside_tlab_event(klass, size * HeapWordSize);
 
@@ -180,7 +181,7 @@ HeapWord* CollectedHeap::common_mem_allocate_init(KlassHandle klass, size_t size
 HeapWord* CollectedHeap::allocate_from_tlab(KlassHandle klass, Thread* thread, size_t size) {
   assert(UseTLAB, "should use UseTLAB");
 
-  HeapWord* obj = thread->tlab().allocate(size);
+  HeapWord* obj = thread->tlab().allocate(size); // 在当前线程的TLAB中尝试分配
   if (obj != NULL) {
     return obj;
   }

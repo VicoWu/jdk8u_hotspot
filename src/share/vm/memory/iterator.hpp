@@ -40,7 +40,9 @@ class KlassClosure;
 class ClassLoaderData;
 
 // Closure provides abortability.
-
+/**
+ * oop 是 Object-Oriented Pointer（面向对象指针）的缩写，
+ */
 class Closure : public StackObj {
  protected:
   bool _abort;
@@ -54,7 +56,9 @@ class Closure : public StackObj {
 };
 
 // OopClosure is used for iterating through references to Java objects.
-
+/**
+ * oop 是 Object-Oriented Pointer（面向对象指针）的缩写，
+ */
 class OopClosure : public Closure {
  public:
   virtual void do_oop(oop* o) = 0;

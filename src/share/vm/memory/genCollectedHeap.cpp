@@ -371,7 +371,7 @@ void GenCollectedHeap::do_collection(bool  full,
          "the requesting thread should have the Heap_lock");
   guarantee(!is_gc_active(), "collection is not reentrant");
   assert(max_level < n_gens(), "sanity check");
-
+  // 当前有现成处于临界区，直接放弃gc。在临界区状态结束以后，会重新立刻调度gc
   if (GC_locker::check_active_before_gc()) {
     return; // GC is disabled (e.g. JNI GetXXXCritical operation)
   }

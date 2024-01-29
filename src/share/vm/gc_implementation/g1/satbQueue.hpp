@@ -42,6 +42,12 @@ public:
 };
 
 // A ptrQueue whose elements are "oops", pointers to object heads.
+/**
+ * 一个指向对象头不的ordinary object pointers，即指向对象头部的普通对象头部指针
+ * PtrQueue有两个子类，ObjPtrQueue和DirtyCardQueue，分别负责SATB和转移专用写屏障的写操作的线程本地队列，
+ * 他们都有对应的全局Queue Set， 分别叫做 SATBMarkQueueSet 和 DirtyCardQueueSet，这些QueueSet里面都有对应的一个全局的PtrQueue的对象
+ *     并且都有对应的QueueSet来负责全局的队列
+ */
 class ObjPtrQueue: public PtrQueue {
   friend class SATBMarkQueueSet;
 

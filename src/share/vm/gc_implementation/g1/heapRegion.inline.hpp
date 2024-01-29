@@ -32,6 +32,12 @@
 #include "runtime/atomic.inline.hpp"
 
 // This version requires locking.
+/**
+ * 有锁版本的内存分配，需要在外部加锁
+ * 调用者是 G1OffsetTableContigSpace::allocate
+ *
+ */
+
 inline HeapWord* G1OffsetTableContigSpace::allocate_impl(size_t size,
                                                 HeapWord* const end_value) {
   HeapWord* obj = top();
@@ -46,39 +52,57 @@ inline HeapWord* G1OffsetTableContigSpace::allocate_impl(size_t size,
 }
 
 // This version is lock-free.
+// 这里的lock free的意思是，通过反复尝试分配
 inline HeapWord* G1OffsetTableContigSpace::par_allocate_impl(size_t size,
                                                     HeapWord* const end_value) {
   do {
     HeapWord* obj = top();
+      // 当前空间'看起来'足够，尝试进行分配(注意，这里是无锁尝试，尽管现在空间足够，但是依然可能由于多线程竞争，导致原子比较交换失败)
     if (pointer_delta(end_value, obj) >= size) {
       HeapWord* new_top = obj + size;
+      // 通过原子比较交换，将top的值更新为new_top
       HeapWord* result = (HeapWord*)Atomic::cmpxchg_ptr(new_top, top_addr(), obj);
       // result can be one of two:
       //  the old top value: the exchange succeeded
       //  otherwise: the new value of the top is returned.
-      if (result == obj) {
+      if (result == obj) { // 如果比较交换成功，那么返回对象地址肯定是不变的
         assert(is_aligned(obj) && is_aligned(new_top), "checking alignment");
         return obj;
       }
-    } else {
+    } else { // 地址不够
       return NULL;
     }
   } while (true);
 }
 
+/**
+ * 这个内存分配必须在外部加锁，在内存中分配一个大小为size的内存区域
+ * 查看调用方 TenuredGeneration::par_promote
+ * @param size
+ * @return
+ */
 inline HeapWord* G1OffsetTableContigSpace::allocate(size_t size) {
-  HeapWord* res = allocate_impl(size, end());
-  if (res != NULL) {
-    _offsets.alloc_block(res, size);
-  }
+  HeapWord* res = allocate_impl(size, end()); // 进行内存分配，返回内存分配的字地址
+  if (res != NULL) { //如果分配成功，那么需要更新和维护对应的BOT, 搜索 G1BlockOffsetArrayContigSpace::alloc_block查看具体的调用者
+      /**
+       * _offsets的类型是 G1BlockOffsetArrayContigSpace,
+       * 查看方法实现 G1BlockOffsetArrayContigSpace::alloc_block
+       */
+      _offsets.alloc_block(res, size);
+}
   return res;
 }
 
 // Because of the requirement of keeping "_offsets" up to date with the
 // allocations, we sequentialize these with a lock.  Therefore, best if
 // this is used for larger LAB allocations only.
+/**
+ * 这个方法的调用者是HeapWord* G1AllocRegion::par_allocate，可以看到，这个方法要求维护块偏移表
+ * @param size
+ * @return
+ */
 inline HeapWord* G1OffsetTableContigSpace::par_allocate(size_t size) {
-  MutexLocker x(&_par_alloc_lock);
+  MutexLocker x(&_par_alloc_lock); // 必须对内存加锁
   return allocate(size);
 }
 
@@ -127,12 +151,26 @@ HeapRegion::block_size(const HeapWord *addr) const {
   return pointer_delta(next, addr);
 }
 
+/**
+ * 进行无锁方式的内存分配
+ * 调用者是 HeapWord* G1AllocRegion::par_allocate
+ * 这个方法必须是用来在年轻代进行对象分配(比如用户的mutator线程发起的分配)，因此才可以允许不更新bot
+ */
 inline HeapWord* HeapRegion::par_allocate_no_bot_updates(size_t word_size) {
+  // 只有在young区可以跳过bot update
   assert(is_young(), "we can only skip BOT updates on young regions");
-  return par_allocate_impl(word_size, end());
+  /**
+   * HeapRegion是 G1OffsetTableContigSpace的子类，这里其实调用的是G1OffsetTableContigSpace::par_allocate_impl
+   */
+
+  return par_allocate_impl(word_size, end()); // 进行无锁内存分配
 }
 
+/**
+ * 进行有锁方式的内存分配
+ */
 inline HeapWord* HeapRegion::allocate_no_bot_updates(size_t word_size) {
+  // 只有在young区可以跳过bot update
   assert(is_young(), "we can only skip BOT updates on young regions");
   return allocate_impl(word_size, end());
 }

@@ -53,6 +53,16 @@ private:
   // 0010 1 [ 5] Humongous Continues
   //
   // 01000 [ 8] Old
+  /**
+   * FreeTag: 表示空闲的堆区域
+   * YoungMask: 表示年轻代堆区域的掩码，用于标识年轻代中的其他类型。
+   *    EdenTag: 表示伊甸园区域。
+   *    SurvTag: 表示幸存者区域。
+   * HumMask: 表示巨型对象（humongous）堆区域的掩码，用于标识巨型对象区域中的其他类型。
+   *    HumStartsTag: 表示巨型对象起始区域。
+   *    HumContTag: 表示巨型对象连续区域。
+   * OldTag: 表示老年代堆区域。
+   */
   typedef enum {
     FreeTag       = 0,
 
@@ -100,10 +110,17 @@ public:
 
   bool is_free() const { return get() == FreeTag; }
 
+  /**
+   * 参考 HeapRegionType
+   * 由于young 是 0010，而eden是0010，survivor是0011，因此在进行了与操作以后，is_young对于eden和survivor都会返回true
+   */
   bool is_young()    const { return (get() & YoungMask) != 0; }
   bool is_eden()     const { return get() == EdenTag;  }
   bool is_survivor() const { return get() == SurvTag;  }
 
+  /**
+   * 由于HumMask是0100，所以可以看到，无论是start_humongous,还是continues_humoungous，is_humongous都是true
+   */
   bool is_humongous()           const { return (get() & HumMask) != 0; }
   bool is_starts_humongous()    const { return get() == HumStartsTag;  }
   bool is_continues_humongous() const { return get() == HumContTag;    }

@@ -31,9 +31,12 @@
 
 void G1DefaultAllocator::init_mutator_alloc_region() {
   assert(_mutator_alloc_region.get() == NULL, "pre-condition");
-  _mutator_alloc_region.init();
+  _mutator_alloc_region.init(); // 查看 G1AllocRegion::init
 }
 
+/**
+ * 这里只是初始化mutator_region，而初始化gc和old region是放在init_gc_alloc_regions中的
+ */
 void G1DefaultAllocator::release_mutator_alloc_region() {
   _mutator_alloc_region.release();
   assert(_mutator_alloc_region.get() == NULL, "post-condition");
@@ -110,18 +113,43 @@ void G1DefaultAllocator::abandon_gc_alloc_regions() {
   _retained_old_gc_alloc_region = NULL;
 }
 
+/**
+ * G1ParGCAllocBuffer的构造方法，其实是调用父类方法ParGCAllocBuffer
+ */
 G1ParGCAllocBuffer::G1ParGCAllocBuffer(size_t gclab_word_size) :
   ParGCAllocBuffer(gclab_word_size), _retired(true) { }
 
+  /**
+   * 查看调用方法 G1ParScanThreadState::copy_to_survivor_space
+   * @return
+   */
 HeapWord* G1ParGCAllocator::allocate_direct_or_new_plab(InCSetState dest,
                                                         size_t word_sz,
                                                         AllocationContext_t context) {
-  size_t gclab_word_size = _g1h->desired_plab_sz(dest);
+  size_t gclab_word_size = _g1h->desired_plab_sz(dest);// 获取目标区域的gclab的大小
+      /**
+       * PLAB中的参数ParallelGCBufferWastePct与TLAB中TLABRefillWasteFraction的含义类似
+       * 只有当已经尝试在当前的plab中分配并且失败，才会调用allocate_direct_or_new_plab()，这说明调用allocate_direct_or_new_plab的时候，
+       *        当前plab的剩余空间已经小到无法容纳当前对象，因此，这时候就需要根据对象大小来判断下一步是创建一个新的plab，还是将对象直接分配在堆内存中。
+       *            如果对象很小，即word_sz * 100 < gclab_word_size * ParallelGCBufferWastePct，那么就尝试创建一个新的plab，
+       *                因为jvm不希望直接将很小的对象直接分配在堆内存中。
+       *            而如果对象不是特别小，那就直接将对象分配在堆内存中，省去了创建一个新的plab的开销。。。
+       */
   if (word_sz * 100 < gclab_word_size * ParallelGCBufferWastePct) {
-    G1ParGCAllocBuffer* alloc_buf = alloc_buffer(dest, context);
+      /**
+       * 如果需要分配的空间足够小
+       */
+    G1ParGCAllocBuffer* alloc_buf = alloc_buffer(dest, context); // 获取 G1ParGCAllocator维护的这个dest对应的G1ParGCAllocBuffer对象
+    /**
+     *  由于需要创建一个新的plab，因此将当前plab的剩余空间(即浪费掉的空间)加入到G1ParGCAllocator的_alloc_buffer_waste的统计值中
+     */
     add_to_alloc_buffer_waste(alloc_buf->words_remaining());
+    // 将当前的这个G1ParGCAllocBuffer从G1ParGCAllocator中卸载掉
     alloc_buf->retire(false /* end_of_gc */, false /* retain */);
-
+    /**
+     * 在堆内存中直接分配一个plab，这个plab的大小是gclab_word_size
+     * 返回分配的地址的字地址
+     */
     HeapWord* buf = _g1h->par_allocate_during_gc(dest, gclab_word_size, context);
     if (buf == NULL) {
       return NULL; // Let caller handle allocation failure.
@@ -129,23 +157,36 @@ HeapWord* G1ParGCAllocator::allocate_direct_or_new_plab(InCSetState dest,
     // Otherwise.
     alloc_buf->set_word_size(gclab_word_size);
     alloc_buf->set_buf(buf);
-
+    // 在新分配的G1ParGCAllocBuffer中分配word_sz个字的空间
     HeapWord* const obj = alloc_buf->allocate(word_sz);
     assert(obj != NULL, "buffer was definitely big enough...");
     return obj;
   } else {
+      /**
+       * 如果要分配的内存大小不小于当前 GCLAB 的大小乘以并行 GC 缓冲浪费百分比的值,
+       *    从堆中分配所需大小的内存，并将分配的对象指针返回给调用方
+       */
     return _g1h->par_allocate_during_gc(dest, word_sz, context);
   }
 }
 
+/**
+ * G1DefaultParGCAllocator的构造方法
+ * @param g1h
+ */
 G1DefaultParGCAllocator::G1DefaultParGCAllocator(G1CollectedHeap* g1h) :
-  G1ParGCAllocator(g1h),
-  _surviving_alloc_buffer(g1h->desired_plab_sz(InCSetState::Young)),
-  _tenured_alloc_buffer(g1h->desired_plab_sz(InCSetState::Old)) {
+  G1ParGCAllocator(g1h), // 调用父类的构造函数
+  /**
+   * 搜索 G1CollectedHeap::desired_plab_sz(InCSetState dest)
+   */
+  _surviving_alloc_buffer(g1h->desired_plab_sz(InCSetState::Young)), // 初始化_surviving_alloc_buffer
+  _tenured_alloc_buffer(g1h->desired_plab_sz(InCSetState::Old)) { // 初始化_tenured_alloc_buffer
   for (uint state = 0; state < InCSetState::Num; state++) {
-    _alloc_buffers[state] = NULL;
+    _alloc_buffers[state] = NULL; // 对于每一个InCSetState，初始化_alloc_buffers中的对应位置
   }
+  // 当前处于Young的，应该移动到survivor 区域
   _alloc_buffers[InCSetState::Young] = &_surviving_alloc_buffer;
+  // 当前处于old的，应该移动到tenured区域
   _alloc_buffers[InCSetState::Old]  = &_tenured_alloc_buffer;
 }
 

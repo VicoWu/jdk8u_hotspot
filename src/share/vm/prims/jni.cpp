@@ -4259,7 +4259,7 @@ JNI_ENTRY(void*, jni_GetPrimitiveArrayCritical(JNIEnv *env, jarray array, jboole
  HOTSPOT_JNI_GETPRIMITIVEARRAYCRITICAL_ENTRY(
                                              env, array, (uintptr_t *) isCopy);
 #endif /* USDT2 */
-  GC_locker::lock_critical(thread);
+  GC_locker::lock_critical(thread); //
   if (isCopy != NULL) {
     *isCopy = JNI_FALSE;
   }

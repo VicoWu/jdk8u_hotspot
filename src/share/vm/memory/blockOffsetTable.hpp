@@ -107,16 +107,20 @@ class BlockOffsetSharedArray: public CHeapObj<mtGC> {
 
  private:
   enum SomePrivateConstants {
-    LogN = 9,
+    LogN = 9,  // 偏移数组的大小（字节数）为2的多少次方
+    /**
+     * LogN 表示偏移数组的大小（以2为底的对数），而 LogHeapWordSize 表示 HeapWord 的大小（以2为底的对数）。
+     *  因此，LogN_words 表示偏移数组索引的位数，它等于偏移数组大小的对数减去 HeapWord 的大小的对数，这样就可以确定偏移数组的索引位数
+     */
     LogN_words = LogN - LogHeapWordSize,
-    N_bytes = 1 << LogN,
-    N_words = 1 << LogN_words
+    N_bytes = 1 << LogN, // 偏移数组的大小（以字节为单位）
+    N_words = 1 << LogN_words // 偏移数组的大小(以HeapWord为单位)
   };
 
   bool _init_to_zero;
 
   // The reserved region covered by the shared array.
-  MemRegion _reserved;
+  MemRegion _reserved; // 这个ShardArray所覆盖的子区域
 
   // End of the current committed region.
   HeapWord* _end;
@@ -124,6 +128,9 @@ class BlockOffsetSharedArray: public CHeapObj<mtGC> {
   // Array for keeping offsets for retrieving object start fast given an
   // address.
   VirtualSpace _vs;
+  /**
+   * 存储 偏移量数组
+   */
   u_char* _offset_array;          // byte array keeping backwards offsets
 
  protected:
@@ -515,6 +522,12 @@ class BlockOffsetArrayNonContigSpace: public BlockOffsetArray {
 // that its underlying space is a ContiguousSpace, so that its "active"
 // region can be more efficiently tracked (than for a non-contiguous space).
 ////////////////////////////////////////////////////////////////////////////
+/**
+ * 这是BlockOffsetArray 的子类型，利用其底层空间是 ContigouslySpace 的事实，以便可以更有效地跟踪其“活动”区域（比非连续空间)
+ *
+ * class G1OffsetTableContigSpace 中 块偏移表 _offset的类型就是 BlockOffsetArrayContigSpace（搜索 G1BlockOffsetArrayContigSpace _offsets）
+ *
+ */
 class BlockOffsetArrayContigSpace: public BlockOffsetArray {
   friend class VMStructs;
  private:

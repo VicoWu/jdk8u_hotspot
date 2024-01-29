@@ -143,7 +143,9 @@ public:
   static void check_for_lazy_critical_native(JavaThread *thread, JavaThreadState state);
 
   // Query
+  // 确认所有线程是否都已经处于安全点
   inline static bool is_at_safepoint()   { return _state == _synchronized;  }
+  // 确认当前是否处于正在进入安全点
   inline static bool is_synchronizing()  { return _state == _synchronizing;  }
 
   inline static bool do_call_back() {

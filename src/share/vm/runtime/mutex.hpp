@@ -182,7 +182,8 @@ class Monitor : public CHeapObj<mtInternal> {
   // Defaults are to make safepoint checks, wait time is forever (i.e.,
   // zero), and not a suspend-equivalent condition. Returns true if wait
   // times out; otherwise returns false.
-  bool wait(bool no_safepoint_check = !_no_safepoint_check_flag,
+  // 搜 Monitor::wait
+  bool wait(bool no_safepoint_check = !_no_safepoint_check_flag, // 默认进行safepoint检查
             long timeout = 0,
             bool as_suspend_equivalent = !_as_suspend_equivalent_flag);
   bool notify();

@@ -59,6 +59,11 @@ class CardTableModRefBS: public ModRefBarrierSet {
 #endif
  protected:
 
+    /**
+     * 卡片状态值，用每一位的1表示对应的状态
+     * enum CardValues使用二进制的某一个位是否为1来标记当前的卡片的状态是否为该为的对应状态
+     * 这是因为一个卡片可能同时处于CardValues中的一个或者多个状态
+     */
   enum CardValues {
     clean_card                  = -1,
     // The mask contains zeros in places for all other values.
@@ -343,10 +348,19 @@ public:
 
   // These are used by G1, when it uses the card table as a temporary data
   // structure for card claiming.
+  /**
+   * CardTableModRefBS的方法，查看对应索引的卡片是否是脏卡片
+   * @param card_index 卡片索引
+   * @return
+   */
   bool is_card_dirty(size_t card_index) {
     return _byte_map[card_index] == dirty_card_val();
   }
 
+  /**
+   * CardTableModRefBS 的方法，将卡片标记为脏卡片
+   * @param card_index
+   */
   void mark_card_dirty(size_t card_index) {
     _byte_map[card_index] = dirty_card_val();
   }

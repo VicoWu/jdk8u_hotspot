@@ -102,10 +102,10 @@
 class VM_Operation: public CHeapObj<mtInternal> {
  public:
   enum Mode {
-    _safepoint,       // blocking,        safepoint, vm_op C-heap allocated
-    _no_safepoint,    // blocking,     no safepoint, vm_op C-Heap allocated
-    _concurrent,      // non-blocking, no safepoint, vm_op C-Heap allocated
-    _async_safepoint  // non-blocking,    safepoint, vm_op C-Heap allocated
+    _safepoint,       // blocking,        safepoint, vm_op C-heap allocated // 同步safepoint，即需要safepoint，也需要加锁
+    _no_safepoint,    // blocking,     no safepoint, vm_op C-Heap allocated // 不需要safepoint，但是是阻塞的，因此需要加锁
+    _concurrent,      // non-blocking, no safepoint, vm_op C-Heap allocated // 不需要safepoint，也不需要加锁
+    _async_safepoint  // non-blocking,    safepoint, vm_op C-Heap allocated // 异步safepoint，即需要safepoint，但是不需要锁
   };
 
   enum VMOp_Type {
@@ -136,7 +136,7 @@ class VM_Operation: public CHeapObj<mtInternal> {
   void set_timestamp(long timestamp)  { _timestamp = timestamp; }
 
   // Called by VM thread - does in turn invoke doit(). Do not override this
-  void evaluate();
+  void evaluate(); //在VMThread的loop()中被调用，其实是调用对应的VM_Operation的doit()方法
 
   // evaluate() is called by the VMThread and in turn calls doit().
   // If the thread invoking VMThread::execute((VM_Operation*) is a JavaThread,
@@ -145,8 +145,14 @@ class VM_Operation: public CHeapObj<mtInternal> {
   // If doit_prologue() returns true the VM operation will proceed, and
   // doit_epilogue() will be called by the JavaThread once the VM operation
   // completes. If doit_prologue() returns false the VM operation is cancelled.
+  /**
+   * evaluate() 由 VMThread 调用，然后调用 doit()。
+   * 如果调用 VMThread::execute((VM_Operation*) 的线程是 JavaThread，则在将控制权转移到 VMThread 之前，
+   * 会在该线程中调用 doit_prologue()。如果 doit_prologue() 返回 true，则 VM 操作将继续，
+   * 并且JavaThread也会在 doit_epilogue() 执行 完VM 操作以后被调用。如果 doit_prologue() 返回 false，则 VM 操作将被取消。
+   */
   virtual void doit()                            = 0;
-  virtual bool doit_prologue()                   { return true; };
+  virtual bool doit_prologue()                   { return true; }; // 只有当doit_prologue()返回true， doit()才会被执行。
   virtual void doit_epilogue()                   {}; // Note: Not called if mode is: _concurrent
 
   // Type test
@@ -160,7 +166,7 @@ class VM_Operation: public CHeapObj<mtInternal> {
 
   // Configuration. Override these appropriatly in subclasses.
   virtual VMOp_Type type() const = 0;
-  virtual Mode evaluation_mode() const            { return _safepoint; }
+  virtual Mode evaluation_mode() const            { return _safepoint; } // 默认的执行方式是同步的safepoint
   virtual bool allow_nested_vm_operations() const { return false; }
   virtual bool is_cheap_allocated() const         { return false; }
   virtual void oops_do(OopClosure* f)              { /* do nothing */ };
@@ -172,10 +178,22 @@ class VM_Operation: public CHeapObj<mtInternal> {
   // vm thread, either concurrently with mutators or with the mutators
   // stopped. In other words, taking locks is verboten, and if there
   // are any races in evaluating the conditions, they'd better be benign.
+  /**
+   * 是否是safepoint的operation，包括需要加锁和不需要加锁
+   * @return
+   */
   virtual bool evaluate_at_safepoint() const {
     return evaluation_mode() == _safepoint  ||
            evaluation_mode() == _async_safepoint;
   }
+
+  /**
+   * 是否是concurrently(不需要加锁)
+   * 不需要要加锁的操作，都认为是concurrently，不需要加锁有两种情况，
+   *        不需要加锁也不需要safepoint,
+   *        不需要加锁但是需要safepoint
+   * @return
+   */
   virtual bool evaluate_concurrently() const {
     return evaluation_mode() == _concurrent ||
            evaluation_mode() == _async_safepoint;
@@ -212,7 +230,7 @@ class VM_ThreadStop: public VM_Operation {
   void doit();
   // We deoptimize if top-most frame is compiled - this might require a C2I adapter to be generated
   bool allow_nested_vm_operations() const        { return true; }
-  Mode evaluation_mode() const                   { return _async_safepoint; }
+  Mode evaluation_mode() const                   { return _async_safepoint; } // 异步的safepoint模式
   bool is_cheap_allocated() const                { return true; }
 
   // GC support
@@ -235,7 +253,7 @@ class VM_ForceAsyncSafepoint: public VM_Operation {
   VM_ForceAsyncSafepoint() {}
   void doit()              {}
   VMOp_Type type() const                         { return VMOp_ForceAsyncSafepoint; }
-  Mode evaluation_mode() const                   { return _async_safepoint; }
+  Mode evaluation_mode() const                   { return _async_safepoint; } // 异步的safepoint模式
   bool is_cheap_allocated() const                { return true; }
 };
 

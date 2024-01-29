@@ -38,6 +38,10 @@ class G1RegionToSpaceMapper;
 class G1RemSet;
 class DirtyCardQueue;
 
+/**
+ * ConcurrentG1Refine对象是在 jint G1CollectedHeap::initialize() 中构造的，
+ *      在这个CocurrentG1Refine构造的时候，构造ConcurrentG1RefineThread线程池， 同时设置对应的DCQS的白绿黄红区域
+ */
 class ConcurrentG1Refine: public CHeapObj<mtGC> {
   ConcurrentG1RefineThread** _threads;
   uint _n_threads;
@@ -93,6 +97,21 @@ class ConcurrentG1Refine: public CHeapObj<mtGC> {
 
   void print_worker_threads_on(outputStream* st) const;
 
+  /**
+   *  这里涉及到三个可以处理DCQ的线程，GC线程，Refine线程，以及用户线程Mutator
+   * ·白区： [0， Green)， 对于该区， Refine线程并不处理， 交由GC线
+            程来处理DCQ。
+     ·绿区： [Green， Yellow)， 在该区中， Refine线程开始启动， 并且
+            根据queue set数值的大小启动不同数量的Refine线程来处理DCQ。
+     ·黄区： [Yellow， Red)， 在该区， 所有的Refine线程（ 除了抽样线
+            程） 都参与DCQ处理。
+     ·红区： [Red， +无穷)， 在该区， 不仅仅所有的Refine线程参与处
+            理RSet， 而且连Mutator也参与处理dcq。
+    这三个值通过三个参数设置： G1ConcRefinementGreenZone、
+    G1ConcRefinementYellowZone、 G1ConcRefinementRedZone，
+    默认值都是0。 如果没有设置这三个值， G1则自动推断这三个区的阈值大小
+   * @param x
+   */
   void set_green_zone(int x)  { _green_zone = x;  }
   void set_yellow_zone(int x) { _yellow_zone = x; }
   void set_red_zone(int x)    { _red_zone = x;    }

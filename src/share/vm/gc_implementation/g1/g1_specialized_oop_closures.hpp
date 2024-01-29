@@ -30,15 +30,40 @@
 // non-virtually, using a mechanism defined in this file.  Extend these
 // macros in the obvious way to add specializations for new closures.
 
+/**
+ * G1Barrier（G1屏障）：
+ */
 enum G1Barrier {
+    /**
+     * 表示没有 G1 屏障。在此模式下，不执行任何特殊的屏障操作。
+     */
   G1BarrierNone,
+  /**
+   * 表示执行 G1 疏散屏障。在此模式下，用于确保在对象被从一个区域复制到另一个区域时，正确更新引用关系。
+   */
   G1BarrierEvac,
+  /**
+   * 表示执行 G1 类加载器屏障。在此模式下，用于确保当类加载器元数据被更新时，正确地处理相关的引用关系。
+   */
   G1BarrierKlass
 };
 
+/**
+ * G1Mark（G1标记）：
+ */
 enum G1Mark {
+    /**
+     * 表示不执行 G1 标记。在此模式下，不执行任何标记操作。
+     */
   G1MarkNone,
+  /**
+   * 表示执行从根对象标记。在此模式下，用于在初始标记阶段标记从根对象可达的对象。
+   *  我们搜 do_mark_object == G1MarkFromRoot 可以看到如果使用了这个枚举类型，那么
+   */
   G1MarkFromRoot,
+  /**
+   * 表示执行从根对象提升标记。在此模式下，用于标记从根对象提升而来的对象，通常在并发标记阶段使用。
+   */
   G1MarkPromotedFromRoot
 };
 

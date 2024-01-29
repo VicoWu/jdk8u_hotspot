@@ -36,12 +36,15 @@ class G1CollectedHeap;
 class G1BlockOffsetSharedArray;
 class HeapRegion;
 class HeapRegionRemSetIterator;
-class PerRegionTable;
-class SparsePRT;
+class PerRegionTable; // 细粒度PRT
+class SparsePRT; // 稀疏PRT
 class nmethod;
 
 // Essentially a wrapper around SparsePRTCleanupTask. See
 // sparsePRT.hpp for more details.
+/**
+ * HRRSCleanupTask是SparsePRTCleanupTask的子类
+ */
 class HRRSCleanupTask : public SparsePRTCleanupTask {
 };
 
@@ -51,7 +54,7 @@ class FromCardCache : public AllStatic {
  private:
   // Array of card indices. Indexed by thread X and heap region to minimize
   // thread contention.
-  static int** _cache;
+  static int** _cache; // 缓存，指针的指针，以线程的id(workerid)和对应的region_idx作为索引的key，对应的card作为索引的value
   static uint _max_regions;
   static size_t _static_mem_size;
 
@@ -65,11 +68,11 @@ class FromCardCache : public AllStatic {
   // Returns true if the given card is in the cache at the given location, or
   // replaces the card at that location and returns false.
   static bool contains_or_replace(uint worker_id, uint region_idx, int card) {
-    int card_in_cache = at(worker_id, region_idx);
-    if (card_in_cache == card) {
-      return true;
+    int card_in_cache = at(worker_id, region_idx); //根据线程id和region_id 进行查找
+    if (card_in_cache == card) { // 缓存中找到了对应的卡片索引
+      return true; // 返回true
     } else {
-      set(worker_id, region_idx, card);
+      set(worker_id, region_idx, card); // 没找到，进行替换，返回false
       return false;
     }
   }
@@ -117,28 +120,38 @@ class FromCardCache : public AllStatic {
 //      is represented.  If a deleted PRT is re-used, a thread adding a bit,
 //      thinking the PRT is for a different region, does no harm.
 
+/**
+ * 每个HeapRegion都包含了一个HeapRegionRemSet，每个HeapRegionRemSet都包含了一个OtherRegionsTable，引用数据就保存在这个OtherRegionsTable中
+ */
 class OtherRegionsTable VALUE_OBJ_CLASS_SPEC {
   friend class HeapRegionRemSetIterator;
 
-  G1CollectedHeap* _g1h;
+  G1CollectedHeap* _g1h; // 整个堆内存的管理对象
   Mutex*           _m;
-  HeapRegion*      _hr;
+  HeapRegion*      _hr; // 当前这个OtherRegionsTable所对应的Region的HeapRegion对象
 
   // These are protected by "_m".
-  BitMap      _coarse_map;
-  size_t      _n_coarse_entries;
+  BitMap      _coarse_map;  // 粗粒度PRT
+  size_t      _n_coarse_entries; // 粗粒度元素的数量, 从方法OtherRegionsTable::occ_coarse可以看出来，一个entry会存储HeapRegion::CardsPerRegion个卡片信息
   static jint _n_coarsenings;
-
+  /**
+   * 细粒度PRT,从方法OtherRegionsTable::find_region_table进行查找的方式可以看到，这其实是一个基于链地址法进行hash的一个hash表
+   * 当稀疏表中的某一个entry中的cards数组长度为4之后，就会将该entry中的所有记录转到细粒度PRT中。
+   */
   PerRegionTable** _fine_grain_regions;
-  size_t           _n_fine_entries;
+  size_t           _n_fine_entries; // 细粒度PerRegionTable元素的数量
 
   // The fine grain remembered sets are doubly linked together using
   // their 'next' and 'prev' fields.
   // This allows fast bulk freeing of all the fine grain remembered
   // set entries, and fast finding of all of them without iterating
   // over the _fine_grain_regions table.
-  PerRegionTable * _first_all_fine_prts;
-  PerRegionTable * _last_all_fine_prts;
+  /**
+   * 细粒度记忆集使用“next”和“prev”字段构建了一个PerRegionTable 的双向链表
+   * 这允许快速批量释放所有细粒度记住的集合条目，并快速查找所有条目，而无需迭代 _fine_grain_regions 表。
+   */
+  PerRegionTable * _first_all_fine_prts; // 第一个节点，刚插入的节点放在第一个位置
+  PerRegionTable * _last_all_fine_prts; // 最后一个节点，最早插入的节点放在后面的位置
 
   // Used to sample a subset of the fine grain PRTs to determine which
   // PRT to evict and coarsen.
@@ -146,7 +159,7 @@ class OtherRegionsTable VALUE_OBJ_CLASS_SPEC {
   static size_t _fine_eviction_stride;
   static size_t _fine_eviction_sample_size;
 
-  SparsePRT   _sparse_table;
+  SparsePRT   _sparse_table; // 稀疏PRT
 
   // These are static after init.
   static size_t _max_fine_entries;
@@ -304,11 +317,21 @@ public:
   static jint n_coarsenings() { return OtherRegionsTable::n_coarsenings(); }
 
   // Used in the sequential case.
+   /**
+    * 串行模式下使用的方法
+    * 搜索rem_set()->add_reference 查看这个方法的调用位置
+   *  这个方法其实是HeapRegionRemSet::add_reference，内部调用了OtherRegionsTable::add_reference
+   */
   void add_reference(OopOrNarrowOopStar from) {
     _other_regions.add_reference(from, 0);
   }
 
   // Used in the parallel case.
+  /**
+   * 这个方法是HeapRegionRemSet::add_reference
+   * 并行情况下调用的方法，传入了当前线程的id tid
+   * 这个方法是HeapRegionRemSet::add_reference，调用了OtherRegionsTable::add_reference
+   */
   void add_reference(OopOrNarrowOopStar from, int tid) {
     _other_regions.add_reference(from, tid);
   }

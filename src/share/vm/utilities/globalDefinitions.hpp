@@ -167,6 +167,11 @@ class MetaWord {
 
 // HeapWordSize must be 2^LogHeapWordSize.
 const int HeapWordSize        = sizeof(HeapWord);
+/**
+ * LogHeapWordSize：表示HeapWordSize的对数值，即HeapWordSize的二进制对数。
+ *  在LP64架构下，LogHeapWordSize的值为3，即HeapWordSize为2的3次方（8字节）。
+ *  在非LP64架构下，LogHeapWordSize的值为2，即HeapWordSize为2的2次方（4字节）。
+ */
 #ifdef _LP64
 const int LogHeapWordSize     = 3;
 #else
@@ -188,6 +193,11 @@ const int LogHeapWordsPerLong = LogBytesPerLong - LogHeapWordSize;
 
 // The minimum number of native machine words necessary to contain "byte_size"
 // bytes.
+/**
+ * 计算包含指定字节大小的内存所需的最小的堆字（HeapWord）数量
+ * @param byte_size
+ * @return
+ */
 inline size_t heap_word_size(size_t byte_size) {
   return (byte_size + (HeapWordSize-1)) >> LogHeapWordSize;
 }

@@ -29,27 +29,44 @@
 #include "gc_implementation/g1/g1RemSet.inline.hpp"
 #include "oops/oop.inline.hpp"
 
+/**
+ * 在这里，指针p对应的位置存放了一个指针，指向了回收集合中的某个对象。
+ * 当这个对象转移到survivor区域以后，就需要在这个位置写入对象的新地址
+ * @tparam T
+ * @param p
+ * @param from
+ */
 template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from) {
   assert(!oopDesc::is_null(oopDesc::load_decode_heap_oop(p)),
          "Reference should not be NULL here as such are never pushed to the task queue.");
+  /**
+   * typedef class oopDesc*  oop;
+   * oop 是一个typedef，是一个oopDesc* 类型
+   * 获取指针p对应的位置 所指向的对象
+   */
   oop obj = oopDesc::load_decode_heap_oop_not_null(p);
 
   // Although we never intentionally push references outside of the collection
   // set, due to (benign) races in the claim mechanism during RSet scanning more
   // than one thread might claim the same card. So the same card may be
   // processed multiple times. So redo this check.
-  const InCSetState in_cset_state = _g1h->in_cset_state(obj);
-  if (in_cset_state.is_in_cset()) {
+  const InCSetState in_cset_state = _g1h->in_cset_state(obj); //  这个对象在回收集合中
+  if (in_cset_state.is_in_cset()) { //
     oop forwardee;
     markOop m = obj->mark();
+    /**
+     * 对象在回收集合中，并且已经被mark。我们从G1ParScanThreadState::copy_to_survivor_space方法中可以看到，
+     *      对象已经移动到survivor区域以后，会设置为marked
+     */
     if (m->is_marked()) {
       forwardee = (oop) m->decode_pointer();
     } else {
-      forwardee = copy_to_survivor_space(in_cset_state, obj, m);
+        // 搜索 G1ParScanThreadState::copy_to_survivor_space
+      forwardee = copy_to_survivor_space(in_cset_state, obj, m); // 转移到survivor，确定转发地址
     }
-    oopDesc::encode_store_heap_oop(p, forwardee);
-  } else if (in_cset_state.is_humongous()) {
-    _g1h->set_humongous_is_live(obj);
+    oopDesc::encode_store_heap_oop(p, forwardee);// 使用转发以后的地址更新引用者所引用该对象的地址
+  } else if (in_cset_state.is_humongous()) { // 是大对象
+    _g1h->set_humongous_is_live(obj); // 搜索 inline void G1CollectedHeap::set_humongous_is_live(oop obj)
   } else {
     assert(!in_cset_state.is_in_cset_or_humongous(),
            err_msg("In_cset_state must be NotInCSet here, but is " CSETSTATE_FORMAT, in_cset_state.value()));
@@ -108,8 +125,14 @@ inline void G1ParScanThreadState::do_oop_partial_array(oop* p) {
   to_obj_array->oop_iterate_range(&_scanner, start, end);
 }
 
+/**
+ * 搜索 G1ParPushHeapRSClosure::do_oop_nv， 可以看到往_refs中插入堆指针的条件是:
+ *  这个对指针指向的位置能够加载出一个对象指针，并且这个对象指针指向了回收集合或者大对象
+ * @tparam T
+ * @param ref_to_scan
+ */
 template <class T> inline void G1ParScanThreadState::deal_with_reference(T* ref_to_scan) {
-  if (!has_partial_array_mask(ref_to_scan)) {
+  if (!has_partial_array_mask(ref_to_scan)) { // 通过确定这个引用是否具有部分数组掩码，来确定这个引用是否是一个指向部分数组的引用
     // Note: we can use "raw" versions of "region_containing" because
     // "obj_to_scan" is definitely in the heap, and is not in a
     // humongous region.
@@ -122,7 +145,7 @@ template <class T> inline void G1ParScanThreadState::deal_with_reference(T* ref_
 
 inline void G1ParScanThreadState::dispatch_reference(StarTask ref) {
   assert(verify_task(ref), "sanity");
-  if (ref.is_narrow()) {
+  if (ref.is_narrow()) { // deal_with_reference是一个重载函数，可以接收窄应用和宽引用
     deal_with_reference((narrowOop*)ref);
   } else {
     deal_with_reference((oop*)ref);

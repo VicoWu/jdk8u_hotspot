@@ -106,7 +106,7 @@ class ScanRSClosure : public HeapRegionClosure {
   size_t _cards_done, _cards;
   G1CollectedHeap* _g1h;
 
-  G1ParPushHeapRSClosure* _oc;
+  G1ParPushHeapRSClosure* _oc; // 搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
   CodeBlobClosure* _code_root_cl;
 
   G1BlockOffsetSharedArray* _bot_shared;
@@ -135,24 +135,47 @@ public:
     _block_size = MAX2<int>(G1RSetScanBlockSize, 1);
   }
 
+  /**
+   * 构造ScanRSClosure的时候，默认_try_claimed = false
+   */
   void set_try_claimed() { _try_claimed = true; }
 
+  /**
+   * 在ScanRSClosure::doHeapRegion 方法中被调用,index是卡片索引，r是这个卡片所在的region
+   * @param index
+   * @param r
+   */
   void scanCard(size_t index, HeapRegion *r) {
     // Stack allocate the DirtyCardToOopClosure instance
     HeapRegionDCTOC cl(_g1h, r, _oc,
-                       CardTableModRefBS::Precise);
+                       CardTableModRefBS::Precise); // 在栈上分配一个HeapRegionDCTOC对象，它是DirtyCardToOopClosure的子类
 
     // Set the "from" region in the closure.
     _oc->set_region(r);
+    /**
+     * 搜索 BlockOffsetSharedArray::address_for_index,
+     * 根据给定的卡片索引（index）创建一个 MemRegion 对象 card_region，表示该卡片覆盖的内存区域。
+     */
     MemRegion card_region(_bot_shared->address_for_index(index), G1BlockOffsetSharedArray::N_words);
+    /**
+     * 表示当前区域（HeapRegion）的预收集（pre-gc）分配的内存区域。
+     */
     MemRegion pre_gc_allocated(r->bottom(), r->scan_top());
+    /**
+     * 查看这个卡片覆盖的区域和预收集区域的交叉部分区域，我们只处理这一片Region区域
+     */
     MemRegion mr = pre_gc_allocated.intersection(card_region);
     if (!mr.is_empty() && !_ct_bs->is_card_claimed(index)) {
       // We make the card as "claimed" lazily (so races are possible
       // but they're benign), which reduces the number of duplicate
       // scans (the rsets of the regions in the cset can intersect).
-      _ct_bs->set_card_claimed(index);
-      _cards_done++;
+      _ct_bs->set_card_claimed(index);  // 将这个卡片标记为claimed
+      _cards_done++; // 计数器+1
+      /**
+       * 查看 DirtyCardToOopClosure::do_MemRegion，这个Closure会处理脏卡片覆盖的对象
+       * mr的区域代表了这个卡片中已经分配了对象的区域
+       * 搜索 DirtyCardToOopClosure::do_MemRegion
+       */
       cl.do_MemRegion(mr);
     }
   }
@@ -174,55 +197,82 @@ public:
     _strong_code_root_scan_time_sec += (os::elapsedTime() - scan_start);
   }
 
+  /**
+   * ScanRSClosure::doHeapRegion
+   * 这里的HeapRegion一定是回收结合中的Region
+   * @param r
+   * @return
+   */
   bool doHeapRegion(HeapRegion* r) {
     assert(r->in_collection_set(), "should only be called on elements of CS.");
-    HeapRegionRemSet* hrrs = r->rem_set();
-    if (hrrs->iter_is_complete()) return false; // All done.
-    if (!_try_claimed && !hrrs->claim_iter()) return false;
+    HeapRegionRemSet* hrrs = r->rem_set(); // 获取回收集合中的这个HeapRegion的
+    /**
+     * 迭代器的三种状态定义在 enum ParIterState { Unclaimed, Claimed, Complete };
+     */
+    if (hrrs->iter_is_complete()) // 迭代器已经完成，_iter_state状态为Complete，直接返回
+        return false; // All done.
+      /**
+       * 这里的意思是，如果_try_claimed为false，并且hrrs->claim_iter()为false(没有成功通过原子操作获取claim的权利)
+       * 查看 HeapRegionRemSet::claim_iter()，主要是操作 _iter_state权限
+       * 在G1RemSet::scanRS中会有两次遍历
+       *    第一次遍历,_try_claimed=false，意思是目前还没有尝试获取这个region的所有权，因此必须调用hrrs->claim_iter()尝试获取这个HeapRegionRememberSet的所有权
+       *        如果claim_iter()成功才会继续执行，claim_iter()失败就返回false
+       *    第二次遍历， _try_claimed=true，代码就直接往下面走了，不会在这里返回
+       */
+    if (!_try_claimed && !hrrs->claim_iter()) // 成功地将_iter_state状态从Unclaimed 变成 Claimed
+        return false;
+
+    /**
+     * 代码到了这里，说明try_claimed为true ，或者 hrrs->claim_iter()为true，或者两者都为true
+     */
     // If we ever free the collection set concurrently, we should also
     // clear the card table concurrently therefore we won't need to
     // add regions of the collection set to the dirty cards region.
-    _g1h->push_dirty_cards_region(r);
+    _g1h->push_dirty_cards_region(r); // dirty cards region list中的region都是转移专用记忆集合需要被清空重建的region
     // If we didn't return above, then
     //   _try_claimed || r->claim_iter()
     // is true: either we're supposed to work on claimed-but-not-complete
     // regions, or we successfully claimed the region.
 
-    HeapRegionRemSetIterator iter(hrrs);
+    HeapRegionRemSetIterator iter(hrrs); //构造一个HeapRegionRemSet的迭代器，用来对这个HeapRegionRemSet进行遍历
     size_t card_index;
 
     // We claim cards in block so as to recude the contention. The block size is determined by
     // the G1RSetScanBlockSize parameter.
+    // 一个block一个block地扫描，这里_block_size是由G1RSetScanBlockSize控制
     size_t jump_to_card = hrrs->iter_claimed_next(_block_size);
-    for (size_t current_card = 0; iter.has_next(card_index); current_card++) {
+      // 这里返回的时候，card_index带回了卡片索引值。搜 HeapRegionRemSetIterator::has_next
+    for (size_t current_card = 0;iter.has_next(card_index); current_card++) { // 遍历这个Region的转移专用记忆集合的所有卡片
       if (current_card >= jump_to_card + _block_size) {
-        jump_to_card = hrrs->iter_claimed_next(_block_size);
+        jump_to_card = hrrs->iter_claimed_next(_block_size); // 再往前进_block_size
       }
-      if (current_card < jump_to_card) continue;
-      HeapWord* card_start = _g1h->bot_shared()->address_for_index(card_index);
+      if (current_card < jump_to_card) continue;// current_card必须从jump_to_card开始
+      HeapWord* card_start = _g1h->bot_shared()->address_for_index(card_index); // 这个卡片索引对应的引用者的堆内存地址
 #if 0
       gclog_or_tty->print("Rem set iteration yielded card [" PTR_FORMAT ", " PTR_FORMAT ").\n",
                           card_start, card_start + CardTableModRefBS::card_size_in_words);
 #endif
-
+      // 引用者的HeapRegion
       HeapRegion* card_region = _g1h->heap_region_containing(card_start);
       _cards++;
 
+      // 无条件将这个Region加入到 脏卡片region 列表中
       if (!card_region->is_on_dirty_cards_region_list()) {
-        _g1h->push_dirty_cards_region(card_region);
+        _g1h->push_dirty_cards_region(card_region); // 将这个引用者所在的Region放到脏卡片region的list
       }
 
       // If the card is dirty, then we will scan it during updateRS.
       if (!card_region->in_collection_set() &&
-          !_ct_bs->is_card_dirty(card_index)) {
-        scanCard(card_index, card_region);
+          !_ct_bs->is_card_dirty(card_index)) { // 如果这个卡片不在回收集合中，并且还没有被标记位脏卡片，那么就进行扫描
+        scanCard(card_index, card_region); // 扫描引用者对应的region
       }
     }
-    if (!_try_claimed) {
+    if (!_try_claimed) { // 第一次的时候，_try_claimed==false，会处理代码对象，
+       // 代码走到这里，说明当前_iter_state的状态肯定为Claimed
       // Scan the strong code root list attached to the current region
       scan_strong_code_roots(r);
 
-      hrrs->set_iter_complete();
+      hrrs->set_iter_complete(); // 在HeapRegionRememberSet中设置_iter_state状态为Completed
     }
     return false;
   }
@@ -235,16 +285,24 @@ public:
   size_t cards_looked_up() { return _cards;}
 };
 
+/**
+ * 搜索 RemSet::oops_into_collection_set_do 查看调用位置
+ * @param oc 搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
+ * @param code_root_cl
+ * @param worker_i
+ */
 void G1RemSet::scanRS(G1ParPushHeapRSClosure* oc,
                       CodeBlobClosure* code_root_cl,
                       uint worker_i) {
   double rs_time_start = os::elapsedTime();
-  HeapRegion *startRegion = _g1->start_cset_region_for_worker(worker_i);
+  HeapRegion *startRegion = _g1->start_cset_region_for_worker(worker_i); // 获取分配给当前worker的回收集合中的起始HeapRegion
 
-  ScanRSClosure scanRScl(oc, code_root_cl, worker_i);
-
+  ScanRSClosure scanRScl(oc, code_root_cl, worker_i); // 扫描RSet的闭包
+  //  G1CollectedHeap::collection_set_iterate_from
+  // 首次遍历, _try_claimed 标记为false，那么必须claim成功对应的Region才能对她的card进行scan
   _g1->collection_set_iterate_from(startRegion, &scanRScl);
   scanRScl.set_try_claimed();
+  // 二次遍历, _try_claimed = true，意味着，假如有的Region还处于_Claimed但是非Completed的状态，我也可以并发地去处理
   _g1->collection_set_iterate_from(startRegion, &scanRScl);
 
   double scan_rs_time_sec = (os::elapsedTime() - rs_time_start)
@@ -261,6 +319,7 @@ void G1RemSet::scanRS(G1ParPushHeapRSClosure* oc,
 // point into the collection set. Only called during an
 // evacuation pause.
 
+
 class RefineRecordRefsIntoCSCardTableEntryClosure: public CardTableEntryClosure {
   G1RemSet* _g1rs;
   DirtyCardQueue* _into_cset_dcq;
@@ -269,6 +328,10 @@ public:
                                               DirtyCardQueue* into_cset_dcq) :
     _g1rs(g1h->g1_rem_set()), _into_cset_dcq(into_cset_dcq)
   {}
+    /**
+     * 调用者搜索 DirtyCardQueue::apply_closure_to_buffer
+     * 对比 ConcurrentG1RefineThread 在更新RS的时候使用的Closure RefineCardTableEntryClosure的bool do_card_ptr方法
+     */
   bool do_card_ptr(jbyte* card_ptr, uint worker_i) {
     // The only time we care about recording cards that
     // contain references that point into the collection set
@@ -277,24 +340,46 @@ public:
     assert(SafepointSynchronize::is_at_safepoint(), "not during an evacuation pause");
     assert(worker_i < (ParallelGCThreads == 0 ? 1 : ParallelGCThreads), "should be a GC worker");
 
-    if (_g1rs->refine_card(card_ptr, worker_i, true)) {
+    /**
+     * 实现 搜索 G1RemSet::refine_card
+     * 我们唯一关心包含指向回收集合的引用的卡片是在回收暂停期间的 RSet 更新期间。 在这种情况下，worker_i 应该是 GC 工作线程的 id。
+     */
+    if (_g1rs->refine_card(card_ptr, worker_i, true)) { // 返回true，说明对应的卡片的确有指向回收集合的引用
+        /**
+         * 如果卡片包含了指向回收集合的引用，那么我们需要把这个卡片记录在G1CollectedHeap::into_cset_dirty_card_queue_set中
+         */
       // 'card_ptr' contains references that point into the collection
       // set. We need to record the card in the DCQS
       // (G1CollectedHeap::into_cset_dirty_card_queue_set())
       // that's used for that purpose.
       //
       // Enqueue the card
-      _into_cset_dcq->enqueue(card_ptr);
+      /**
+       * 如果卡片的确有指向回收集合的引用，那么我们需要将这个卡片加入到_into_cset_dcq
+       *    (由于_into_cset_dcq是基于G1CollectedHeap::into_cset_dirty_card_queue_set()构建的，因此实际上是加入到into_cset_dirty_card_queue_set中去了)
+       */
+      _into_cset_dcq->enqueue(card_ptr); // 记录这个包含有指向回收集合的卡片，加入到into_cset_dirty_card_queue_set
     }
     return true;
   }
 };
 
+/**
+ * 调用方是 G1RemSet::oops_into_collection_set_do
+ *
+ * 查看最终的RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，
+ *      把当前DCQS中的所有的void **buf中指向回收集合的条目添加到into_cset_dcq中去
+ * @param into_cset_dcq 这个dcq不是Java
+ * @param worker_i
+ */
 void G1RemSet::updateRS(DirtyCardQueue* into_cset_dcq, uint worker_i) {
   G1GCParPhaseTimesTracker x(_g1p->phase_times(), G1GCPhaseTimes::UpdateRS, worker_i);
   // Apply the given closure to all remaining log entries.
+  // 使用RefineRecordRefsIntoCSCardTableEntryClosure 处理所有剩余的没有处理的DCQ
   RefineRecordRefsIntoCSCardTableEntryClosure into_cset_update_rs_cl(_g1, into_cset_dcq);
-
+  /**
+   * 具体实现查看 G1CollectedHeap::iterate_dirty_card_closure
+   */
   _g1->iterate_dirty_card_closure(&into_cset_update_rs_cl, into_cset_dcq, false, worker_i);
 }
 
@@ -302,6 +387,10 @@ void G1RemSet::cleanupHRRS() {
   HeapRegionRemSet::cleanup();
 }
 
+/**
+ * 搜 G1RootProcessor::scan_remembered_sets 查看调用位置，而G1RootProcessor::scan_remembered_sets是在evacuate_root 中被调用的，
+ *   即这个方法做的事情就是以转移专用记忆集合RSet为根进行扫描
+ */
 void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
                                            CodeBlobClosure* code_root_cl,
                                            uint worker_i) {
@@ -323,6 +412,18 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
   // are wholly 'free' of live objects. In the event of an evacuation
   // failure the cards/buffers in this queue set are passed to the
   // DirtyCardQueueSet that is used to manage RSet updates
+  /**
+   * DirtyCardQueue 用于保存包含指向集合集的引用的卡片。 此 DCQ 与特殊的 DirtyCardQueueSet 关联（请参阅 g1CollectedHeap.hpp）。
+   * 在正常情况下（即暂停成功完成），这些卡将被丢弃（无需更新收集集中区域的 RSets - 暂停后，这些区域完全“释放”活动对象。
+   *    在这种情况下) ..   当疏散失败时，此队列集中的卡/缓冲区将被传递到用于管理 RSet 更新的 DirtyCardQueueSet
+   * 在正常情况下，也就是垃圾收集暂停成功完成的情况下，这些卡片会被丢弃。
+   *     这是因为在暂停之后，集合集中的区域已经不再包含任何活动对象，因此不需要更新这些区域的 RSet（Remembered Set）。
+      然而，在发生疏散失败（evacuation failure）时，这些卡片将被传递给管理 RSet 更新的 DirtyCardQueueSet。
+        疏散失败是指在将对象从一个区域移动到另一个区域时遇到的问题，导致无法成功完成垃圾收集暂停，我们可以搜索 G1RemSet::cleanup_after_oops_into_collection_set_do 查看搜索失败的时候使用
+        这个into_cset_dirty_card_queue_set 来恢复对应的RSet的过程
+
+        创建一个全新的DCQ， 这个DCQ属于一个特殊的DCQS _into_cset_dirty_card_queue_set, 它存放的内容是所有指向了回收集合的DCQ
+   */
   DirtyCardQueue into_cset_dcq(&_g1->into_cset_dirty_card_queue_set());
 
   assert((ParallelGCThreads > 0) || worker_i == 0, "invariant");
@@ -382,6 +483,9 @@ void G1RemSet::cleanup_after_oops_into_collection_set_do() {
   _g1->into_cset_dirty_card_queue_set().clear_n_completed_buffers();
 }
 
+/**
+ * 对Region的RSet进行清理的Closure，调用者负责在每一个Region上apply这个类的doHeapRegion方法
+ */
 class ScrubRSClosure: public HeapRegionClosure {
   G1CollectedHeap* _g1h;
   BitMap* _region_bm;
@@ -394,8 +498,8 @@ public:
     _ctbs(_g1h->g1_barrier_set()) {}
 
   bool doHeapRegion(HeapRegion* r) {
-    if (!r->continuesHumongous()) {
-      r->rem_set()->scrub(_ctbs, _region_bm, _card_bm);
+    if (!r->continuesHumongous()) { // 只要不是举行对象的连续region(巨型对象的非首个Region)
+      r->rem_set()->scrub(_ctbs, _region_bm, _card_bm); // 调用HeapRegionRemSet::scrub方法
     }
     return false;
   }
@@ -403,7 +507,7 @@ public:
 
 void G1RemSet::scrub(BitMap* region_bm, BitMap* card_bm) {
   ScrubRSClosure scrub_cl(region_bm, card_bm);
-  _g1->heap_region_iterate(&scrub_cl);
+  _g1->heap_region_iterate(&scrub_cl); // 对每一个region，调用ScrubRSClosure::doHeapRegion()方法
 }
 
 void G1RemSet::scrub_par(BitMap* region_bm, BitMap* card_bm,
@@ -439,6 +543,14 @@ G1UpdateRSOrPushRefOopClosure(G1CollectedHeap* g1h,
 // into the collection set, if we're checking for such references;
 // false otherwise.
 
+/**
+ * 这个refine_card的处理目标一定只是针对脏卡片，通过Refine现成或者GC线程来调用处理脏卡片
+ * 对于GC线程，只有将脏卡片处理完毕(即，由于对象移动带来的卡片信息不一致的问题得到了修正)，才能开始对回收集合中的数据基于卡片进行根搜索
+ * @param card_ptr
+ * @param worker_i
+ * @param check_for_refs_into_cset
+ * @return
+ */
 bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
                            bool check_for_refs_into_cset) {
   assert(_g1->is_in_exact(_ct_bs->addr_for(card_ptr)),
@@ -449,6 +561,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
                  _g1->addr_to_region(_ct_bs->addr_for(card_ptr))));
 
   // If the card is no longer dirty, nothing to do.
+  // refine_card 只处理脏卡片
   if (*card_ptr != CardTableModRefBS::dirty_card_val()) {
     // No need to return that this card contains refs that point
     // into the collection set.
@@ -471,7 +584,10 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   // before all the cards on the region are dirtied. This is unlikely,
   // and it doesn't happen often, but it can happen. So, the extra
   // check below filters out those cards.
-  if (r->is_young()) {
+  /**
+   * 假如a.field = b，b在回收集合中，a却在young区，那么是不必处理a中的卡片的
+   */
+  if (r->is_young()) { // 这是因为在年轻代中的对象通常在年轻代的垃圾回收过程中处理，而不会包含指向集合集的引用。
     return false;
   }
 
@@ -485,7 +601,10 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   // an array that was being chunked and looking malformed. Note,
   // however, that if evacuation fails, we have to scan any objects
   // that were not moved and create any missing entries.
-  if (r->in_collection_set()) {
+   /**
+   * 假如a.field = b，b在回收集合中，a在回收集合中，那么是不必处理a中的卡片的
+   */
+  if (r->in_collection_set()) { //我们不处理回收集合中的卡片，因为这些卡片对应的对象即将被转移，即这些卡片即将失效
     return false;
   }
 
@@ -585,12 +704,12 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
     // The card might have gotten re-dirtied and re-enqueued while we
     // worked.  (In fact, it's pretty likely.)
     if (*card_ptr != CardTableModRefBS::dirty_card_val()) {
-      *card_ptr = CardTableModRefBS::dirty_card_val();
+      *card_ptr = CardTableModRefBS::dirty_card_val(); // 将卡片标记位脏卡片
       MutexLockerEx x(Shared_DirtyCardQ_lock,
                       Mutex::_no_safepoint_check_flag);
       DirtyCardQueue* sdcq =
         JavaThread::dirty_card_queue_set().shared_dirty_card_queue();
-      sdcq->enqueue(card_ptr);
+      sdcq->enqueue(card_ptr); // 将卡片放到 脏卡片队列中去
     }
   } else {
     _conc_refine_cards++;
@@ -606,7 +725,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   assert(!has_refs_into_cset || SafepointSynchronize::is_at_safepoint(),
            "invalid result at non safepoint");
 
-  return has_refs_into_cset;
+  return has_refs_into_cset; // 返回的结果是是否有指向回收集合的引用
 }
 
 void G1RemSet::print_periodic_summary_info(const char* header) {

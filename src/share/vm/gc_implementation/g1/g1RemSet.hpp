@@ -125,7 +125,7 @@ public:
   // or card, respectively, such that a region or card with a corresponding
   // 0 bit contains no part of any live object.  Eliminates any remembered
   // set entries that correspond to dead heap ranges.
-  void scrub(BitMap* region_bm, BitMap* card_bm);
+  void scrub(BitMap* region_bm, BitMap* card_bm); // 搜 G1RemSet::scrub(BitMap* region_bm, BitMap* card_bm)
 
   // Like the above, but assumes is called in parallel: "worker_num" is the
   // parallel thread id of the current thread, and "claim_val" is the

@@ -30,6 +30,11 @@
 G1CollectedHeap* G1AllocRegion::_g1h = NULL;
 HeapRegion* G1AllocRegion::_dummy_region = NULL;
 
+/**
+ * 在G1CollectedHeap::initialize()中，也就是堆内存初始化的时候，会调用setup()方法
+ * @param g1h
+ * @param dummy_region
+ */
 void G1AllocRegion::setup(G1CollectedHeap* g1h, HeapRegion* dummy_region) {
   assert(_dummy_region == NULL, "should be set once");
   assert(dummy_region != NULL, "pre-condition");
@@ -117,19 +122,19 @@ HeapWord* G1AllocRegion::new_alloc_region_and_allocate(size_t word_size,
   assert(_used_bytes_before == 0, ar_ext_msg(this, "pre-condition"));
 
   trace("attempting region allocation");
-  HeapRegion* new_alloc_region = allocate_new_region(word_size, force);
+  HeapRegion* new_alloc_region = allocate_new_region(word_size, force); // 分配一个新的region
   if (new_alloc_region != NULL) {
     new_alloc_region->reset_pre_dummy_top();
     // Need to do this before the allocation
     _used_bytes_before = new_alloc_region->used();
-    HeapWord* result = allocate(new_alloc_region, word_size, _bot_updates);
+    HeapWord* result = allocate(new_alloc_region, word_size, _bot_updates); // 在新的region中分配对象，这个对象一定应该是分配成功的，因为region是新的
     assert(result != NULL, ar_ext_msg(this, "the allocation should succeeded"));
 
     OrderAccess::storestore();
     // Note that we first perform the allocation and then we store the
     // region in _alloc_region. This is the reason why an active region
     // can never be empty.
-    update_alloc_region(new_alloc_region);
+    update_alloc_region(new_alloc_region); // 将这个新的Region设置为当前的active region
     trace("region allocation successful");
     return result;
   } else {
@@ -145,12 +150,15 @@ void G1AllocRegion::fill_in_ext_msg(ar_ext_msg* msg, const char* message) {
               p2i(_alloc_region), _used_bytes_before);
 }
 
+/**
+ * 初始化一个region，G1AlloRegion的子类在创建一个region的时候都会调用init方法
+ */
 void G1AllocRegion::init() {
   trace("initializing");
   assert(_alloc_region == NULL && _used_bytes_before == 0,
          ar_ext_msg(this, "pre-condition"));
   assert(_dummy_region != NULL, ar_ext_msg(this, "should have been set"));
-  _alloc_region = _dummy_region;
+  _alloc_region = _dummy_region; // 刚刚初始化的时候，新的active region 都指向dummy_region
   _count = 0;
   trace("initialized");
 }
@@ -178,9 +186,9 @@ void G1AllocRegion::update_alloc_region(HeapRegion* alloc_region) {
   assert(alloc_region != NULL && !alloc_region->is_empty(),
          ar_ext_msg(this, "pre-condition"));
 
-  _alloc_region = alloc_region;
+  _alloc_region = alloc_region; // 将这个新申请到的HeapRegion对象设置为当前active region
   _alloc_region->set_allocation_context(allocation_context());
-  _count += 1;
+  _count += 1; // 计数器+1， 因为G1AllocRegion对象的生命周期中会负责很多次的Region的申请，卸载，再申请，再卸载
   trace("updated");
 }
 
@@ -240,7 +248,7 @@ G1AllocRegion::G1AllocRegion(const char* name,
     _alloc_region(NULL), _count(0), _used_bytes_before(0),
     _allocation_context(AllocationContext::system()) { }
 
-
+// 创建eden region，即为用户线程直接分配对象的regino
 HeapRegion* MutatorAllocRegion::allocate_new_region(size_t word_size,
                                                     bool force) {
   return _g1h->new_mutator_alloc_region(word_size, force);
@@ -251,6 +259,7 @@ void MutatorAllocRegion::retire_region(HeapRegion* alloc_region,
   _g1h->retire_mutator_alloc_region(alloc_region, allocated_bytes);
 }
 
+// 创建survivor region，即作为survivor 的region
 HeapRegion* SurvivorGCAllocRegion::allocate_new_region(size_t word_size,
                                                        bool force) {
   assert(!force, "not supported for GC alloc regions");
@@ -262,6 +271,7 @@ void SurvivorGCAllocRegion::retire_region(HeapRegion* alloc_region,
   _g1h->retire_gc_alloc_region(alloc_region, allocated_bytes, InCSetState::Young);
 }
 
+// 创建老年代 region，即作为老年代的region，可能来自年轻代Region的晋升，或者大对象的直接分配
 HeapRegion* OldGCAllocRegion::allocate_new_region(size_t word_size,
                                                   bool force) {
   assert(!force, "not supported for GC alloc regions");

@@ -372,12 +372,19 @@ inline void ConcurrentMark::markPrev(oop p) {
   ((CMBitMap*)_prevMarkBitMap)->mark((HeapWord*) p);
 }
 
+/**
+ * 标记对象
+ * @param obj 对象的地址
+ * @param word_size 对象的大小
+ * @param worker_id 当前线程的id
+ * @param hr 对象所在的HeapRegion，如果为null，也可以从对象地址中进行推断
+ */
 inline void ConcurrentMark::grayRoot(oop obj, size_t word_size,
                                      uint worker_id, HeapRegion* hr) {
   assert(obj != NULL, "pre-condition");
   HeapWord* addr = (HeapWord*) obj;
   if (hr == NULL) {
-    hr = _g1h->heap_region_containing_raw(addr);
+    hr = _g1h->heap_region_containing_raw(addr); // 完全可以根据对象地址查找出对应的HeapRegion
   } else {
     assert(hr->is_in(addr), "pre-condition");
   }
@@ -395,10 +402,10 @@ inline void ConcurrentMark::grayRoot(oop obj, size_t word_size,
          err_msg("size: " SIZE_FORMAT " capacity: " SIZE_FORMAT " " HR_FORMAT,
                  word_size * HeapWordSize, hr->capacity(),
                  HR_FORMAT_PARAMS(hr)));
-
-  if (addr < hr->next_top_at_mark_start()) {
-    if (!_nextMarkBitMap->isMarked(addr)) {
-      par_mark_and_count(obj, word_size, hr, worker_id);
+  // 只有位于TAMS以前的对象才有标记的必要，位于TAMS后面的对象在本轮标记中默认会被认为是可达对象，不会被回收
+  if (addr < hr->next_top_at_mark_start()) { // 如果对象的地址位于TAMS前面
+    if (!_nextMarkBitMap->isMarked(addr)) { // 如果对象还没有被标记
+      par_mark_and_count(obj, word_size, hr, worker_id); // 标记对象
     }
   }
 }

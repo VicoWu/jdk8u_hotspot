@@ -59,7 +59,7 @@ protected:
 public:
   // Initializes the buffer to be empty, but with the given "word_sz".
   // Must get initialized with "set_buf" for an allocation to succeed.
-  ParGCAllocBuffer(size_t word_sz);
+  ParGCAllocBuffer(size_t word_sz); // 构造方法在ParGCAllocBuffer::ParGCAllocBuffer
   virtual ~ParGCAllocBuffer() {}
 
   static const size_t min_size() {
@@ -75,9 +75,16 @@ public:
   // buffer, do the allocation, returning a pointer to the start of the
   // allocated block.  If the allocation request cannot be satisfied,
   // return NULL.
+  /**
+   *
+   * 这个方法全称是 ParGCAllocBuffer::allocate，
+   * 调用者是 G1ParGCAllocator::plab_allocate()
+   * @param word_sz
+   * @return
+   */
   HeapWord* allocate(size_t word_sz) {
     HeapWord* res = _top;
-    if (pointer_delta(_end, _top) >= word_sz) {
+    if (pointer_delta(_end, _top) >= word_sz) { // 当前ParGCAllocBuffer所剩余的空间能够直接分配word_sz，则直接分配，_top就是新的分配地址
       _top = _top + word_sz;
       return res;
     } else {

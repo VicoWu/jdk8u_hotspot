@@ -141,7 +141,7 @@ class ClassLoaderData : public CHeapObj<mtClass> {
     }
     void add(Handle dependency, TRAPS);
     void init(TRAPS);
-    void oops_do(OopClosure* f);
+    void oops_do(OopClosure* f); // 具体实现搜索 void ClassLoaderData::Dependencies::oops_do(OopClosure* f)
   };
 
   class ChunkedHandleList VALUE_OBJ_CLASS_SPEC {
@@ -176,12 +176,19 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   friend class Method;
 
   static ClassLoaderData * _the_null_class_loader_data;
-
+  /**
+   * oop 类型的变量，用于唯一标识一个类加载器或规范的类路径。它可以用于在Java虚拟机中唯一地识别一个类加载器或类路径。
+   */
   oop _class_loader;          // oop used to uniquely identify a class loader
                               // class loader or a canonical class path
+  /**
+   * 保存该类加载器数据与其他类加载器数据之间的依赖关系。它记录了该类加载器数据所依赖的其他类加载器数据。
+   */
   Dependencies _dependencies; // holds dependencies from this class loader
                               // data to others.
-
+  /**
+   * 指向分配类加载器中的类所需的元空间。元空间是用于存储类元数据的内存区域。
+   */
   Metaspace * _metaspace;  // Meta-space where meta-data defined by the
                            // classes in the class loader are allocated.
   Mutex* _metaspace_lock;  // Locks the metaspace for allocations and setup.
@@ -192,7 +199,9 @@ class ClassLoaderData : public CHeapObj<mtClass> {
                            // To avoid applying oop closure more than once.
                            // Has to be an int because we cas it.
   Klass* _klasses;         // The classes defined by the class loader.
-
+  /**
+   * _handles 是一个 ChunkedHandleList 类型的对象，用于存储对常量池数组等的句柄，其生命周期与相应的类加载器相同。
+   */
   ChunkedHandleList _handles; // Handles to constant pool arrays, etc, which
                               // have the same life cycle of the corresponding ClassLoader.
 

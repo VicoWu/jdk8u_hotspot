@@ -37,6 +37,9 @@
 #include <new>
 
 class PtrQueueSet;
+/**
+ * PtrQueue有两个子类，ObjPtrQueue和DirtyCardQueue，分别负责SATB和转移专用写屏障的写操作的线程本地队列，并且都有对应的QueueSet来负责全局的队列
+ */
 class PtrQueue VALUE_OBJ_CLASS_SPEC {
   friend class VMStructs;
 
@@ -51,10 +54,10 @@ protected:
   void** _buf;
   // The index at which an object was last enqueued.  Starts at "_sz"
   // (indicating an empty buffer) and goes towards zero.
-  size_t _index;
+  size_t _index;  // 最近入队列的元素的位置。元素从_sz进入队列，然后往0的位置逐渐推进
 
   // The size of the buffer.
-  size_t _sz;
+  size_t _sz; // 这个DCQ的大小，
 
   // If true, the queue is permanent, and doesn't need to deallocate
   // its buffer in the destructor (since that obtains a lock which may not
@@ -87,10 +90,13 @@ public:
     enqueue((void*)(ptr));
   }
 
+  /**
+   * 调用类查看 G1SATBCardTableLoggingModRefBS::write_ref_field_work
+   */
   // Enqueues the given "obj".
-  void enqueue(void* ptr) {
+  void enqueue(void* ptr) { // 将对象放入到DCQ中
     if (!_active) return;
-    else enqueue_known_active(ptr);
+    else enqueue_known_active(ptr); // 查看 PtrQueue::enqueue_known_active. enqueue_known_active()负责将对象放入到一个已知是active的DCQ中去。这个DCQ可能已经满了，这时候就需要把DCQ添加到DCQS中，并申请新的DCQ
   }
 
   // This method is called when we're doing the zero index handling
@@ -104,7 +110,7 @@ public:
   void handle_zero_index();
   void locking_enqueue_completed_buffer(void** buf);
 
-  void enqueue_known_active(void* ptr);
+  void enqueue_known_active(void* ptr); // 查看 PtrQueue::enqueue_known_active
 
   size_t size() {
     assert(_sz >= _index, "Invariant.");
@@ -167,6 +173,8 @@ public:
   void set_index(size_t i)     { _index = i;    }
 
   // Align the size of the structure to the size of the pointer
+  // 将BufferNode对象的大小对齐到当前系统的指针大小的整数倍， 例如，如果sizeof(BufferNode) = 13， sizeof(void *) = 4
+  //    调用 round_to(13, 4)，表示将 13 向上舍入到最接近的 4 的倍数，结果为 16。
   static size_t aligned_size() {
     static const size_t alignment = round_to(sizeof(BufferNode), sizeof(void*));
     return alignment;
@@ -176,23 +184,52 @@ public:
   // The chunk of memory that holds both of them is a block.
 
   // Produce a new BufferNode given a buffer.
-  static BufferNode* new_from_buffer(void** buf) {
-    return new (make_block_from_buffer(buf)) BufferNode;
+  /**
+   * BufferNode 在buffer之前分配。 容纳它们的内存区域是一个Block。
+   * 根据提供的buf来构造一个BufferNode对象，这个BufferNode对象将添加到全局的DCQS中去
+   * BufferNode对象是在buf前面的，因此需要调用make_block_from_buffer(buf)，返回BufferNode的其实地址，并
+   *    在这个地址上面构造BufferNode，从而，BufferNode对象和buf数据区相邻
+   * @param buf
+   * @return
+   */
+  static BufferNode* new_from_buffer(void** buf) { //
+    return new (make_block_from_buffer(buf)) BufferNode; // 在由 make_block_from_buffer(buf) 返回的地址上创建一个 BufferNode 对象。
   }
 
   // The following are the required conversion routines:
   static BufferNode* make_node_from_buffer(void** buf) {
     return (BufferNode*)make_block_from_buffer(buf);
   }
+  /**
+   * 从一个BufferNode指针，返回其后面的buffer。
+   * 上面说过，BufferNode和其对应的buf在内存上是连续的
+   */
   static void** make_buffer_from_node(BufferNode *node) {
-    return make_buffer_from_block(node);
+    return make_buffer_from_block(node); // 返回node对应的buf的地址
   }
+
+  /**
+   * 将BufferNode指针直接转换成void *指针，这可以说明，Block的位置和BufferNode的起始位置是同一个位置
+   *    但是这个位置往后移动aligned_size()才是真正的数据区Buffer的位置
+   * @param node
+   * @return
+   */
   static void* make_block_from_node(BufferNode *node) {
     return (void*)node;
   }
+  /**
+   * 接受一个指向缓冲区起始位置的指针 p，然后将其向后偏移 aligned_size() 个字节，以找到缓冲区中实际数据存储区域的起始地址
+   * @param p
+   * @return
+   */
   static void** make_buffer_from_block(void* p) {
     return (void**)((char*)p + aligned_size());
   }
+  /**
+   * 接受一个指向缓冲区中实际数据存储区域的起始位置的指针 p，然后将其向前偏移 aligned_size() 个字节，以找到缓冲区的起始地址
+   * @param p
+   * @return
+   */
   static void* make_block_from_buffer(void** p) {
     return (void*)((char*)p - aligned_size());
   }
@@ -207,7 +244,7 @@ protected:
   Monitor* _cbl_mon;  // Protects the fields below.
   BufferNode* _completed_buffers_head;
   BufferNode* _completed_buffers_tail;
-  int _n_completed_buffers;
+  int _n_completed_buffers; // 搜索 void PtrQueueSet::enqueue_complete_buffer查看更新_n_completed_buffers的值
   int _process_completed_threshold;
   volatile bool _process_completed;
 

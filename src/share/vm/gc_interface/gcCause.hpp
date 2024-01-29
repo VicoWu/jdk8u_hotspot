@@ -38,14 +38,14 @@ class GCCause : public AllStatic {
  public:
   enum Cause {
     /* public */
-    _java_lang_system_gc,
+    _java_lang_system_gc, // 用户调用了System.gc()方法触发的gc
     _full_gc_alot,
     _scavenge_alot,
     _allocation_profiler,
     _jvmti_force_gc,
-    _gc_locker,
+    _gc_locker, // 临界区线程清空导致的gc
     _heap_inspection,
-    _heap_dump,
+    _heap_dump, //  heap dump导致的gc
     _wb_young_gc,
     _wb_conc_mark,
     _update_allocation_context_stats_inc,
@@ -54,7 +54,7 @@ class GCCause : public AllStatic {
     /* implementation independent, but reserved for GC use */
     _no_gc,
     _no_cause_specified,
-    _allocation_failure,
+    _allocation_failure, // 分配失败导致的gc
 
     /* implementation specific */
 
@@ -71,7 +71,7 @@ class GCCause : public AllStatic {
     _adaptive_size_policy,
 
     _g1_inc_collection_pause,
-    _g1_humongous_allocation,
+    _g1_humongous_allocation, // 大对象分配导致的gc
 
     _last_ditch_collection,
     _last_gc_cause

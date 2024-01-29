@@ -1090,6 +1090,7 @@ bool Monitor::wait(bool no_safepoint_check, long timeout, bool as_suspend_equiva
   // as_suspend_equivalent logically implies !no_safepoint_check
   guarantee (!as_suspend_equivalent || !no_safepoint_check, "invariant") ;
   // !no_safepoint_check logically implies java_thread
+  // 如果no_safepoint_check==false，即，safepoint_check==true,  那么一定是java_thread
   guarantee (no_safepoint_check || Self->is_Java_thread(), "invariant") ;
 
   #ifdef ASSERT
@@ -1107,9 +1108,9 @@ bool Monitor::wait(bool no_safepoint_check, long timeout, bool as_suspend_equiva
   // conceptually set the owner to NULL in anticipation of
   // abdicating the lock in wait
   set_owner(NULL);
-  if (no_safepoint_check) {
+  if (no_safepoint_check) { // 不进行safepoint_check
     wait_status = IWait (Self, timeout) ;
-  } else {
+  } else { // no_safepoint_check == false，即需要safepoint_check，那么一定是java_thread
     assert (Self->is_Java_thread(), "invariant") ;
     JavaThread *jt = (JavaThread *)Self;
 

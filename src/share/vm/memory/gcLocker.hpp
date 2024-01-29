@@ -54,11 +54,11 @@ class GC_locker: public AllStatic {
   // _needs_gc is true.  The current value is computed during
   // safepointing and decremented during the slow path of GC_locker
   // unlocking.
-  static volatile jint _jni_lock_count;  // number of jni active instances.
-  static volatile bool _needs_gc;        // heap is filling, we need a GC
+  static volatile jint _jni_lock_count;  // number of jni active instances. 这是静态变量，因为它记录的是整个HotSpot中的进入临界区的锁的数量
+  static volatile bool _needs_gc;        // heap is filling, we need a GC // 静态变量，因为它标记的是整个HotSpot是否需要进行gc
                                          // note: bool is typedef'd as jint
-  static volatile bool _doing_gc;        // unlock_critical() is doing a GC
-  static uint _total_collections;        // value for _gc_locker collection
+  static volatile bool _doing_gc;        // unlock_critical() is doing a GC // 静态变量，因为它标记的是整个HotSpot是否正在进行gc
+  static uint _total_collections;        // value for _gc_locker collection // 静态变量，因为它标记的是整个HotSpot的回收数量
 
 #ifdef ASSERT
   // This lock count is updated for all operations and is used to
@@ -69,30 +69,56 @@ class GC_locker: public AllStatic {
   // At a safepoint, visit all threads and count the number of active
   // critical sections.  This is used to ensure that all active
   // critical sections are exited before a new one is started.
+  /**
+   * 实现是GC_locker::verify_critical_count()
+   * 如果是在安全点，那么必须要争
+   */
   static void verify_critical_count() NOT_DEBUG_RETURN;
 
   static void jni_lock(JavaThread* thread);
   static void jni_unlock(JavaThread* thread);
 
+  /**
+   * 这是一个全局静态方法
+   * 查看static bool is_active()，可以看到调用这个方法必须确保处于safepoint
+   * @return
+   */
   static bool is_active_internal() {
-    verify_critical_count();
-    return _jni_lock_count > 0;
+    verify_critical_count(); // 确认如果在安全点状态下临界区线程数和临界区锁的数量相同
+    return _jni_lock_count > 0; //  当前临界区的锁数量大于0
   }
 
  public:
   // Accessors
-  static bool is_active() {
-    assert(SafepointSynchronize::is_at_safepoint(), "only read at safepoint");
+  /**
+   * 这个方法要求必须处于安全点
+   * @return
+   */
+  static bool is_active() { // 这个方法要求必须处于安全点safepoint
+    assert(SafepointSynchronize::is_at_safepoint(), "only read at safepoint"); // 必须在安全点才能读取这个状态
     return is_active_internal();
   }
+  /**
+   * GC_locker::check_active_before_gc() 会将_needs_gc设置为true
+   * 由于这是一个静态变量，因此当一次内存分配失败之后尝试gc，检查这个变量为true，有可能是其他gc线程准备开始执行
+   * @return
+   */
   static bool needs_gc()       { return _needs_gc;                        }
 
   // Shorthand
+  /**
+   * 静态方法，需要gc并且是active的，active的含义是至少有一个线程目前正处于关键区
+   * needs_gc 为true，说明刚刚有回收线程尝试执行，但是发现 is_active()是false，
+   *    所以放弃了(在方法check_active_before_gc()中)，因此置needs_gc=true，
+   *    当GC_Locker退出关键区的时候，GCLocker就会自己请求一次gc
+   * @return
+   */
   static bool is_active_and_needs_gc() {
     // Use is_active_internal since _needs_gc can change from true to
     // false outside of a safepoint, triggering the assert in
     // is_active.
-    return needs_gc() && is_active_internal();
+    return needs_gc() // 在方法check_active_before_gc()中设置为true，说明有线程请求了gc，但是发现is_active为true，因此设置了needs_gc =true，然后放弃回收
+      && is_active_internal();
   }
 
   // In debug mode track the locking state at all times
@@ -116,12 +142,23 @@ class GC_locker: public AllStatic {
   }
 
   // Sets _needs_gc if is_active() is true. Returns is_active().
+  /**
+   * 将_needs_gc设置为true，同时返回is_active()的结果
+   */
   static bool check_active_before_gc();
 
   // Return true if the designated collection is a GCLocker request
   // that should be discarded.  Returns true if cause == GCCause::_gc_locker
   // and the given total collection value indicates a collection has been
   // done since the GCLocker request was made.
+  /**
+   * 如果指定的集合是应丢弃的 GCLocker 请求，则返回 true。
+   * 判断的方法是，如果 Cause == GCCause::_gc_locker 并且当前G1CollectedHeap给出的当前的
+   *    总收集值不等于GCLocker发出请求的时候记录的值，意味着GCLocker自发出回收请求以来已进行过其他收集，则返回 false。
+   * @param cause
+   * @param total_collections
+   * @return
+   */
   static bool should_discard(GCCause::Cause cause, uint total_collections);
 
   // Stalls the caller (who should not be in a jni critical section)
@@ -165,8 +202,8 @@ class GC_locker: public AllStatic {
   // falls into the slow path, or is resumed from the safepoints in
   // the method, which only exist in the slow path. So when _needs_gc
   // is set, the slow path is always taken, till _needs_gc is cleared.
-  static void lock_critical(JavaThread* thread);
-  static void unlock_critical(JavaThread* thread);
+  static void lock_critical(JavaThread* thread); // 线程可能因为各种原因需要lock_critical，比如，jni需要读取一个值等等
+  static void unlock_critical(JavaThread* thread); // unlock_critical和lock_critical配对，使用
 
   static address needs_gc_address() { return (address) &_needs_gc; }
 };

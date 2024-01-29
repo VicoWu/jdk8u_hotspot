@@ -39,7 +39,7 @@ PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 G1BlockOffsetSharedArray::G1BlockOffsetSharedArray(MemRegion heap, G1RegionToSpaceMapper* storage) :
   _reserved(), _end(NULL), _listener(), _offset_array(NULL) {
 
-  _reserved = heap;
+  _reserved = heap; // reserved起始地址
   _end = NULL;
 
   MemRegion bot_reserved = storage->reserved();
@@ -83,6 +83,9 @@ void G1BlockOffsetArray::set_space(G1OffsetTableContigSpace* sp) {
 
 // The arguments follow the normal convention of denoting
 // a right-open interval: [start, end)
+/**
+ * 在 G1BlockOffsetArray::alloc_block_work2 中被调用
+ */
 void
 G1BlockOffsetArray:: set_remainder_to_point_to_start(HeapWord* start, HeapWord* end) {
 
@@ -291,11 +294,14 @@ void G1BlockOffsetArray::resize(size_t new_word_size) {
 //       ( ^    ]
 //         block-start
 //
+/**
+ * 在方法 G1BlockOffsetpublicArrayContigSpace::alloc_block_work1 中被调用
+ */
 void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_,
                                            HeapWord* blk_start, HeapWord* blk_end) {
   // For efficiency, do copy-in/copy-out.
   HeapWord* threshold = *threshold_;
-  size_t    index = *index_;
+  size_t    index = *index_; // 在偏移数组中的偏移位置
 
   assert(blk_start != NULL && blk_end > blk_start,
          "phantom block");
@@ -315,15 +321,21 @@ void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_
   // Mark the card that holds the offset into the block.  Note
   // that _next_offset_index and _next_offset_threshold are not
   // updated until the end of this method.
+  /**
+   * G1BlockOffsetSharedArray::set_offset_array
+   * 将当前分配区域的偏移数组条目设置为指向新块的起始地址。这一步相当于标记了新块的起始位置。
+   */
   _array->set_offset_array(index, threshold, blk_start);
 
   // We need to now mark the subsequent cards that this blk spans.
 
   // Index of card on which blk ends.
-  size_t end_index   = _array->index_for(blk_end - 1);
+  // 计算新块结束位置所对应的卡片索引 end_index
+  size_t end_index   = _array->index_for(blk_end - 1); //  查看最后一个块的片以为位置
 
   // Are there more cards left to be updated?
-  if (index + 1 <= end_index) {
+  // 第一个偏移位置和最后一个块的偏移位置相差不止一个，因此中间的区域也需要进行更你想
+  if (index + 1 <= end_index) { // 将剩余区域的偏移数组条目设置为指向新块的起始位置。这一步相当于标记了新块覆盖的其他卡片的位置。
     HeapWord* rem_st  = _array->address_for_index(index + 1);
     // Calculate rem_end this way because end_index
     // may be the last valid index in the covered region.

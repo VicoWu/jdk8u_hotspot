@@ -93,6 +93,12 @@ class Atomic : AllStatic {
                                      volatile unsigned int* dest,
                                      unsigned int compare_value);
 
+ /**
+  * 在这两个函数中，exchange_value 参数是要写入的新值，dest 参数是要更新的内存地址，compare_value 参数是预期的原始值。
+  * 函数会比较 dest 地址处的值和 compare_value，如果相等，则将 exchange_value 写入 dest，否则不执行任何操作。
+  * 如果 cmpxchg_ptr 方法成功地将 exchange_value 写入了 dest 地址，且该操作之前 dest 的值与 compare_value 相等，则返回的是 compare_value，表示原始值与预期值相等，并且已经被成功替换为新值。
+  * 如果 cmpxchg_ptr 方法执行失败，即 dest 的值与 compare_value 不相等，则返回的是 dest 的当前值，表示原始值与预期值不相等，没有执行替换操作。
+  */
   inline static intptr_t cmpxchg_ptr(intptr_t exchange_value, volatile intptr_t* dest, intptr_t compare_value);
   inline static void*    cmpxchg_ptr(void*    exchange_value, volatile void*     dest, void*    compare_value);
 };

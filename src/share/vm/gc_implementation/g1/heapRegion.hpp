@@ -65,11 +65,13 @@ class nmethod;
 // knows how to get the G1 heap and how to use the bitmap
 // in the concurrent marker used by G1 to filter remembered
 // sets.
-
+/**
+ * 用来给HeapRegion将脏卡片转换成oop的闭包。 它知道如何获取G1堆以及如何使用G1使用的并发标记中的标记位图来过滤记忆集。
+ */
 class HeapRegionDCTOC : public DirtyCardToOopClosure {
 private:
-  HeapRegion* _hr;
-  G1ParPushHeapRSClosure* _rs_scan;
+  HeapRegion* _hr; // 当前正在处理的HeapRegion
+  G1ParPushHeapRSClosure* _rs_scan; // 搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
   G1CollectedHeap* _g1;
 
   // Walk the given memory region from bottom to (actual) top
@@ -78,6 +80,13 @@ private:
   // blocks, where a block may or may not be an object. Sub-
   // classes should override this to provide more accurate
   // or possibly more efficient walking.
+  /**
+   * 从底部到（实际）顶部遍历给定的内存区域查找对象并对它们应用 oop 闭包 (_cl)。
+   * 其基本实现将区域视为块，其中块可能是也可能不是对象。 子类应该覆盖它以提供更准确或更有效的行走。
+   * @param mr
+   * @param bottom
+   * @param top
+   */
   void walk_mem_region(MemRegion mr, HeapWord* bottom, HeapWord* top);
 
 public:
@@ -113,7 +122,7 @@ class G1OffsetTableContigSpace: public CompactibleSpace {
   HeapWord* _top;
   HeapWord* volatile _scan_top;
  protected:
-  G1BlockOffsetArrayContigSpace _offsets;
+  G1BlockOffsetArrayContigSpace _offsets; // G1BlockOffsetArray的子类
   Mutex _par_alloc_lock;
   volatile unsigned _gc_time_stamp;
   // When we need to retire an allocation region, while other threads
@@ -288,15 +297,15 @@ class HeapRegion: public G1OffsetTableContigSpace {
 
   // The RSet length that was added to the total value
   // for the collection set.
-  size_t _recorded_rs_length;
+  size_t _recorded_rs_length; // 记录的RSet的长度
 
   // The predicted elapsed time that was added to total value
   // for the collection set.
-  double _predicted_elapsed_time_ms;
+  double _predicted_elapsed_time_ms; // 预测的消耗时间
 
   // The predicted number of bytes to copy that was added to
   // the total value for the collection set.
-  size_t _predicted_bytes_to_copy;
+  size_t _predicted_bytes_to_copy; // 预测的需要拷贝的字节数
 
  public:
   HeapRegion(uint hrm_index,
@@ -392,6 +401,10 @@ class HeapRegion: public G1OffsetTableContigSpace {
   }
 
   // An upper bound on the number of live bytes in the region.
+  /**
+   * 已经使用的区域中除去可回收区域，就是存活对象的区域大小
+   * @return
+   */
   size_t max_live_bytes() { return used() - garbage_bytes(); }
 
   void add_to_marked_bytes(size_t incr_bytes) {
@@ -408,6 +421,11 @@ class HeapRegion: public G1OffsetTableContigSpace {
 
   bool is_free() const { return _type.is_free(); }
 
+  /**
+     * 参考 HeapRegionType
+     * 由于young  是 0010，而eden是0010，survivor是0011，因此在进行了与操作以后，is_young对于eden和survivor都会返回true
+     * 由于HumMask是 0100，所以可以看到，无论是start_humongous,还是continues_humoungous，is_humongous都是true
+ */
   bool is_young()    const { return _type.is_young();    }
   bool is_eden()     const { return _type.is_eden();     }
   bool is_survivor() const { return _type.is_survivor(); }
@@ -616,6 +634,10 @@ class HeapRegion: public G1OffsetTableContigSpace {
   void calc_gc_efficiency(void);
   double gc_efficiency() { return _gc_efficiency;}
 
+  /**
+   * 搜 YoungList::push_region ， 可以看到 _young_index_in_cset的含义，其实是代表这个YoungRegiion在Young Region List中的编号
+   * @return
+   */
   int  young_index_in_cset() const { return _young_index_in_cset; }
   void set_young_index_in_cset(int index) {
     assert( (index == -1) || is_young(), "pre-condition" );

@@ -189,7 +189,7 @@ void SafepointSynchronize::begin() {
   //     between states, the safepointing code will wait for the thread to
   //     block itself when it attempts transitions to a new state.
   //
-  _state            = _synchronizing;
+  _state            = _synchronizing; // 标记当前的状态为正在进入safepoint的状态
   OrderAccess::fence();
 
   // Flush all thread states to memory
@@ -370,7 +370,7 @@ void SafepointSynchronize::begin() {
   _safepoint_counter ++;
 
   // Record state
-  _state = _synchronized;
+  _state = _synchronized; // 标记当前的状态为进入安全点完成的状态
 
   OrderAccess::fence();
 

@@ -27,30 +27,37 @@
 
 #include "memory/gcLocker.hpp"
 
+/**
+ * 需要将 lock_critical，enter_critical和jni_lock区分开
+ * @param thread
+ */
 inline void GC_locker::lock_critical(JavaThread* thread) {
-  if (!thread->in_critical()) {
-    if (needs_gc()) {
+  if (!thread->in_critical()) { // 如果线程当前不在临界区(这并不意味着其他线程不在临界区，但是我们确定当前给这个thread调用lock_critical是该thread第一次进入临界区用)，并且需要gc，那么，
+    if (needs_gc()) { // 线程当前不在临界区（第一次尝试进入），并且需要gc，那么，暂时不要进入关键区
       // jni_lock call calls enter_critical under the lock so that the
       // global lock count and per thread count are in agreement.
-      jni_lock(thread);
+      // 慢速加锁的方式增加关键区计数，不要进入关键区，而是在JNICritical_lock上等待，等gc完成以后，会收到这个锁上的通知，然后进入关键区
+      jni_lock(thread); // 这个慢路径方法会一直block waiting，直到gc完成收到锁通知，才会进入关键区，然后退出
       return;
     }
+
     increment_debug_jni_lock_count();
   }
-  thread->enter_critical();
+    // 现成当前不在关键区，或者，虽然在关键区，但是当前没有gc的需求，那么，就
+  thread->enter_critical(); // 快速方式进入临界区，即只是将对应线程的临界区计数加1
 }
 
 inline void GC_locker::unlock_critical(JavaThread* thread) {
-  if (thread->in_last_critical()) {
-    if (needs_gc()) {
+  if (thread->in_last_critical()) { // 当前准备离开的临界区是该线程的最后一个临界区，即一旦离开这个临界区，该线程则不再处于临界区
+    if (needs_gc()) { // 如果有gc正在等待线程离开临界区
       // jni_unlock call calls exit_critical under the lock so that
       // the global lock count and per thread count are in agreement.
-      jni_unlock(thread);
+      jni_unlock(thread); // 通过慢路径离开临界区
       return;
     }
     decrement_debug_jni_lock_count();
   }
-  thread->exit_critical();
+  thread->exit_critical(); // 快速方式离开临界区，即只是将对应线程的临界区计数减去1
 }
 
 #endif // SHARE_VM_MEMORY_GCLOCKER_INLINE_HPP

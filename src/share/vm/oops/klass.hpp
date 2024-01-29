@@ -146,20 +146,24 @@ class Klass : public Metadata {
   // Ordered list of all primary supertypes
   Klass*      _primary_supers[_primary_super_limit];
   // java/lang/Class instance mirroring this class
-  oop       _java_mirror;
+  oop       _java_mirror; // 与此类对应的java.lang.Class实例
   // Superclass
   Klass*      _super;
   // First subclass (NULL if none); _subklass->next_sibling() is next one
   Klass*      _subklass;
   // Sibling link (or NULL); links all subklasses of a klass
-  Klass*      _next_sibling;
+  Klass*      _next_sibling; // 将当前的Klass的所有子类通过_next_sibling链接起来
 
   // All klasses loaded by a class loader are chained through these links
+  /**
+   * 一个ClassLoader所加载的所有的Klass使用这个指针连接在一起，
+   *    查看ClassLoaderData::add_class(Klass* k)方法可以看到，一个ClassLoaderData对象中通过一个叫做_klasses的Klass* 保存了这个链表的头结点
+   */
   Klass*      _next_link;
 
   // The VM's representation of the ClassLoader used to load this class.
   // Provide access the corresponding instance java.lang.ClassLoader.
-  ClassLoaderData* _class_loader_data;
+  ClassLoaderData* _class_loader_data; // 加载这个Klass的ClassLoaderData，这个ClassLoaderData还会负责其他的klass加载
 
   jint        _modifier_flags;  // Processed access flags, for use by Class.getModifiers.
   AccessFlags _access_flags;    // Access flags. The class/interface distinction is stored here.
@@ -616,6 +620,11 @@ protected:
   TRACE_DEFINE_KLASS_METHODS;
 
   // garbage collection support
+  /**
+   * 支持klass对gc的支持，对于g1gc，会传入一个G1ParCopyClosure
+   * 实现 搜索 void Klass::oops_do(OopClosure* cl)
+   * @param cl
+   */
   virtual void oops_do(OopClosure* cl);
 
   // Iff the class loader (or mirror for anonymous classes) is alive the
