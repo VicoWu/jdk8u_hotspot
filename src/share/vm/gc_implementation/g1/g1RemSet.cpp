@@ -130,7 +130,7 @@ public:
     _try_claimed(false)
   {
     _g1h = G1CollectedHeap::heap();
-    _bot_shared = _g1h->bot_shared();
+    _bot_shared = _g1h->bot_shared(); // 全局的 G1BlockOffsetSharedArray对象
     _ct_bs = _g1h->g1_barrier_set();
     _block_size = MAX2<int>(G1RSetScanBlockSize, 1);
   }

@@ -69,6 +69,13 @@ bool G1BlockOffsetSharedArray::is_card_boundary(HeapWord* p) const {
 // G1BlockOffsetArray
 //////////////////////////////////////////////////////////////////////
 
+/**
+ * G1BlockOffsetArrayContigSpace 是 G1BlockOffsetArray的子类， 同时G1BlockOffsetArray是G1BlockOffsetTable的子类
+   HeapRegion是G1OffsetTableContigSpace的子类，其成员变量包含了一个对应的G1BlockOffsetArrayContigSpace _offset，这个_offset在G1OffsetTableContigSpace中构造
+
+ * @param array
+ * @param mr
+ */
 G1BlockOffsetArray::G1BlockOffsetArray(G1BlockOffsetSharedArray* array,
                                        MemRegion mr) :
   G1BlockOffsetTable(mr.start(), mr.end()),
@@ -295,7 +302,7 @@ void G1BlockOffsetArray::resize(size_t new_word_size) {
 //         block-start
 //
 /**
- * 在方法 G1BlockOffsetpublicArrayContigSpace::alloc_block_work1 中被调用
+ * 在方法 G1BlockOffsetArrayContigSpace::alloc_block_work1 中被调用
  */
 void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_,
                                            HeapWord* blk_start, HeapWord* blk_end) {
@@ -346,10 +353,13 @@ void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_
   index = end_index + 1;
   // Calculate threshold_ this way because end_index
   // may be the last valid index in the covered region.
+  /**
+   * 新的threshold，意味着如果下次分配的对象的地址超过了这个threshold，那么就需要更新bot, 没超过，就不需要更你想bot
+   */
   threshold = _array->address_for_index(end_index) + N_words;
   assert(threshold >= blk_end, "Incorrect offset threshold");
 
-  // index_ and threshold_ updated here.
+  // 通过传入的_next_offset_threshold和_next_offset_index地址，更新_next_offset_threshold和_next_offset_index的值
   *threshold_ = threshold;
   *index_ = index;
 
@@ -449,6 +459,13 @@ block_start_unsafe_const(const void* addr) const {
   return forward_to_block_containing_addr_const(q, n, addr);
 }
 
+/**
+ * 构造 G1BlockOffsetArrayContigSpace的时候，
+ *  初始化_next_offset_threshold和_next_offset_index
+ *  G1BlockOffsetArrayContigSpace是 G1BlockOffsetArray的子类， 同时G1BlockOffsetArray是G1BlockOffsetTable的子类
+ * @param array
+ * @param mr
+ */
 G1BlockOffsetArrayContigSpace::
 G1BlockOffsetArrayContigSpace(G1BlockOffsetSharedArray* array,
                               MemRegion mr) :

@@ -2168,7 +2168,9 @@ jint G1CollectedHeap::initialize() {
             "too many cards per region");
 
   FreeRegionList::set_unrealistically_long_length(max_regions() + 1);
-
+  /**
+   * 构造 G1BlockOffsetSharedArray对象，可以看到，整个heap只有一个G1BlockOffsetSharedArray对象
+   */
   _bot_shared = new G1BlockOffsetSharedArray(_reserved, bot_storage);
 
   _g1h = this;

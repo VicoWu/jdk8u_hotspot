@@ -243,7 +243,7 @@ private:
   G1BlockOffsetSharedArray* _array; // 被多个G1BlockOffsetArray共享的一个array
 
   // The space that owns this subregion.
-  G1OffsetTableContigSpace* _gsp;// 注意， HeapRegion是G1OffsetTableContigSpace的子类
+  G1OffsetTableContigSpace* _gsp;// 注意， HeapRegion是G1OffsetTableContigSpace的子类，这里就代表了一个HeapRegion
 
   // The portion [_unallocated_block, _sp.end()) of the space that
   // is a single block known not to contain any objects.
@@ -337,7 +337,12 @@ public:
 // A subtype of BlockOffsetArray that takes advantage of the fact
 // that its underlying space is a ContiguousSpace, so that its "active"
 // region can be more efficiently tracked (than for a non-contiguous space).
-class G1BlockOffsetArrayContigSpace:  G1BlockOffsetArray {
+/**
+ * G1BlockOffsetArrayContigSpace是 G1BlockOffsetArray的子类， 同时G1BlockOffsetArray是G1BlockOffsetTable的子类
+   HeapRegion是G1OffsetTableContigSpace的子类，其成员变量包含了一个对应的G1BlockOffsetArrayContigSpace _offset，
+        这个_offset在G1OffsetTableContigSpace中构造
+ */
+class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
   friend class VMStructs;
 
   // allocation boundary at which offset array must be updated

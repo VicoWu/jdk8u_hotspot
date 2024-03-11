@@ -117,12 +117,19 @@ public:
 // The time stamps are re-initialized to zero at cleanup and at Full GCs.
 // The current scheme that uses sequential unsigned ints will fail only if we have 4b
 // evacuation pauses between two cleanups, which is _highly_ unlikely.
+/**
+ * 由于G1OffsetTableContigSpace是HeapRegion的父类，因此这里的构造函数在HeapRegion中构造（搜索 G1OffsetTableContigSpace）
+ */
 class G1OffsetTableContigSpace: public CompactibleSpace {
   friend class VMStructs;
   HeapWord* _top;
   HeapWord* volatile _scan_top;
  protected:
-  G1BlockOffsetArrayContigSpace _offsets; // G1BlockOffsetArray的子类
+    /**
+     * 构造一个G1BlockOffsetArrayContigSpace对象，用于维护这个HeapRegion的块偏移表
+     *    G1BlockOffsetArrayContigSpace是G1BlockOffsetArray的子类
+     */
+  G1BlockOffsetArrayContigSpace _offsets;
   Mutex _par_alloc_lock;
   volatile unsigned _gc_time_stamp;
   // When we need to retire an allocation region, while other threads
@@ -133,6 +140,9 @@ class G1OffsetTableContigSpace: public CompactibleSpace {
   // into the region was and this is what this keeps track.
   HeapWord* _pre_dummy_top;
 
+  /**
+   * 构造方法。由于G1OffsetTableContigSpace是HeapRegion的父类，因此这里的构造函数在HeapRegion中构造（搜索 G1OffsetTableContigSpace）
+   */
  public:
   G1OffsetTableContigSpace(G1BlockOffsetSharedArray* sharedOffsetArray,
                            MemRegion mr);
