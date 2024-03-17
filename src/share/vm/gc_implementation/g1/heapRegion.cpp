@@ -1115,7 +1115,7 @@ void G1OffsetTableContigSpace::prepare_for_compaction(CompactPoint* cp) {
 G1OffsetTableContigSpace::
 G1OffsetTableContigSpace(G1BlockOffsetSharedArray* sharedOffsetArray,
                          MemRegion mr) :
-  _offsets(sharedOffsetArray, mr),
+  _offsets(sharedOffsetArray, mr), //  构造了一个
   _par_alloc_lock(Mutex::leaf, "OffsetTableContigSpace par alloc lock", true),
   _gc_time_stamp(0)
 {

@@ -380,6 +380,10 @@ class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
   // Variant of initialize_threshold that does not check for availability of the
   // memory first.
   HeapWord* initialize_threshold_raw();
+  /**
+   * 构造函数 G1BlockOffsetArrayContigSpace
+   * 在
+   */
  public:
   G1BlockOffsetArrayContigSpace(G1BlockOffsetSharedArray* array, MemRegion mr);
 

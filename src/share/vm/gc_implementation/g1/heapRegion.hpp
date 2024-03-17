@@ -126,8 +126,12 @@ class G1OffsetTableContigSpace: public CompactibleSpace {
   HeapWord* volatile _scan_top;
  protected:
     /**
+<<<<<<< Updated upstream
      * 构造一个G1BlockOffsetArrayContigSpace对象，用于维护这个HeapRegion的块偏移表
      *    G1BlockOffsetArrayContigSpace是G1BlockOffsetArray的子类
+=======
+     * _offset是 G1OffsetTableContigSpace的一个成员变量，在构造 G1OffsetTableContigSpace的时候，会初始化这个成员
+>>>>>>> Stashed changes
      */
   G1BlockOffsetArrayContigSpace _offsets;
   Mutex _par_alloc_lock;
@@ -141,7 +145,11 @@ class G1OffsetTableContigSpace: public CompactibleSpace {
   HeapWord* _pre_dummy_top;
 
   /**
+<<<<<<< Updated upstream
    * 构造方法。由于G1OffsetTableContigSpace是HeapRegion的父类，因此这里的构造函数在HeapRegion中构造（搜索 G1OffsetTableContigSpace）
+=======
+   * 在 HeapRegion::HeapRegion构造函数中被构造，sharedOffsetArray是一个在堆内存中的全局变量
+>>>>>>> Stashed changes
    */
  public:
   G1OffsetTableContigSpace(G1BlockOffsetSharedArray* sharedOffsetArray,
