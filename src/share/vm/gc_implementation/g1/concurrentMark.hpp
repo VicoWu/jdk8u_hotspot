@@ -88,6 +88,9 @@ class CMBitMapRO VALUE_OBJ_CLASS_SPEC {
   // Return the address corresponding to the next marked bit at or after
   // "addr", and before "limit", if "limit" is non-NULL.  If there is no
   // such bit, returns "limit" if that is non-NULL, or else "endWord()".
+  /**
+   * 具体实现 搜索 CMBitMapRO::getNextMarkedWordAddress
+   */
   HeapWord* getNextMarkedWordAddress(const HeapWord* addr,
                                      const HeapWord* limit = NULL) const;
   // Return the address corresponding to the next unmarked bit at or after
@@ -327,6 +330,13 @@ class YoungList;
 // Currently, we only support root region scanning once (at the start
 // of the marking cycle) and the root regions are all the survivor
 // regions populated during the initial-mark pause.
+/**
+ * Root Regions是在标记周期开始时不为空的region，我们可能会在标记周期处于活动状态时在evacuation pause期间回收这些区域。
+ * 鉴于在evacuation pause期间，我们不复制那些显式标记的对象，我们对Root Region要做的就是扫描它们并标记从它们可到达的所有对象。
+ * 根据SATB假设，我们在标记过程中只需要访问每个对象一次。
+ *  因此，只要我们在下一次evacuation pause之前完成此扫描，我们就可以从根区域复制对象，而无需标记它们或对它们执行任何其他操作。
+ *  目前，我们仅支持根区域扫描一次（在标记周期开始时），并且根区域就是初始标记暂停期间填充的所有survivor区域
+ */
 class CMRootRegions VALUE_OBJ_CLASS_SPEC {
 private:
   YoungList*           _young_list;
@@ -349,6 +359,9 @@ public:
 
   // Return true if the CM thread are actively scanning root regions,
   // false otherwise.
+  /**
+   * 如果 CM 线程正在主动扫描根区域，则返回 true，否则返回 false。
+   */
   bool scan_in_progress() { return _scan_in_progress; }
 
   // Claim the next root region to scan atomically, or return NULL if
@@ -513,6 +526,10 @@ protected:
 
   // accessor methods
   uint parallel_marking_threads() const     { return _parallel_marking_threads; }
+  /**
+   * 最大并行标记线程数量，并行标记发生在STW期间
+   * @return
+   */
   uint max_parallel_marking_threads() const { return _max_parallel_marking_threads;}
   double sleep_factor()                     { return _sleep_factor; }
   double marking_task_overhead()            { return _marking_task_overhead;}
@@ -611,6 +628,11 @@ protected:
   // An array of bitmaps (one bit map per task). Each bitmap
   // is used to record the cards spanned by the live objects
   // marked by that task/worker.
+  /**
+   * 这是一个位图数组（每个任务一个位图)， 数组中的每个位图用于记录由worker标记的活动对象所跨越的卡片
+   * 实时数据计数数据结构...这些数据结构在标记开始时初始化。 它们是在标记处于活动状态时写入的。 它们在remark的时候被聚合；
+   *    然后，聚合值用于填充 _region_bm、_card_bm 和总的存活字节数，随后在清理过程中更新这些字节。
+   */
   BitMap*  _count_card_bitmaps;
 
   // Used to record the number of marked live bytes
@@ -765,6 +787,9 @@ public:
   void scanRootRegion(HeapRegion* hr, uint worker_id);
 
   // Do concurrent phase of marking, to a tentative transitive closure.
+  /**
+   * 搜索 void ConcurrentMark::markFromRoots 查看具体实现
+   */
   void markFromRoots();
 
   void checkpointRootsFinal(bool clear_all_soft_refs);
@@ -855,6 +880,12 @@ public:
     return _heap_bottom_card_num;
   }
 
+  /**
+   * 调用者是 inline void ConcurrentMark::count_region
+   * 获取这个worker对应的卡片位图
+   * @param worker_id
+   * @return
+   */
   // Returns the card bitmap for a given task or worker id.
   BitMap* count_card_bitmap_for(uint worker_id) {
     assert(0 <= worker_id && worker_id < _max_worker_id, "oob");

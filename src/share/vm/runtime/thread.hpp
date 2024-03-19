@@ -87,16 +87,26 @@ typedef ChunkedList<Metadata*, mtInternal> MetadataOnStackBuffer;
 DEBUG_ONLY(class ResourceMark;)
 
 class WorkerThread;
-
+/**
+ *  对于G1来说， JVM中引入了ConcurrentRefineThread、
+    ConcurrentMarkThread和G1StringDedupThread这三个新的线程，
+    同时G1针对这些线程引入了新的管理方式SuspendibleThreadSet， 当
+    这些线程在内部工作的时候会调用join， 离开的时候调用leave， 当可
+    以主动放弃的时候调用yield。 所以G1新引入的线程都是自己主动让出
+    CPU进入暂停
+ */
 // Class hierarchy
-// - Thread
+// - Thread is_VM_thread(){return false}  is_JAVA_thread(){return false}
 //   - NamedThread
-//     - VMThread
-//     - ConcurrentGCThread
+//     - VMThread is_VM_thread(){return true}
+//     - ConcurrentGCThread : 通过
+//       - ConcurrentMarkThread
+//       - ConcurrentG1RefineThread
+//       - G1StringDedupThread
 //     - WorkerThread
 //       - GangWorker
 //       - GCTaskThread
-//   - JavaThread
+//   - JavaThread is_JAVA_thread(){return false}
 //   - WatcherThread
 
 class Thread: public ThreadShadow {

@@ -96,6 +96,10 @@ static volatile int TryingToBlock = 0 ;    // proximate value -- for advisory us
 static bool timeout_error_printed = false;
 
 // Roll all threads forward to a safepoint and suspend them all
+/**
+ * 在 VMThread::loop()中调用
+ * 用来设置安全点标记，这样其他线程都会检查这个标记并且进入安全点
+ */
 void SafepointSynchronize::begin() {
 
   Thread* myThread = Thread::current();
@@ -405,6 +409,11 @@ void SafepointSynchronize::begin() {
 
 // Wake up all threads, so they are ready to resume execution after the safepoint
 // operation has been carried out
+/**
+ * 在 VMThread::loop()中调用
+ * 这个方法用来在所有的安全点操作已经结束以后，唤醒所有的线程继续执行
+ * 在这里会调用SuspendibleThreadSet::desynchronize()，用来唤醒G1GC的三个特殊线程
+ */
 void SafepointSynchronize::end() {
 
   assert(Threads_lock->owned_by_self(), "must hold Threads_lock");

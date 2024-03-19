@@ -233,20 +233,31 @@ public:
     //   _try_claimed || r->claim_iter()
     // is true: either we're supposed to work on claimed-but-not-complete
     // regions, or we successfully claimed the region.
-
-    HeapRegionRemSetIterator iter(hrrs); //构造一个HeapRegionRemSet的迭代器，用来对这个HeapRegionRemSet进行遍历
+    /**
+     * 构造一个HeapRegionRemSet的迭代器，用来对这个HeapRegionRemSet进行遍历
+     */
+    HeapRegionRemSetIterator iter(hrrs);
     size_t card_index;
 
     // We claim cards in block so as to recude the contention. The block size is determined by
     // the G1RSetScanBlockSize parameter.
-    // 一个block一个block地扫描，这里_block_size是由G1RSetScanBlockSize控制
+    // 一个block一个block地扫描，这里_block_size是由G1RSetScanBlockSize控制，默认是64,即一次性扫描64张卡片
+    /**
+     * 第一次，jump_to_card=0，current_card在0 ~ 63 的卡片，会执行遍历
+     * 当current_card=64的时候，发现 current_card >= jump_to_card + _block_size， 相当于已经完成了一批card 的遍历，于是修改jump_to_card=64（假如没有竞争）
+     * 于是current_card接着不断递增(只要iter.has_next(card_index) 还是返回true)
+     * 当current_card=128的时候，发现current_card >= jump_to_card + _block_size，相当于又已经完成了一批card 的遍历，于是修改jump_to_card=192（假如有竞争）
+     * current_card不断递增，但是都是current_card < jump_to_card，不做任何处理，直到current_card = jump_to_card，才开始处理，
+     *  直到处理到current_card >= jump_to_card + _block_size，才进行下一个block
+     */
     size_t jump_to_card = hrrs->iter_claimed_next(_block_size);
       // 这里返回的时候，card_index带回了卡片索引值。搜 HeapRegionRemSetIterator::has_next
-    for (size_t current_card = 0;iter.has_next(card_index); current_card++) { // 遍历这个Region的转移专用记忆集合的所有卡片
-      if (current_card >= jump_to_card + _block_size) {
-        jump_to_card = hrrs->iter_claimed_next(_block_size); // 再往前进_block_size
+    for (size_t current_card = 0;iter.has_next(card_index); current_card++) { // 遍历这个Region的转移专用记忆集合的所有卡片，依次循环代表取出一张卡片
+      if (current_card >= jump_to_card + _block_size) { // 已经遍历完了一个block中的卡片
+        jump_to_card = hrrs->iter_claimed_next(_block_size); // 再往前进_block_size，比如从64变成128，从128变成192
       }
       if (current_card < jump_to_card) continue;// current_card必须从jump_to_card开始
+      // 当current_card等于jump_to_card的时候，执行下面的代码
       HeapWord* card_start = _g1h->bot_shared()->address_for_index(card_index); // 这个卡片索引对应的引用者的堆内存地址
 #if 0
       gclog_or_tty->print("Rem set iteration yielded card [" PTR_FORMAT ", " PTR_FORMAT ").\n",

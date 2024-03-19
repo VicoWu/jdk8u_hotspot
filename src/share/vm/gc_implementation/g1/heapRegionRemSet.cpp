@@ -1220,7 +1220,7 @@ void HeapRegionRemSetIterator::switch_to_prt(PerRegionTable* prt) {
 bool HeapRegionRemSetIterator::has_next(size_t& card_index) {
   switch (_is) { // 从构造函数可以看到，默认是Sparse
   case Sparse: {
-    if (_sparse_iter.has_next(card_index)) {
+    if (_sparse_iter.has_next(card_index)) { // RSHashTableIter::has_next
       _n_yielded_sparse++;
       return true;
     }

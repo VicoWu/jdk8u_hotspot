@@ -126,12 +126,10 @@ class G1OffsetTableContigSpace: public CompactibleSpace {
   HeapWord* volatile _scan_top;
  protected:
     /**
-<<<<<<< Updated upstream
      * 构造一个G1BlockOffsetArrayContigSpace对象，用于维护这个HeapRegion的块偏移表
      *    G1BlockOffsetArrayContigSpace是G1BlockOffsetArray的子类
-=======
      * _offset是 G1OffsetTableContigSpace的一个成员变量，在构造 G1OffsetTableContigSpace的时候，会初始化这个成员
->>>>>>> Stashed changes
+     * 搜索 G1OffsetTableContigSpace::G1OffsetTableContigSpace 查看 其构造函数
      */
   G1BlockOffsetArrayContigSpace _offsets;
   Mutex _par_alloc_lock;
@@ -297,8 +295,11 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // have been allocated in this part since the last mark phase.
   // "prev" is the top at the start of the last completed marking.
   // "next" is the top at the start of the in-progress marking (if any.)
-  HeapWord* _prev_top_at_mark_start;
-  HeapWord* _next_top_at_mark_start;
+  /**
+   * 这里可以看到，TAMS是per HeapRegion 的 ，每一个HeapRegion都会有一个对应的TAMS
+   */
+  HeapWord* _prev_top_at_mark_start; // prev TAMS
+  HeapWord* _next_top_at_mark_start; // next TAMS
   // If a collection pause is in progress, this is the top at the start
   // of that pause.
 

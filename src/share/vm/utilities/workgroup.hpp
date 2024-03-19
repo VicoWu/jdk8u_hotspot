@@ -302,7 +302,14 @@ public:
 // serialized to give each worker a unique "part".  Workers that
 // are not needed for this tasks (i.e., "_active_workers" have
 // been started before it, continue to wait for work.
-
+ /**
+  * 动态数量的工作线程 这种类型的工作组用于在不同时间运行不同数量的工作线程。
+  * 为任务运行的worker数量是“_active_workers”，而不是 WorkGang 中的“_total_workers”。
+  *     方法“needs_more_workers()”返回 true，直到“_active_workers” 个worker启动为止，然后返回 false。
+  *     WorkGang 中“needs_more_workers()”的实现始终返回 true，以便启动所有工作线程。
+  *     GangWorker 中的方法“loop()”被修改为在其循环中询问“needs_more_workers()”来决定是否应该开始处理任务。 “loop()”中的工作线程在检查通过同一监视器序列化的工作时，等待 WorkGang 监视器上的通知和每个工作线程的执行。
+  *     “needs_more_workers()”调用被序列化，此外“部分”的计算（实际上是执行任务的工作人员 ID）被序列化，为每个工作人员提供一个唯一的“部分”。 此任务不需要的工作人员（即“_active_workers”在此之前已启动，继续等待工作。
+  */
 class FlexibleWorkGang: public WorkGang {
   // The currently active workers in this gang.
   // This is a number that is dynamically adjusted
@@ -325,6 +332,7 @@ class FlexibleWorkGang: public WorkGang {
     _active_workers(UseDynamicNumberOfGCThreads ? 1U : ParallelGCThreads) {}
   // Accessors for fields
   virtual uint active_workers() const { return _active_workers; }
+
   void set_active_workers(uint v) {
     assert(v <= _total_workers,
            "Trying to set more workers active than there are");

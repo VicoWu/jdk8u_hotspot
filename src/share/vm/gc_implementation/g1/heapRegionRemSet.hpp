@@ -354,16 +354,30 @@ public:
   bool iter_is_complete();
 
   // Support for claiming blocks of cards during iteration
+  // 支持以 block为粒度来对card进行所有权的主张，初始值是0
   size_t iter_claimed() const { return (size_t)_iter_claimed; }
+
   // Claim the next block of cards
+  /**
+   * 主张这个card的下一个block
+   * 查看调用者 ScanRSClosure::doHeapRegion
+   */
   size_t iter_claimed_next(size_t step) {
     size_t current, next;
     do {
-      current = iter_claimed();
-      next = current + step;
-    } while (Atomic::cmpxchg((jlong)next, &_iter_claimed, (jlong)current) != (jlong)current);
-    return current;
+      current = iter_claimed(); // 获取当前迭代器的值，存储在 current 中。
+      next = current + step; // 以step为步长，计算下一个迭代器的值
+      /**
+       * 比较_iter_claimed 的当前值与 current 是否还相等(竞争存在的情况下，_iter_claimed的值被修改，就会导致不相等)，
+       *        如果相等，则将 next 存储到 _iter_claimed 中，并返回_iter_claimed原来的值
+       *        否则不做任何操作，并返回当前的值
+       * 显然，只有这个原子操作成功将 _iter_claimed 更新为next，才会返回原来的值，从而让while循环判断条件为false，从而退出循环
+       */
+    } while (Atomic::cmpxchg((jlong)next, &_iter_claimed, (jlong)current)
+                != (jlong)current);
+    return current;// 成功地更新了_iter_claimed，返回更新以前的值
   }
+
   void reset_for_par_iteration();
 
   bool verify_ready_for_par_iteration() {

@@ -640,6 +640,11 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // only whether there more than 0.  Use of this method helps
   // reduce the occurrence of ParallelGCThreads to uses where the
   // actual number may be germane.
+  /**
+   * 在globals.hpp中这个值默认是0，但是Arguments::set_g1_gc_flags中会根据当前系统状态设置ParallelGCThreads为一个大于0的数量
+   * 注意区分 ParallelGCThreads 和 ConcGCThreads的区别
+   * @return
+   */
   static bool use_parallel_gc_threads() { return ParallelGCThreads > 0; }
 
   // Copy the current allocation context statistics for the specified contexts.

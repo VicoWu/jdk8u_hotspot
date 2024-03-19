@@ -34,7 +34,7 @@ double SuspendibleThreadSet::_suspend_all_start = 0.0;
 
 void SuspendibleThreadSet::join() {
   MonitorLockerEx ml(STS_lock, Mutex::_no_safepoint_check_flag);
-  while (_suspend_all) {
+  while (_suspend_all) { // STW信号
     ml.wait(Mutex::_no_safepoint_check_flag);
   }
   _nthreads++;
@@ -44,15 +44,15 @@ void SuspendibleThreadSet::leave() {
   MonitorLockerEx ml(STS_lock, Mutex::_no_safepoint_check_flag);
   assert(_nthreads > 0, "Invalid");
   _nthreads--;
-  if (_suspend_all) {
-    ml.notify_all();
+  if (_suspend_all) { // STW信号, 如果发现VMThread线程已经要求暂停， 则会等待
+    ml.notify_all(); // 通知所有的并发线程，VMThread要求他们暂停
   }
 }
 
 void SuspendibleThreadSet::yield() {
   if (_suspend_all) {
     MonitorLockerEx ml(STS_lock, Mutex::_no_safepoint_check_flag);
-    if (_suspend_all) {
+    if (_suspend_all) { // STW信号
       _nthreads_stopped++;
       if (_nthreads_stopped == _nthreads) {
         if (ConcGCYieldTimeout > 0) {
@@ -60,13 +60,15 @@ void SuspendibleThreadSet::yield() {
           guarantee((now - _suspend_all_start) * 1000.0 < (double)ConcGCYieldTimeout, "Long delay");
         }
       }
-      ml.notify_all();
+      ml.notify_all(); //告知 VMThread，我现在已经暂停了，你可以开始工作了
       while (_suspend_all) {
+          // 本线程暂时停止，直到VMThread通知可以继续工作
         ml.wait(Mutex::_no_safepoint_check_flag);
       }
+      // VMThread通知可以继续工作了
       assert(_nthreads_stopped > 0, "Invalid");
-      _nthreads_stopped--;
-      ml.notify_all();
+      _nthreads_stopped--; //暂停线程数量减去1
+      ml.notify_all(); // 告知VMThread,我收到了你的恢复工作的信号，我将继续工作
     }
   }
 }

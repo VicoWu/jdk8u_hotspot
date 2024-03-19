@@ -106,32 +106,62 @@ inline HeapWord* G1OffsetTableContigSpace::par_allocate(size_t size) {
   return allocate(size);
 }
 
+/**
+ * 在方法 oops_on_card_seq_iterate_careful 中被调用
+ * 输入一个地址，返回这个地址对应的块的首地址
+ * @param p
+ * @return
+ */
 inline HeapWord* G1OffsetTableContigSpace::block_start(const void* p) {
+    /**
+     * _offsets 是 G1BlockOffsetArrayContigSpace
+     * 实际上调用的是 G1BlockOffsetTable::block_start
+     *      继承链路是 G1BlockOffsetArrayContigSpace -> G1BlockOffsetArray -> G1BlockOffsetTable
+     *      在block_start中，又调用了block_start_unsafe，
+     *          这里的block_start_unsafe应该是G1BlockOffsetArrayContigSpace::block_start_unsafe
+     */
   return _offsets.block_start(p);
 }
 
 inline HeapWord*
 G1OffsetTableContigSpace::block_start_const(const void* p) const {
+    /**
+     * 查看G1BlockOffsetArrayContigSpace的block_start_const方法
+     * 实际上调用的是G1BlockOffsetTable::block_start_const
+     */
   return _offsets.block_start_const(p);
 }
 
+/**
+ * 判断给定地址 p 所在的块是否为对象块
+ * @param p
+ * @return
+ */
 inline bool
 HeapRegion::block_is_obj(const HeapWord* p) const {
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
+  /**
+   * 如果我们打开了标记期间的类卸载，那么只有对象不是死对象，才会认为是obj
+   * 死对象的判断标准是：
+   *    对象在上次标记的时候还没有分配 **并且** 在这轮标记的时候也没有被标记
+   */
   if (ClassUnloadingWithConcurrentMark) {
     return !g1h->is_obj_dead(oop(p), this);
   }
+  /**
+   * 如果没有启动并发标记时候类卸载，那么只要这个地址小于当前的HeapRegion的top，就肯定是对象地址
+   */
   return p < top();
 }
 
 inline size_t
 HeapRegion::block_size(const HeapWord *addr) const {
-  if (addr == top()) {
+  if (addr == top()) { // 如果这个地址刚好等于top()，即后面已经没有元素了，那么后面的空间就是一个大的block
     return pointer_delta(end(), addr);
   }
 
   if (block_is_obj(addr)) {
-    return oop(addr)->size();
+    return oop(addr)->size(); // 如果这个地址是一个对象，那么这个对象的大小就是block的大小
   }
 
   assert(ClassUnloadingWithConcurrentMark,
@@ -140,12 +170,13 @@ HeapRegion::block_size(const HeapWord *addr) const {
               "addr: " PTR_FORMAT,
               p2i(bottom()), p2i(top()), p2i(end()), p2i(addr)));
 
+  // 在这里，block_is_obj返回false，这有可能是一些死的对象有一些死的类(由于打开了ClassUnloadingWithConcurrentMark)
   // Old regions' dead objects may have dead classes
   // We need to find the next live object in some other
   // manner than getting the oop size
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
   HeapWord* next = g1h->concurrent_mark()->prevMarkBitMap()->
-      getNextMarkedWordAddress(addr, prev_top_at_mark_start());
+      getNextMarkedWordAddress(addr, prev_top_at_mark_start()); // 方法实现搜索 CMBitMapRO::getNextMarkedWordAddress
 
   assert(next > addr, "must get the next live object");
   return pointer_delta(next, addr);

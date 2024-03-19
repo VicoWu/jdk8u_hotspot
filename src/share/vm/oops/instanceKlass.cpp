@@ -2341,15 +2341,21 @@ int InstanceKlass::oop_oop_iterate##nv_suffix##_m(oop obj,              \
                                                   MemRegion mr) {          \
   SpecializationStats::record_iterate_call##nv_suffix(SpecializationStats::ik);\
   if_do_metadata_checked(closure, nv_suffix) {                           \
-    if (mr.contains(obj)) {                                              \
-      closure->do_klass##nv_suffix(obj->klass());                        \
+    if (mr.contains(obj)) {                                             \
+      /**
+        *  调用closure的do_klass##nv_suffix方法             \
+        */
+      closure->do_klass##nv_suffix(obj->klass());                         \
     }                                                                    \
-  }                                                                      \
+  }
+  /**
+   * 调用closure的do_oop##nv_suffix(p) 方法 \
+   */
   InstanceKlass_BOUNDED_OOP_MAP_ITERATE(                                 \
     obj, mr.start(), mr.end(),                                           \
     (closure)->do_oop##nv_suffix(p),                                     \
     assert_is_in_closed_subset)                                          \
-  return size_helper();                                                  \
+  return size_helper();   // 搜索 layout_helper_to_size_helper(layout_helper())                                              \
 }
 
 ALL_OOP_OOP_ITERATE_CLOSURES_1(InstanceKlass_OOP_OOP_ITERATE_DEFN)

@@ -326,11 +326,11 @@ unsigned int Abstract_VM_Version::calc_parallel_worker_threads() {
 // Does not set the _initialized flag since it is
 // a global flag.
 unsigned int Abstract_VM_Version::parallel_worker_threads() {
-  if (!_parallel_worker_threads_initialized) {
-    if (FLAG_IS_DEFAULT(ParallelGCThreads)) {
-      _parallel_worker_threads = VM_Version::calc_parallel_worker_threads();
+  if (!_parallel_worker_threads_initialized) { // 确保只在第一次调用时执行初始化
+    if (FLAG_IS_DEFAULT(ParallelGCThreads)) { // 检查 ParallelGCThreads 参数是否为默认值，目前默认值是0
+      _parallel_worker_threads = VM_Version::calc_parallel_worker_threads(); // 计算并行工作线程的数量的静态方法
     } else {
-      _parallel_worker_threads = ParallelGCThreads;
+      _parallel_worker_threads = ParallelGCThreads; // 如果用户显式配置了，那么就使用用户的配置的 ParallelGCThreads 设置 _parallel_worker_threads
     }
     _parallel_worker_threads_initialized = true;
   }

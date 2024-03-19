@@ -117,11 +117,18 @@ inline void ConcurrentMark::count_region(MemRegion mr, HeapRegion* hr,
 
 // Counts the given memory region in the task/worker counting
 // data structures for the given worker id.
+/**
+ * 调用者是 inline bool ConcurrentMark::par_mark_and_count
+ * 更新这个worker的卡片数组
+ * @param mr
+ * @param hr
+ * @param worker_id
+ */
 inline void ConcurrentMark::count_region(MemRegion mr,
                                          HeapRegion* hr,
                                          uint worker_id) {
   size_t* marked_bytes_array = count_marked_bytes_array_for(worker_id);
-  BitMap* task_card_bm = count_card_bitmap_for(worker_id);
+  BitMap* task_card_bm = count_card_bitmap_for(worker_id); // 获取 这个worker对应的标记数组 _count_card_bitmaps
   count_region(mr, hr, marked_bytes_array, task_card_bm);
 }
 
@@ -152,14 +159,25 @@ inline bool ConcurrentMark::par_mark_and_count(oop obj,
 // Attempts to mark the given object and, if successful, counts
 // the object in the task/worker counting structures for the
 // given worker id.
+/**
+ * 调用者是 inline void ConcurrentMark::grayRoot
+ * @param obj
+ * @param word_size
+ * @param hr
+ * @param worker_id
+ * @return
+ */
 inline bool ConcurrentMark::par_mark_and_count(oop obj,
                                                size_t word_size,
                                                HeapRegion* hr,
                                                uint worker_id) {
   HeapWord* addr = (HeapWord*)obj;
-  if (_nextMarkBitMap->parMark(addr)) {
+  if (_nextMarkBitMap->parMark(addr)) { // 如果并发标记成功，并发标记是通过CAS操作来进行并发操作的
     MemRegion mr(addr, word_size);
-    count_region(mr, hr, worker_id);
+    /**
+     * 更新卡片位图的相关统计信息
+     */
+    count_region(mr, hr, worker_id); // 搜索 inline void ConcurrentMark::count_region
     return true;
   }
   return false;
@@ -212,6 +230,11 @@ inline void CMBitMap::clear(HeapWord* addr) {
 
 inline bool CMBitMap::parMark(HeapWord* addr) {
   check_mark(addr);
+  /**
+   * 搜索 size_t heapWordToOffset(const HeapWord* addr)
+   * _bm 定义在  class CMBitMapRO VALUE_OBJ_CLASS_SPEC中， CMBitMapRO是CMBitMap 的父类
+   * 搜索 BitMap::par_set_bit(idx_t bit)查看 par_set_bit
+   */
   return _bm.par_set_bit(heapWordToOffset(addr));
 }
 

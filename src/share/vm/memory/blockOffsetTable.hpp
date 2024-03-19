@@ -282,25 +282,53 @@ class BlockOffsetArray: public BlockOffsetTable {
   };
 
   enum SomePrivateConstants {
-    N_words = BlockOffsetSharedArray::N_words,
-    LogN    = BlockOffsetSharedArray::LogN,
+    N_words = BlockOffsetSharedArray::N_words, // 每个卡片对应的字节
+    LogN    = BlockOffsetSharedArray::LogN, // 每个卡片对应的字节取Log2的值，即需要移位的位数值
     // entries "e" of at least N_words mean "go back by Base^(e-N_words)."
     // All entries are less than "N_words + N_powers".
     LogBase = 4,
-    Base = (1 << LogBase),
+    Base = (1 << LogBase), // 用于计算偏移量的基数， 等于16
     N_powers = 14
   };
 
+  /**
+   * 根据给定的幂次数 i，返回需要向后跳过的**卡片**数。
+   *    当 i = 0 时：返回 1 << (LogBase * 0) = 1 << 0 = 1
+        当 i = 1 时：返回 1 << (LogBase * 1) = 1 << 4 = 16
+        当 i = 2 时：返回 1 << (LogBase * 2) = 1 << 8 = 256
+        当 i = 3 时：返回 1 << (LogBase * 3) = 1 << 12 = 4096
+        当 i = 4 时：返回 1 << (LogBase * 4) = 1 << 16 = 65536
+   * @param i
+   * @return
+   */
   static size_t power_to_cards_back(uint i) {
-    return (size_t)1 << (LogBase * i);
+    return (size_t)1 << (LogBase * i); // 这个值 其实 就是 (1 << LogBase )^(i)
   }
+  /**
+   * 根据给定的幂次数 i，返回需要向后跳过的字数
+   * 是用需要跳过的卡片数 乘以 一个卡片所对对应的字(word)数
+   * @param i
+   * @return
+   */
   static size_t power_to_words_back(uint i) {
     return power_to_cards_back(i) * N_words;
   }
+  /**
+   * 静态方法,根据给定的偏移数组条目 entry，返回需要向后跳过的卡片数。
+   * 这里的entry值肯定是大于N_words的
+   * 调用者 搜索 G1BlockOffsetArray::block_at_or_preceding
+   * @param entry
+   * @return
+   */
   static size_t entry_to_cards_back(u_char entry) {
     assert(entry >= N_words, "Precondition");
     return power_to_cards_back(entry - N_words);
   }
+  /**
+   * 根据给定的偏移数组条目 entry，返回需要向后跳过的字数。字数是用需要跳过的卡片数乘以N_words
+   * @param entry
+   * @return
+   */
   static size_t entry_to_words_back(u_char entry) {
     assert(entry >= N_words, "Precondition");
     return power_to_words_back(entry - N_words);

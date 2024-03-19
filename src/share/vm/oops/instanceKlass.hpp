@@ -134,6 +134,19 @@ class OopMapBlock VALUE_OBJ_CLASS_SPEC {
 
 struct JvmtiCachedClassFileData;
 
+/**
+ * 继承关系如下：
+ * MetaspaceObj
+	---Metadata
+	   --->Klass
+	        ---> InstanceKlass
+	             ---> InstanceMirrorKlass
+	             ---> InstanceClassLoaderKlass
+	             ---> InstanceRefKlass
+	        ---> ArrayKlass
+	             ---> ObjArrayKlass
+	             ---> TypeArrayKlass
+ */
 class InstanceKlass: public Klass {
   friend class VMStructs;
   friend class ClassFileParser;
@@ -983,6 +996,10 @@ class InstanceKlass: public Klass {
   }
 
   // Use this to return the size of an instance in heap words:
+  /**
+   * 返回一个实例的大小(以word为单位)
+   * @return
+   */
   int size_helper() const {
     return layout_helper_to_size_helper(layout_helper());
   }

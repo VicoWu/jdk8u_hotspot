@@ -371,6 +371,14 @@ HeapRegion::object_iterate_mem_careful(MemRegion mr,
   return NULL;
 }
 
+/**
+ * 在G1RemSet::refine_card中被调用
+ * @param mr
+ * @param cl
+ * @param filter_young
+ * @param card_ptr
+ * @return
+ */
 HeapWord*
 HeapRegion::
 oops_on_card_seq_iterate_careful(MemRegion mr,
@@ -419,17 +427,31 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
   }
 
   // Cache the boundaries of the memory region in some const locals
-  HeapWord* const start = mr.start();
-  HeapWord* const end = mr.end();
+  HeapWord* const start = mr.start(); // MemRegion的起始位置,以 字(word)为单位
+  HeapWord* const end = mr.end(); // MemRegion的终止位置，以 字(word)为单位
 
   // We used to use "block_start_careful" here.  But we're actually happy
   // to update the BOT while we do this...
+  /**
+   * 调用父类的 G1OffsetTableContigSpace::block_start
+   * 根据指定的地址，寻找包含了这个start字地址的block的首地址
+   * 最终调用的是 G1BlockOffsetArray::block_at_or_preceding，这里就用到了块偏移数组的数据进行快速的查找
+   */
   HeapWord* cur = block_start(start);
   assert(cur <= start, "Postcondition");
 
   oop obj;
 
+  /**
+   * 当前，我们已经有了对应的MemRegion（简称mr）的首尾地址，下面两个循环，就是去搜索和遍历落到这个区间的所有的obj
+   *    第一个循环做的事情就是找到一个cur地址，使得addr刚好位于 [cur, cur + block_size(cur)]区间
+   *    第二个循环从这个cur开始遍历，逐个对象去apply对应的closure
+   */
   HeapWord* next = cur;
+  /**
+   * 从包含这个start地址的block地址（这个block地址肯定小于start）开始往后搜索，每次往后挪动一个block_size(cur)【查看block_size的定义】
+   * ，直到 cur + block_size(cur) 已经超过了start
+   */
   do {
     cur = next;
     obj = oop(cur);
@@ -438,19 +460,24 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
       return cur;
     }
     // Otherwise...
-    next = cur + block_size(cur);
-  } while (next <= start);
+    next = cur + block_size(cur); // 一个对象一个对象地往后移动
+  } while (next <= start); //一直从start对应的block_start的位置遍历到start的位置
 
   // If we finish the above loop...We have a parseable object that
   // begins on or before the start of the memory region, and ends
   // inside or spans the entire region.
   assert(cur <= start, "Loop postcondition");
   assert(obj->klass_or_null() != NULL, "Loop postcondition");
+  /**
+   * 执行到这里，cur + block_size(cur) 一定是 > start的值，即我们找到了这样一个[cur, cur + block_size(cur)]区间，使得addr处于这个区间内
+   * 然后接着往下开始遍历，一直遍历到  cur >= end，
+   * 对中间的每一个地址，在上面apply对应的closure
+   */
 
   do {
     obj = oop(cur);
     assert((cur + block_size(cur)) > (HeapWord*)obj, "Loop invariant");
-    if (obj->klass_or_null() == NULL) {
+    if (obj->klass_or_null() == NULL) { // 如果是KLass，则返回对应的KLass*，否则返回null
       // Ran into an unparseable point.
       return cur;
     }
@@ -469,7 +496,7 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
         obj->oop_iterate(cl, mr);
       }
     }
-  } while (cur < end);
+  } while (cur < end); // 一直遍历到 cur >= end
 
   return NULL;
 }
@@ -1112,13 +1139,23 @@ void G1OffsetTableContigSpace::prepare_for_compaction(CompactPoint* cp) {
 }
 #undef block_is_always_obj
 
+/**
+ * 构造函数 G1OffsetTableContigSpace::G1OffsetTableContigSpace，
+ * 在这里构造了成员变量G1OffsetTableContigSpace
+ * G1OffsetTableContigSpace 是HeapRegion的父类，因此搜索 HeapRegion::HeapRegion 的构造函数查看该构造函数的调用
+ */
 G1OffsetTableContigSpace::
 G1OffsetTableContigSpace(G1BlockOffsetSharedArray* sharedOffsetArray,
                          MemRegion mr) :
-  _offsets(sharedOffsetArray, mr), //  构造了一个
+  _offsets(sharedOffsetArray, mr), //  构造了一个G1BlockOffsetArrayContigSpace对象
   _par_alloc_lock(Mutex::leaf, "OffsetTableContigSpace par alloc lock", true),
   _gc_time_stamp(0)
 {
+    /**
+     * 设置这个G1BlockOffsetArrayContigSpace(G1BlockOffsetArrayContigSpace -> G1BlockOffsetArray -> G1BlockOffsetTable)
+     *      所属的G1OffsetTableContigSpace(G1OffsetTableContigSpace -> HeapRegion) ，
+     * 搜索 G1BlockOffsetArray::set_space 查看方法实现
+     */
   _offsets.set_space(this);
 }
 

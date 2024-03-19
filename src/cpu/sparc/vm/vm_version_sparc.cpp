@@ -472,6 +472,13 @@ void VM_Version::revert() {
 
 unsigned int VM_Version::calc_parallel_worker_threads() {
   unsigned int result;
+  /**
+   * M 系列、S 系列和 Niagara Plus 是指不同类型的 SPARC 处理器系列。
+    M 系列：       指的是 Oracle 的 SPARC M 系列处理器。这些处理器是针对高性能计算和企业级应用的多线程处理器，具有高度并行化和可扩展性。
+    S 系列：       指的是 Oracle 的 SPARC S 系列处理器。这些处理器是针对服务器和数据中心环境的处理器，具有高性能和高可靠性。
+    Niagara Plus：是指 Oracle 的 SPARC T 系列处理器的早期版本，也称为 Niagara Plus。
+            这些处理器采用了 Sun Microsystems 推出的 CMT（Chip Multithreading）架构，以提供高度并行化的多线程性能。
+   */
   if (is_M_series() || is_S_series()) {
     // for now, use same gc thread calculation for M-series and S-series as for
     // niagara-plus. In future, we may want to tweak parameters for

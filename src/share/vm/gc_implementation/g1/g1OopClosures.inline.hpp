@@ -144,12 +144,25 @@ inline void G1CMOopClosure::do_oop_nv(T* p) {
   _task->deal_with_reference(obj);
 }
 
+
+/**
+ * 这个方法的调用发生在初始标记阶段，因此当前的状态是stw的.
+ * 可以看到，这个do_oop_nv并没有任何递归的操作，仅仅是传入什么对象就扫描什么对象
+ * 这个Closure的构造发生在方法 void ConcurrentMark::scanRootRegion 中
+ * @tparam T
+ * @param p
+ */
 template <class T>
 inline void G1RootRegionScanClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p);
-  if (!oopDesc::is_null(heap_oop)) {
+  T heap_oop = oopDesc::load_heap_oop(p); // 获取oop* 指针指向的oop对象
+  if (!oopDesc::is_null(heap_oop)) { //调用oopDesc类的静态方法，判断对象是否为null
+    /**
+     * 如果不是narrowoop，那么直接返回，如果是narrow oop，需要进行相应的解码工作
+     * 实现类搜索 inline oop oopDesc::decode_heap_oop_not_null
+     */
     oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
     HeapRegion* hr = _g1h->heap_region_containing((HeapWord*) obj);
+    // 标记对象，将标记结果存放在_cm对象的_nextMarkBitMap中
     _cm->grayRoot(obj, obj->size(), _worker_id, hr);
   }
 }

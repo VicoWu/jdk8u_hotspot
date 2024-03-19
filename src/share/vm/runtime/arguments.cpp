@@ -1675,7 +1675,7 @@ void Arguments::set_g1_gc_flags() {
   FastTLABRefill = false;
 #endif
   FLAG_SET_DEFAULT(ParallelGCThreads,
-                     Abstract_VM_Version::parallel_worker_threads());
+                     Abstract_VM_Version::parallel_worker_threads()); // 调用静态方法 Abstract_VM_Version::parallel_worker_threads 设置 ParallelGCThreads
   if (ParallelGCThreads == 0) {
     vm_exit_during_initialization("The flag -XX:+UseG1GC can not be combined with -XX:ParallelGCThreads=0", NULL);
     }

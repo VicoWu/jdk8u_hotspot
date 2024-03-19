@@ -138,6 +138,10 @@ class Abstract_VM_Version: AllStatic {
   // work.  If that number has not been calculated, do so and
   // save it.  Returns ParallelGCThreads if it is set on the
   // command line.
+  /**
+   * 搜 unsigned int Abstract_VM_Version::parallel_worker_threads
+   * @return
+   */
   static unsigned int parallel_worker_threads();
   // Calculates and returns the number of parallel threads.  May
   // be VM version specific.

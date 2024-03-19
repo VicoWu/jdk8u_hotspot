@@ -78,6 +78,8 @@ public:
 
 /**
  *  并发标记子阶段，这里run()中的代码全部都是并发执行的
+ *  在方法 G1CollectedHeap::doConcurrentMark 中设置了启动标记并启动
+ *  这个方法的执行不处于安全点钟
  */
 void ConcurrentMarkThread::run() {
   initialize_in_thread();
@@ -91,7 +93,10 @@ void ConcurrentMarkThread::run() {
 
   while (!_should_terminate) {
     // wait until started is set.
-    sleepBeforeNextCycle(); // 等待，直到等到通知，这个通知的发送来自于do_collection_pause_at_safepoint的最后，即Young GC完成了以后
+    /**
+     * 等待，直到等到通知，这个通知的发送来自于do_collection_pause_at_safepoint的最后，即Young GC完成了以后
+     */
+    sleepBeforeNextCycle();
     if (_should_terminate) {
       break;
     }
@@ -115,8 +120,14 @@ void ConcurrentMarkThread::run() {
           gclog_or_tty->gclog_stamp(cm()->concurrent_gc_id());
           gclog_or_tty->print_cr("[GC concurrent-root-region-scan-start]");
         }
-
-        _cm->scanRootRegions();  // 扫描root region，这里的root region应该是survivor region，因为经过上一轮 young gc，实际上除了老年代，所有的young region的对象都进入了survivor
+        /**
+         * 扫描root region，这里的root region应该是survivor region，因为经过上一轮 young gc，实际上除了老年代，所有的young region的对象都进入了survivor
+         * 为了弥补从直接的Java根指向老年代的情况，在G1ParCopyClosure<barrier, do_mark_object>::do_oop_work中，
+         *      使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone，
+         *      当发现开启了并发标记则设置为 G1MarkFromRoot
+           代码实现，参考 ConcurrentMark::scanRootRegions
+         */
+        _cm->scanRootRegions();
 
         double scan_end = os::elapsedTime();
         if (G1Log::fine()) {
@@ -136,7 +147,7 @@ void ConcurrentMarkThread::run() {
       do { // 反复进行并发标记
         iter++;
         if (!cm()->has_aborted()) {
-          _cm->markFromRoots(); // 并发标记
+          _cm->markFromRoots(); // 从根开始进行并发标记，即进入并发标记子阶段
         }
 
         double mark_end_time = os::elapsedVTime();

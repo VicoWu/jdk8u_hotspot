@@ -92,6 +92,19 @@ class ParCompactionManager;
 class KlassSizeStats;
 class fieldDescriptor;
 
+/**
+ * 继承关系如下
+ * MetaspaceObj
+	---Metadata
+	   --->Klass
+	        ---> InstanceKlass
+	             ---> InstanceMirrorKlass
+	             ---> InstanceClassLoaderKlass
+	             ---> InstanceRefKlass
+	        ---> ArrayKlass
+	             ---> ObjArrayKlass
+	             ---> TypeArrayKlass
+ */
 class Klass : public Metadata {
   friend class VMStructs;
  protected:

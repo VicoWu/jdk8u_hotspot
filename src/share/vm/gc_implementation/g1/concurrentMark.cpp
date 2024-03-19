@@ -61,6 +61,13 @@ CMBitMapRO::CMBitMapRO(int shifter) :
   _bmWordSize = 0;
 }
 
+/**
+ * 如果“limit”为非 NULL，则返回与“addr”处或之后、“limit”之前的下一个标记位相对应的地址。
+ *  如果没有这样的位，则返回“limit”（如果该位为非 NULL），否则返回“endWord()”。
+ * @param addr
+ * @param limit
+ * @return
+ */
 HeapWord* CMBitMapRO::getNextMarkedWordAddress(const HeapWord* addr,
                                                const HeapWord* limit) const {
   // First we must round addr *up* to a possible object boundary.
@@ -445,17 +452,27 @@ void CMRootRegions::init(G1CollectedHeap* g1h, ConcurrentMark* cm) {
   _young_list = g1h->young_list();
   _cm = cm;
 }
-
+/**
+ * 这个方法是在 ConcurrentMark::checkpointRootsInitialPost中调用的
+ */
 void CMRootRegions::prepare_for_scan() {
   assert(!scan_in_progress(), "pre-condition");
 
   // Currently, only survivors can be root regions.
   assert(_next_survivor == NULL, "pre-condition");
-  _next_survivor = _young_list->first_survivor_region();
+  /**
+   * 当前，只有survivor作为root region
+   * 设置完成以后，在并发标记阶段，就会遍历这里设置的基于survivor region的root region
+   */
+  _next_survivor = _young_list->first_survivor_region(); // 返回当前的_survivor_head
   _scan_in_progress = (_next_survivor != NULL);
   _should_abort = false;
 }
 
+/**
+ * 在标记阶段的并发执行的时候，取出下一个需要进行标记处理的Region
+ * @return
+ */
 HeapRegion* CMRootRegions::claim_next() {
   if (_should_abort) {
     // If someone has set the should_abort flag, we return NULL to
@@ -468,14 +485,14 @@ HeapRegion* CMRootRegions::claim_next() {
   if (res != NULL) {
     MutexLockerEx x(RootRegionScan_lock, Mutex::_no_safepoint_check_flag);
     // Read it again in case it changed while we were waiting for the lock.
-    res = _next_survivor;
+    res = _next_survivor; //
     if (res != NULL) {
-      if (res == _young_list->last_survivor_region()) {
+      if (res == _young_list->last_survivor_region()) { // 如果 _survivor_head == _survivor_tail，表明survivor区域没有region
         // We just claimed the last survivor so store NULL to indicate
         // that we're done.
         _next_survivor = NULL;
       } else {
-        _next_survivor = res->get_next_young_region();
+        _next_survivor = res->get_next_young_region();// 调用HeapRegion的方法 get_next_young_region
       }
     } else {
       // Someone else claimed the last survivor while we were trying
@@ -499,7 +516,7 @@ void CMRootRegions::scan_finished() {
   {
     MutexLockerEx x(RootRegionScan_lock, Mutex::_no_safepoint_check_flag);
     _scan_in_progress = false;
-    RootRegionScan_lock->notify_all();
+    RootRegionScan_lock->notify_all(); // 通知其他线程，可以进行下一次gc了
   }
 }
 
@@ -624,7 +641,7 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
       // if both are set
       _sleep_factor             = 0.0;
       _marking_task_overhead    = 1.0;
-    } else if (G1MarkingOverheadPercent > 0) {
+    } else if (G1MarkingOverheadPercent > 0) { // overhead of concurrent marking， default 是0
       // We will calculate the number of parallel marking threads based
       // on a target overhead with respect to the soft real-time goal
       double marking_overhead = (double) G1MarkingOverheadPercent / 100.0;
@@ -641,10 +658,11 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
       FLAG_SET_ERGO(uintx, ConcGCThreads, (uint) marking_thread_num);
       _sleep_factor             = sleep_factor;
       _marking_task_overhead    = marking_task_overhead;
-    } else {
+    } else { // 如果  ConcGCThreads 和  G1MarkingOverheadPercent都是默认值，那么会根据ParallelGCThreads的值来设置ConcGCThreads
       // Calculate the number of parallel marking threads by scaling
       // the number of parallel GC threads.
-      uint marking_thread_num = scale_parallel_threads((uint) ParallelGCThreads);
+      // 关于 ParallelGCThreadcs的值的设置，搜索 unsigned int Abstract_VM_Version::parallel_worker_threads
+      uint marking_thread_num = scale_parallel_threads((uint) ParallelGCThreads); // 搜具体实现 ConcurrentMark::scale_parallel_threads
       FLAG_SET_ERGO(uintx, ConcGCThreads, marking_thread_num);
       _sleep_factor             = 0.0;
       _marking_task_overhead    = 1.0;
@@ -936,7 +954,7 @@ void ConcurrentMark::checkpointRootsInitialPre() {
   reset();
 
   // For each region note start of marking.
-  NoteStartOfMarkHRClosure startcl;
+  NoteStartOfMarkHRClosure startcl; // 对于每一个region，通知标记开始
   g1h->heap_region_iterate(&startcl);
 }
 
@@ -964,7 +982,7 @@ void ConcurrentMark::checkpointRootsInitialPost() {
   satb_mq_set.set_active_all_threads(true, /* new active value */
                                      false /* expected_active */);
 
-  _root_regions.prepare_for_scan();
+  _root_regions.prepare_for_scan(); // 搜索 CMRootRegions::prepare_for_scan
 
   // update_g1_committed() will be called at the end of an evac pause
   // when marking is on. So, it's also called at the end of the
@@ -1164,14 +1182,33 @@ public:
 
 // Calculates the number of active workers for a concurrent
 // phase.
+/**
+ * 计算parallel_marking的线程数量，这里的并行标记是STW的，必须和并发标记区别开
+ * @return
+ */
 uint ConcurrentMark::calc_parallel_marking_threads() {
+    /**
+     * 是否正在使用并行垃圾收集线程 (use_parallel_gc_threads)，注意区分
+     * 在 Arguments::set_g1_gc_flags中会设置_parallel_gc_threads的值
+     */
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     uint n_conc_workers = 0;
+    /**
+     * 如果不使用动态线程数量 (UseDynamicNumberOfGCThreads 为 false)，
+     *  或者
+     * ConcGCThreads 参数已经设置并且没有强制使用动态线程数量 (ForceDynamicNumberOfGCThreads 为 false)，
+     * 则直接使用 max_parallel_marking_threads() 返回的最大并行标记线程数。
+     */
     if (!UseDynamicNumberOfGCThreads ||
         (!FLAG_IS_DEFAULT(ConcGCThreads) &&
          !ForceDynamicNumberOfGCThreads)) {
-      n_conc_workers = max_parallel_marking_threads();
+      n_conc_workers = max_parallel_marking_threads(); // 使用 最大并行标记线程数。这个值_max_parallel_marking_threads 在构造方法 ConcurrentMark::ConcurrentMark中设置了
     } else {
+        /**
+         * 用户配置了使用动态线程数量,
+         *  并且
+         * (ConcGCThreads是默认值，或者，ForceDynamicNumberOfGCThreads为True(默认是false))
+         */
       n_conc_workers =
         AdaptiveSizePolicy::calc_default_active_workers(
                                      max_parallel_marking_threads(),
@@ -1184,12 +1221,23 @@ uint ConcurrentMark::calc_parallel_marking_threads() {
     assert(n_conc_workers > 0, "Always need at least 1");
     return n_conc_workers;
   }
+  /**
+   * 如果不是正在使用并行垃圾收集线程 (use_parallel_gc_threads)，则返回 0，
+   * 因为在没有并行垃圾收集线程的情况下也就没有并行标记线程
+   */
   // If we are not running with any parallel GC threads we will not
   // have spawned any marking threads either. Hence the number of
   // concurrent workers should be 0.
   return 0;
 }
 
+/**
+ * 搜索 class CMRootRegionScanTask : public AbstractGangTask的work方法查看调用者
+ * worker_id是对应的Gang的worker 现成的id
+ * 当前方法的调用处于根扫描的STW状态中，根扫描的Region是Survivor区域中的所有region
+ * @param hr
+ * @param worker_id
+ */
 void ConcurrentMark::scanRootRegion(HeapRegion* hr, uint worker_id) {
   // Currently, only survivors can be root regions.
   assert(hr->next_top_at_mark_start() == hr->bottom(), "invariant");
@@ -1200,8 +1248,11 @@ void ConcurrentMark::scanRootRegion(HeapRegion* hr, uint worker_id) {
   const HeapWord* end = hr->top();
   while (curr < end) {
     Prefetch::read(curr, interval);
-    oop obj = oop(curr);
-    int size = obj->oop_iterate(&cl);
+    oop obj = oop(curr); // 将 curr 转换为 oopDesc* 类型，并将结果赋值给 obj
+    /**
+     * 调用oopDesc的成员方法 oopDesc::oop_iterate，搜索 G1RootRegionScanClosure::do_oop_nv，返回这个obj 的大小
+     */
+    int size = obj->oop_iterate(&cl); //
     assert(size == obj->size(), "sanity");
     curr += size;
   }
@@ -1212,14 +1263,29 @@ private:
   ConcurrentMark* _cm;
 
 public:
+    /**
+     * 一个Heap里面只有一个 ConcurrentMark cm对象
+     * 在 ConcurrentMark::scanRootRegions 方法中构造
+     * @param cm
+     */
   CMRootRegionScanTask(ConcurrentMark* cm) :
     AbstractGangTask("Root Region Scan"), _cm(cm) { }
 
+    /**
+     * 并发标记(不是并行标记)的工作方法，调用者为 ConcurrentMark::scanRootRegion
+     * @param worker_id
+     */
   void work(uint worker_id) {
     assert(Thread::current()->is_ConcurrentGC_thread(),
            "this should only be done by a conc GC thread");
-
-    CMRootRegions* root_regions = _cm->root_regions();
+    /**
+     * 返回 CMRootRegions指针
+     */
+    CMRootRegions* root_regions = _cm->root_regions(); //
+    /**
+     * 从root_regions中认领一个Region
+     * 搜索 CMRootRegions::claim_next 查看具体实现
+     */
     HeapRegion* hr = root_regions->claim_next();
     while (hr != NULL) {
       _cm->scanRootRegion(hr, worker_id);
@@ -1228,6 +1294,9 @@ public:
   }
 };
 
+/**
+ * 在   ConcurrentMarkThread::run中调用该方法
+ */
 void ConcurrentMark::scanRootRegions() {
   // Start of concurrent marking.
   ClassLoaderDataGraph::clear_claimed_marks();
@@ -1235,27 +1304,38 @@ void ConcurrentMark::scanRootRegions() {
   // scan_in_progress() will have been set to true only if there was
   // at least one root region to scan. So, if it's false, we
   // should not attempt to do any further work.
-  if (root_regions()->scan_in_progress()) {
+  /**
+   * 在 CMRootRegions::prepare_for_scan中，会将_scan_in_progress 设置为true，
+   * 在 scan_finished中，会将_scan_in_progress设置为false
+   */
+  if (root_regions()->scan_in_progress()) { // 如果 CM 线程正在主动扫描根区域，则返回 true，否则返回 false。
     _parallel_marking_threads = calc_parallel_marking_threads();
     assert(parallel_marking_threads() <= max_parallel_marking_threads(),
            "Maximum number of marking threads exceeded");
     uint active_workers = MAX2(1U, parallel_marking_threads());
 
     CMRootRegionScanTask task(this);
-    if (use_parallel_marking_threads()) {
+    if (use_parallel_marking_threads()) { // 如果 _parallel_workers != null
       _parallel_workers->set_active_workers((int) active_workers);
-      _parallel_workers->run_task(&task);
+      _parallel_workers->run_task(&task); // 使用线程池提交任务，这个任务会被分解成不同的worker去分别执行，搜索 FlexibleWorkGang::run_task 查看具体实现
     } else {
-      task.work(0);
+      task.work(0); // 直接在当前线程中执行
     }
 
+    // 代码执行到这里，并发执行的标记任务应该都执行结束
     // It's possible that has_aborted() is true here without actually
     // aborting the survivor scan earlier. This is OK as it's
     // mainly used for sanity checking.
-    root_regions()->scan_finished();
+    /**
+     * 查看 CMRootRegions::scan_finished() 具体实现
+     */
+    root_regions()->scan_finished(); // 通知其他线程，可以进行下一次GC
   }
 }
 
+/**
+ * 进入并发标记子阶段
+ */
 void ConcurrentMark::markFromRoots() {
   // we might be tempted to assert that:
   // assert(asynch == !SafepointSynchronize::is_at_safepoint(),

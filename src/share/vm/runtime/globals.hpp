@@ -1433,7 +1433,9 @@ class CommandLineFlags {
   product(uintx, ParallelOldDeadWoodLimiterStdDev, 80,                      \
           "The standard deviation used by the parallel compact dead wood "  \
           "limiter (a number between 0-100)")                               \
-                                                                            \
+  /**
+ * 这里的0是未经处理的值，在Arguments::set_g1_gc_flags中会根据当前系统状态设置ParallelGCThreads为一个大于0的值
+ */
   product(uintx, ParallelGCThreads, 0,                                      \
           "Number of parallel threads parallel gc will use")                \
                                                                             \

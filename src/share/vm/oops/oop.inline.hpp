@@ -226,8 +226,13 @@ inline oop oopDesc::decode_heap_oop_not_null(narrowOop v) {
 inline oop oopDesc::decode_heap_oop(narrowOop v) {
   return is_null(v) ? (oop)NULL : decode_heap_oop_not_null(v);
 }
-
-inline oop oopDesc::decode_heap_oop_not_null(oop v) { return v; } // 如果不是narrowoop，那么直接返回，如果是narrow oop，需要进行相应的解码工作
+/**
+ * 如果不是narrowoop，那么直接返回，如果是narrow oop，需要进行相应的解码工作
+ * 具体实现搜索 inline oop oopDesc::decode_heap_oop_not_null
+ * @param v
+ * @return
+ */
+inline oop oopDesc::decode_heap_oop_not_null(oop v) { return v; }
 inline oop oopDesc::decode_heap_oop(oop v)  { return v; }
 
 // Load an oop out of the Java heap as is without decoding.
@@ -725,6 +730,10 @@ inline int oopDesc::adjust_pointers() {
   return s;
 }
 
+/**
+ * 对于InstanceKlass, 搜索 int InstanceKlass::oop_oop_iterate##nv_suffix
+ * 返回值是这个object instance的大小
+ */
 #define OOP_ITERATE_DEFN(OopClosureType, nv_suffix)                        \
                                                                            \
 inline int oopDesc::oop_iterate(OopClosureType* blk) {                     \

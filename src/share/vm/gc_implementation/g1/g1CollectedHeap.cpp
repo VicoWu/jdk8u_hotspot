@@ -3839,6 +3839,7 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
 
 /**
  * 通知开始进行并发标记
+ * 在方法 do_collection_pause_at_safepoint()中启动
  */
 void
 G1CollectedHeap::doConcurrentMark() {
@@ -4145,14 +4146,16 @@ void G1CollectedHeap::log_gc_footer(double pause_time_sec) {
 }
 
 /**
+ * 这个方法是在STW中执行的，可能会借道进行初始标记
  * 进行某种STW的safepoint暂停。这个STW可能是初始标记导致的，也可能是gc导致的
- * 我们看到，这个方法是被VM_G1IncCollectionPause::doit()调用的，因此说明这个方法只是针对增量gc,并且当前线程是vm_thread
+ * 我们看到，这个方法是被VM_G1IncCollectionPause::doit()调用的，因此说明这个方法只是针对增量gc,并且当前线程是vm_thread，
+ *      显然，搜索 Mode evaluation_mode，说明所有的VM_Operation都是需要在安全点执行的，只是在 VMThread::loop中决定的
  * 这个方法不是full gc，因为它调用了increment_total_collections(false)而
  * 而G1CollectedHeap::do_collection() 是 full gc
 */
 bool
 G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
-  assert_at_safepoint(true /* should_be_vm_thread */);
+  assert_at_safepoint(true /* should_be_vm_thread */); // 搜索 #define assert_at_safepoint
   guarantee(!is_gc_active(), "collection is not reentrant");
   // 将_needs_gc设置为true，同时返回is_active()的结果
   // 当前有现成处于临界区，直接放弃gc。在临界区状态结束以后，会重新立刻调度gc
@@ -4183,7 +4186,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // 并且正在进行mixed gc(g1_policy()->gcs_are_young() == false()),那么assert将失败
   // We do not allow initial-mark to be piggy-backed on a mixed GC.
   assert(!g1_policy()->during_initial_mark_pause() ||
-          g1_policy()->gcs_are_young(), "sanity");
+          g1_policy()->gcs_are_young(), "sanity")-;
 
   // 如果当前正在进行并发标记（g1_policy()->mark_in_progress() = true），
   // 并且正在进行mixed gc(g1_policy()->gcs_are_young() == false()),那么assert将失败
@@ -4326,7 +4329,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 #endif // YOUNG_LIST_VERBOSE
 
         if (g1_policy()->during_initial_mark_pause()) {
-          concurrent_mark()->checkpointRootsInitialPre();
+          concurrent_mark()->checkpointRootsInitialPre(); // 进行初始标记暂停前的准备工作，搜索 搜索ConcurrentMark::checkpointRootsInitialPre查看具体实现
         }
 
 #if YOUNG_LIST_VERBOSE
@@ -4377,7 +4380,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
          * 进行垃圾收集，在这里会调用G1ParTask的work方法，进行根扫描，疏散等等工作，
          * 以及通过方法 cleanup_after_oops_into_collection_set_do进行回收失败的处理工作
          */
-        evacuate_collection_set(evacuation_info); //
+        evacuate_collection_set(evacuation_info);
 
         free_collection_set(g1_policy()->collection_set(), evacuation_info);
 
@@ -4430,7 +4433,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
           // We have to do this before we notify the CM threads that
           // they can start working to make sure that all the
           // appropriate initialization is done on the CM object.
-          concurrent_mark()->checkpointRootsInitialPost();
+          concurrent_mark()->checkpointRootsInitialPost(); // 结束了初始标记的暂停，搜索ConcurrentMark::checkpointRootsInitialPost查看具体实现
           set_marking_started();
           // Note that we don't actually trigger the CM thread at
           // this point. We do that later when we're sure that
@@ -4816,6 +4819,10 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
     }
     // The object is not in collection set. If we're a root scanning
     // closure during an initial mark pause then attempt to mark the object.
+    /**
+     * 为了区别一般的YGC和混合GC的初始标记阶段，
+        使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone， 当发现开启了并发标记则设置为G1MarkFromRoot
+     */
     if (do_mark_object == G1MarkFromRoot) { // 需要进行标记
       mark_object(obj); //  对当前对象进行标记
     }

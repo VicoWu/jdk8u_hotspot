@@ -130,6 +130,9 @@ class G1BlockOffsetSharedArrayMappingChangedListener : public G1MappingChangedLi
 
 // Here is the shared array type.
 
+/**
+ * 在G1CollectedHeap中被构造，搜索 _bot_shared = new G1BlockOffsetSharedArray(_reserved, bot_storage)
+ */
 class G1BlockOffsetSharedArray: public CHeapObj<mtGC> {
   friend class G1BlockOffsetArray;
   friend class G1BlockOffsetArrayContigSpace;
@@ -147,6 +150,11 @@ private:
   // address.
   volatile u_char* _offset_array;          // byte array keeping backwards offsets
 
+  /**
+   * 存放到_offset_array中的字地址的偏移量不可以大于N_words
+   * @param offset
+   * @param msg
+   */
   void check_offset(size_t offset, const char* msg) const {
     assert(offset <= N_words,
            err_msg("%s - "
@@ -191,11 +199,12 @@ public:
      */
     LogN_words = LogN - LogHeapWordSize,
     /**
-     * 偏移数组的大小（以字节为单位），假如LogN = 9，那么N_Bytes=256
+     * 偏移数组的大小（以字节为单位），假如LogN = 9，那么N_Bytes=512
      */
     N_bytes = 1 << LogN,
     /**
-     * 偏移数组的大小(以HeapWord为单位),，假如LogN_words = 6，那么N_words = 64个word
+     * 偏移数组的大小(以HeapWord为单位),，假如LogN=9，而一个字是8个字节，因此LogHeapWordSize=3，
+     *      因此LogN_words = 6，那么N_words = 64，代表64个HeapWord，即一个卡片代表了64个HeapWord，对应了64 * 8 = 512Byte
      */
     N_words = 1 << LogN_words
   };
@@ -221,6 +230,11 @@ public:
    */
   inline HeapWord* address_for_index(size_t index) const;
   // Variant of address_for_index that does not check the index for validity.
+   /**
+    * 根据在_offset_array数组中的索引，返回这个索引对应的字地址(注意，不是返回这个index在_offset_array中的值)
+    * @param index
+    * @return
+    */
   inline HeapWord* address_for_index_raw(size_t index) const {
     return _reserved.start() + (index << LogN_words);
   }
@@ -290,6 +304,10 @@ protected:
   // next block (or the end of the space.)  Return the address of the
   // beginning of the block that contains "addr".  May have side effects
   // on "this", by updating imprecise entries.
+  /**
+   * “q”是块边界，<=“addr”； “n”是下一个块的地址（或空间的末尾）。
+   * 返回包含“addr”的块的开头地址。 通过更新不精确的条目，可能会对“this”产生副作用。
+   */
   HeapWord* forward_to_block_containing_addr_slow(HeapWord* q,
                                                   HeapWord* n,
                                                   const void* addr);
@@ -348,13 +366,13 @@ class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
   // allocation boundary at which offset array must be updated
   /**
    * G1BlockOffsetpublicArrayContigSpace 的变量
-   * _next_offset_threshold是一个界限，如果内存分配超过了这个界限，意味着偏移数组需要被更新
+   * _next_offset_threshold是一个字地址的界限，如果内存分配超过了这个界限，意味着偏移数组需要被更新
    */
 
   HeapWord* _next_offset_threshold;
   /**
    * G1BlockOffsetpublicArrayContigSpace的变量
-   * 与上面的界限_next_offset_threshold所对应的偏移数组的偏移量
+   * 与上面的界限_next_offset_threshold所对应的偏移数组的偏移量，即当前分配的对象的地址对应的索引
    */
   size_t    _next_offset_index;      // index corresponding to that boundary
 
@@ -363,7 +381,7 @@ class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
   /**
    * 调用方是 G1BlockOffsetArrayContigSpace::alloc_block
    * 这个方法的全称是 G1BlockOffsetpublicArrayContigSpace::alloc_block_work1
-   * 这个方法的调用发生在下一个分配将会跨越threshold
+   * 这个方法的调用发生在下一个分配对象的结束地址会会跨越threshold
    */
   void alloc_block_work1(HeapWord* blk_start, HeapWord* blk_end) {
       /**
@@ -371,7 +389,7 @@ class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
        */
     alloc_block_work2(&_next_offset_threshold,
                       &_next_offset_index, // 偏移数组的下一个索引值，将在这个索引值的地方写入偏移量
-                      blk_start, blk_end);
+                      blk_start, blk_end); // 这里会计算blk_start和_next_offset_threshold之间的距离，将这个距离作为value写入到index的位置
   }
 
   // Zero out the entry for _bottom (offset will be zero). Does not check for availability of the
@@ -381,8 +399,9 @@ class G1BlockOffsetArrayContigSpace: public G1BlockOffsetArray {
   // memory first.
   HeapWord* initialize_threshold_raw();
   /**
-   * 构造函数 G1BlockOffsetArrayContigSpace
-   * 在
+   * 构造函数 G1BlockOffsetArrayContigSpace， 在 G1OffsetTableContigSpace的构造函数中被构造
+   * 搜索 G1OffsetTableContigSpace::G1OffsetTableContigSpace 查看 其构造函数
+   * 可以看到， array是在g1CollectedHeap中被构造，因此堆内存中只有一个全局的G1BlockOffsetSharedArray对象
    */
  public:
   G1BlockOffsetArrayContigSpace(G1BlockOffsetSharedArray* array, MemRegion mr);

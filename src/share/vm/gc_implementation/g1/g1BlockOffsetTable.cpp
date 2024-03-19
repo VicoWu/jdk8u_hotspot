@@ -91,7 +91,7 @@ void G1BlockOffsetArray::set_space(G1OffsetTableContigSpace* sp) {
 // The arguments follow the normal convention of denoting
 // a right-open interval: [start, end)
 /**
- * 在 G1BlockOffsetArray::alloc_block_work2 中被调用
+ * 在 G1BlockOffsetArray::alloc_block_work2 中被调用，这个区间依然是左闭右开
  */
 void
 G1BlockOffsetArray:: set_remainder_to_point_to_start(HeapWord* start, HeapWord* end) {
@@ -127,6 +127,17 @@ G1BlockOffsetArray:: set_remainder_to_point_to_start(HeapWord* start, HeapWord* 
   //    integer below the block offset entry is an example of
   //    the index of the entry
   //
+/**
+ *     给定一个内存地址，
+ *     首先找到该地址在偏移数组中对应的索引。
+       然后根据该索引找到偏移数组中的条目
+       将这个条目中存放的值转换成一个 back skip 值。
+       这个 back skip 值表示了需要向后跳过多少个条目，以获取到一个新的条目。
+       一旦获取了一个新的条目，就重复上述过程，将这个新条目的值转换成 back skip 值，
+            并再次向后跳过相应的条目，直到找到最终的目标条目为止
+       例如，对于给定的偏移量值（即，当前_array中的这个值为0x81=129），可以将其转换成 back skip 值（如8），表示需要向后跳过8个条目。
+       然后，将得到的新条目的值再次转换成 back skip 值，并继续向后跳过相应的条目，直到达到最终目标。
+ */
   //    Given an address,
   //      Find the index for the address
   //      Find the block offset table entry
@@ -136,8 +147,12 @@ G1BlockOffsetArray:: set_remainder_to_point_to_start(HeapWord* start, HeapWord* 
   //      Move back N (e.g., 8) entries and repeat with the
   //        value of the new entry
   //
-  size_t start_card = _array->index_for(start);
-  size_t end_card = _array->index_for(end-1);
+  /**
+   * 传入的[start, end)是左闭右开，将其转换成左闭右闭[start_card, end_card]，
+   *  然后设置[start_card, end_card]对应的_offset_array的值
+   */
+  size_t start_card = _array->index_for(start); // 起始地址所在的卡片的索引
+  size_t end_card = _array->index_for(end-1); // 终止地址所在的卡片索引
   assert(start ==_array->address_for_index(start_card), "Precondition");
   assert(end ==_array->address_for_index(end_card)+N_words, "Precondition");
   set_remainder_to_point_to_start_incl(start_card, end_card); // closed interval
@@ -146,6 +161,14 @@ G1BlockOffsetArray:: set_remainder_to_point_to_start(HeapWord* start, HeapWord* 
 // Unlike the normal convention in this code, the argument here denotes
 // a closed, inclusive interval: [start_card, end_card], cf set_remainder_to_point_to_start()
 // above.
+/**
+ *  调用链是  G1BlockOffsetArray::alloc_block_work2
+ *              -> G1BlockOffsetArray:: set_remainder_to_point_to_start
+ *                     -> G1BlockOffsetArray::set_remainder_to_point_to_start_incl
+ * 从调用方的代码可以看到，这里的[start_card,end_card]是左闭右闭区间
+ * @param start_card
+ * @param end_card
+ */
 void
 G1BlockOffsetArray::set_remainder_to_point_to_start_incl(size_t start_card, size_t end_card) {
   if (start_card > end_card) {
@@ -157,18 +180,56 @@ G1BlockOffsetArray::set_remainder_to_point_to_start_incl(size_t start_card, size
   size_t start_card_for_region = start_card;
   u_char offset = max_jubyte;
   for (int i = 0; i < BlockOffsetArray::N_powers; i++) {
-    // -1 so that the the card with the actual offset is counted.  Another -1
+    // -1 so that the the card with the actuald offset is counte.  Another -1
     // so that the reach ends in this region and not at the start
     // of the next.
+    /**
+     * power_to_cards_back(i + 1) = 1 << (LogBase * (i + 1))
+     * i = 0, 1 << 4 * (0 + 1) = 2 ^ 4 = 16
+     * i = 1, 1 << 4 * (1 + 1) = 2 ^ 8 = 256
+     * i = 2, 1 << 4 * (2 + 1) = 2 ^ 12 = 4096
+     * 这里是为了进行指数递增
+     */
     size_t reach = start_card - 1 + (BlockOffsetArray::power_to_cards_back(i+1) - 1);
+    /**
+     * N_words表示的是一个索引所覆盖的字的数量，由于一个索引所覆盖的字节数量是2 ^ 9 = 512，而一个字占了2 ^ 3= 8，
+     *     因此，一个索引所覆盖的字的数量是 (2 ^ 9) / (2 ^ 3) = 2 ^ 6 = 64个word
+     * offset是即将写入到_array中的值，这里可以看到，offset每次增加1
+     * 这里可以看到，从最开始的start_card开始，第一段存放了64，第二段的多个card存放的是65，以此类推
+     * start_card = 1,
+     * i = 0, reach =  1 - 1 + (16 - 1) = 15, 这时候通过调用 set_offset_array(1, 15, offset)，会把[1,15]区间内的值全部设置为64 + 0 = 64
+     * i = 1, reach = 1 - 1 + (256 - 1) = 255，这时候通过调用 set_offset_array(16, 255, offset)，会把[16,255]区间内的值全部设置为64 + 1 = 65
+     *
+     * start_card = 1,
+     * i = 0, reach =  1 - 1 + (16 - 1) = 15, 这时候通过调用 set_offset_array(1, 15, offset)，会把[1,15]区间内的值全部设置为64 + 0 = 64
+     * i = 1, reach = 1 - 1 + (256 - 1) = 255，这时候通过调用 set_offset_array(16, 255, offset)，会把[16,255]区间内的值全部设置为64 + 1 = 65
+     *
+     *  如果index = 27，
+     *      这时候，_offset_array[27] = 65,  65 - 64 = 1, 调用 power_to_cards_back(1) 获取需要回退的卡片索引值，这个值是16,于是index 回退16，到了27 - 16 = 11
+     *      由于_offset_array[11] = 64, 64 - 64 = 0, 调用 power_to_cards_back(1) 获取需要回退的卡片索引值，这个值是1， 于是index 回退1，到了11 - 1 = 10
+     *      由于_offset_array[10] = 64, 64 - 64 = 0, 调用 power_to_cards_back(1) 获取需要回退的卡片索引值，这个值是1， 于是index 回退1，到了10 - 1 = 9
+     *      ....
+     *      由于_offset_array[1] = 64, 64 - 64 = 0, 调用 power_to_cards_back(1) 获取需要回退的卡片索引值，这个值是1， 于是index 回退1，到了1 - 1 = 0，这个块的字地址假如是0X11111111
+     *      _offset_array[0] = 7，由于15小于N_words, 说明这个index对应了对象的起始位置，通过上一个卡片的首地址 0x1111111 - 7(0x111) = 0x11111000，这个就是这个对象的头部地址
+     */
     offset = N_words + i;
-    if (reach >= end_card) {
+    if (reach >= end_card) { // reach已经到达了end_card
+        /**
+         * 将_offset_array中索引从start_card_for_region 到 end_card 的值都更新为相同的offset
+         * 在方法 block_at_or_preceding中，通过方法 BlockOffsetArray::entry_to_cards_back(offset) 来计算得到块索引 ,
+         *  即 调用 power_to_cards_back(offset - N_words) 获得 需要回退的值，
+         */
       _array->set_offset_array(start_card_for_region, end_card, offset);
       start_card_for_region = reach + 1;
       break;
     }
+
+    /**
+     * reach 还没有到end_card的位置
+     * 将_offset_array中索引从start_card_for_region 到 reach 的值都设置为offset
+     */
     _array->set_offset_array(start_card_for_region, reach, offset);
-    start_card_for_region = reach + 1;
+    start_card_for_region = reach + 1; // start_card_for_region从reach的下一个索引开始，开始_array的下一段的值的设定
   }
   assert(start_card_for_region > end_card, "Sanity check");
   DEBUG_ONLY(check_all_cards(start_card, end_card);)
@@ -246,6 +307,10 @@ G1BlockOffsetArray::block_start_unsafe_const(const void* addr) const {
 }
 
 
+/**
+ *  “q”是块边界，<=“addr”； “n”是下一个块的地址（或空间的末尾）。
+ *  返回包含“addr”的块的开头地址。 通过更新不精确的条目，可能会对“this”产生副作用。
+ */
 HeapWord*
 G1BlockOffsetArray::forward_to_block_containing_addr_slow(HeapWord* q,
                                                           HeapWord* n,
@@ -303,6 +368,7 @@ void G1BlockOffsetArray::resize(size_t new_word_size) {
 //
 /**
  * 在方法 G1BlockOffsetArrayContigSpace::alloc_block_work1 中被调用
+ * 这个方法调用的时候，blk_end肯定已经跨越了threshold_
  */
 void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_,
                                            HeapWord* blk_start, HeapWord* blk_end) {
@@ -316,6 +382,9 @@ void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_
   assert(blk_start <= threshold, "blk_start should be at or before threshold");
   assert(pointer_delta(threshold, blk_start) <= N_words,
          "offset should be <= BlockOffsetSharedArray::N");
+  /**
+   * 关于reserved的定义，可以搜索 jint G1CollectedHeap::initialize() 初始化函数
+   */
   assert(Universe::heap()->is_in_reserved(blk_start),
          "reference must be into the heap");
   assert(Universe::heap()->is_in_reserved(blk_end-1),
@@ -329,32 +398,53 @@ void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_
   // that _next_offset_index and _next_offset_threshold are not
   // updated until the end of this method.
   /**
-   * G1BlockOffsetSharedArray::set_offset_array
-   * 将当前分配区域的偏移数组条目设置为指向新块的起始地址。这一步相当于标记了新块的起始位置。
+   * G1BlockOffsetSharedArray::set_offset_array，前面说过，这个G1BlockOffsetSharedArray _array在整个Heap中只有一个
+   * 将当前分配区域的偏移数组条目 设置为指向新块的起始地址。这一步相当于标记了新块的起始位置。
+   * threshold是high，blk_start是low，计算二者的偏移量，存放在_offset_array中位置为index的value上
+   * 所以, _offset_array[index]中存放的是对象的起始位置距离threshold的位置偏移量
    */
   _array->set_offset_array(index, threshold, blk_start);
 
   // We need to now mark the subsequent cards that this blk spans.
 
   // Index of card on which blk ends.
-  // 计算新块结束位置所对应的卡片索引 end_index
+  /**
+   * 计算新块结束位置所对应的卡片索引 end_index
+   * 我们从方法 size_t G1BlockOffsetSharedArray::index_for_raw可以看到，偏移数组中索引所对应的数据量是512B，即偏移数组中相邻索引对应的512B的数据
+   * 这里需要减去1，是因为blk_end是根据blk_start+size计算的 ，因此这里的[blk_start, blk_end)实际上是一个左闭右开区间，
+   * 对象真正占用的位置应该是[blk_start, blk_end - 1]
+   */
+
   size_t end_index   = _array->index_for(blk_end - 1); //  查看最后一个块的片以为位置
 
   // Are there more cards left to be updated?
-  // 第一个偏移位置和最后一个块的偏移位置相差不止一个，因此中间的区域也需要进行更你想
+  // 第一个偏移位置和最后一个块的偏移位置在块索引上不处于同一个块，因此中间的区域也需要进行更你想
   if (index + 1 <= end_index) { // 将剩余区域的偏移数组条目设置为指向新块的起始位置。这一步相当于标记了新块覆盖的其他卡片的位置。
+    /**
+     * 下一个index对应的字地址， _reserved.start() + (index << LogN_words)
+     * 注意，这里指的是下一个卡片索引对应的内存地址，而不是指这个卡片索引在_offset_array中存放的值
+     */
     HeapWord* rem_st  = _array->address_for_index(index + 1);
     // Calculate rem_end this way because end_index
     // may be the last valid index in the covered region.
+    /**
+     * 这个对象的最后一个字的字地址，加上N_words，以让rem_end指向最后一个字的下一个字，
+     *      而不是新块的结束地址，因为下面的方法set_remainder_to_point_to_start是左闭右开的
+     * _reserved.start() + (index << LogN_words);
+     */
     HeapWord* rem_end = _array->address_for_index(end_index) +  N_words;
-    set_remainder_to_point_to_start(rem_st, rem_end);
+    set_remainder_to_point_to_start(rem_st, rem_end); // 处理卡片索引[rem_st,rem_end]区间之间的_offset_array
   }
 
-  index = end_index + 1;
+  index = end_index + 1; // 新的index
   // Calculate threshold_ this way because end_index
   // may be the last valid index in the covered region.
   /**
+   * address_for_index返回这个索引对应的字地址，而不是这个索引的位置在_offset_array中的值
    * 新的threshold，意味着如果下次分配的对象的地址超过了这个threshold，那么就需要更新bot, 没超过，就不需要更你想bot
+   * 比如一个index 对应的512B中分配了10个小对象，那么只有第一个对象分配的时候会更新这个index对应的bot，剩下的9个都不会更新这个bot
+   * 由于end_index 是对象的末尾地址对应的索引位置，因此需要往后挪动N_words，代表对象的末尾的下一个字地址
+   * 所以可以看到，这个threshold一定是 某一个index对应的字地址，即块的起始字地址，而不会是块中间的某一个字地址
    */
   threshold = _array->address_for_index(end_index) + N_words;
   assert(threshold >= blk_end, "Incorrect offset threshold");
@@ -441,14 +531,29 @@ G1BlockOffsetArray::print_on(outputStream* out) {
 // G1BlockOffsetArrayContigSpace
 //////////////////////////////////////////////////////////////////////
 
+/**
+ * G1BlockOffsetArrayContigSpace 的实例方法
+ * 调用者是  HeapWord* G1BlockOffsetTable::block_start
+ * 给定一个HeapWord地址，返回处于这个地址、或者在这个地址前面的第一个 block的字(Word)地址
+ *
+ * @param addr
+ * @return
+ */
 HeapWord*
 G1BlockOffsetArrayContigSpace::block_start_unsafe(const void* addr) {
   assert(_bottom <= addr && addr < _end,
          "addr must be covered by this Array");
+  /**
+   * 返回包含了addr的块的首地址(字地址)
+   */
   HeapWord* q = block_at_or_preceding(addr, true, _next_offset_index-1);
-  return forward_to_block_containing_addr(q, addr);
+  return forward_to_block_containing_addr(q, addr); // 处理个别情况
 }
 
+/**
+ * 这是G1BlockOffsetArrayContigSpace::block_start_unsafe_const方法
+ * 调用者查看
+ */
 HeapWord*
 G1BlockOffsetArrayContigSpace::
 block_start_unsafe_const(const void* addr) const {

@@ -417,7 +417,13 @@ void VMThread::evaluate_operation(VM_Operation* op) {
   }
 }
 
-
+/**
+ * 执行对应的VM_Operation，执行的时候会进行安全点的检查，
+ *  如果需要进入安全点，那么就通过调用SafepointSynchronize::begin()进入安全点（其实是设置安全点标记，其他线程检测到标记会进入安全点）
+ *      设置了安全点标记以后，其他各种线程(编译线程，执行线程，native代码，G1GC的3个线程，都会进行各自不同的进入安全点的方式，但是都是被动检查安全点标记，然后进入安全点)
+ *  执行结束，就离开安全点SafepointSynchronize::end()
+ *
+ */
 void VMThread::loop() {
   assert(_cur_vm_operation == NULL, "no current one should be executing");
 
@@ -499,7 +505,7 @@ void VMThread::loop() {
 
       // If we are at a safepoint we will evaluate all the operations that
       // follow that also require a safepoint
-      if (_cur_vm_operation->evaluate_at_safepoint()) {
+      if (_cur_vm_operation->evaluate_at_safepoint()) { // 这是一个需要在安全点执行的VM_Operation
 
         _vm_queue->set_drain_list(safepoint_ops); // ensure ops can be scanned
 
@@ -507,6 +513,9 @@ void VMThread::loop() {
         evaluate_operation(_cur_vm_operation);
         // now process all queued safepoint ops, iteratively draining
         // the queue until there are none left
+        /**
+         * 处理所有队列中的安全点操作
+         */
         do {
           _cur_vm_operation = safepoint_ops;
           if (_cur_vm_operation != NULL) {
@@ -517,7 +526,7 @@ void VMThread::loop() {
               VM_Operation* next = _cur_vm_operation->next();
               _vm_queue->set_drain_list(next);
               evaluate_operation(_cur_vm_operation);// 为什么在execute()静态方法中也会执行？
-              _cur_vm_operation = next;
+              _cur_vm_operation = next; // 下一个VM_Operation
               if (PrintSafepointStatistics) {
                 SafepointSynchronize::inc_vmop_coalesced_count();
               }
@@ -598,13 +607,17 @@ void VMThread::loop() {
  * 这个VMThread::execute(task)所处的线程可能并不一定是VMThread，而且，从VMThread::execute(task)的代码可以看到，只有当不是VMThread的时候，
  * 才会执行doit_prologue()和doit_epilogue()
  *
- *
-
-
-
     这两个分支处理了不同类型的线程，确保了适当的逻辑被执行。
         在第一个分支中，通过检查线程类型，进行了一些初始化操作，并且将VM操作添加到VM操作队列中。
         在第二个分支中，直接执行VM操作。
+    看下面的代码会发现，如果当前线程不是VM_Thread，那么是加入到队列中异步执行的，如果是VM_thread，那么是直接执行的
+
+    调用者有
+        void G1CollectedHeap::collect
+        G1CollectedHeap::mem_allocate
+        ConcurrentMarkThread::run
+        G1CollectedHeap::do_collection_pause
+
  * @param op
  */
 void VMThread::execute(VM_Operation* op) {
@@ -660,7 +673,6 @@ void VMThread::execute(VM_Operation* op) {
        * 将op添加到静态的等待队列_vm_queue中去。可以看到只有当调用线程不是VM_Thread的时候，
        * 才会放到_vm_queue中，否则在下面的else中直接执行
        */
-
       bool ok = _vm_queue->add(op);
       op->set_timestamp(os::javaTimeMillis());
       VMOperationQueue_lock->notify();
@@ -706,7 +718,7 @@ void VMThread::execute(VM_Operation* op) {
     // Release all internal handles after operation is evaluated
     HandleMark hm(t);
     _cur_vm_operation = op;
-
+    // 如果当前线程需要进入safepoint，但是并不在safepoint中
     if (op->evaluate_at_safepoint() && !SafepointSynchronize::is_at_safepoint()) {
       SafepointSynchronize::begin();
       op->evaluate(); // 最终执行对应的op的evaluate()方法。为什么在loop中也会执行

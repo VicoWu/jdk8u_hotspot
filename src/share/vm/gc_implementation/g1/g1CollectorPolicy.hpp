@@ -818,7 +818,7 @@ public:
   /**
    * 这个方法在转移暂停开始的时候被调用，如果上一轮的并发标记已经结束，
    * 并且_initiate_conc_mark_if_possible是true，
-   * 那么_during_initial_mark_pause就会被设置为True
+   * 那么_during_initial_mark_pause就会被设置为True，这样，就可以开始一个新的标记轮回
    */
   void decide_on_conc_mark_initiation();
 

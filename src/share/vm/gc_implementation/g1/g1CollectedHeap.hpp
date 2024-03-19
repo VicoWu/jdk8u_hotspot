@@ -1577,18 +1577,36 @@ public:
   // This performs a concurrent marking of the live objects in a
   // bitmap off to the side.
   void doConcurrentMark();
-
+  /**
+   * 具体实现 参考 G1CollectedHeap::isMarkedPrev
+   * @param obj
+   * @return
+   */
   bool isMarkedPrev(oop obj) const;
+  /**
+   * 具体实现参考 G1CollectedHeap::isMarkedPrev
+   * @param obj
+   * @return
+   */
   bool isMarkedNext(oop obj) const;
 
   // Determine if an object is dead, given the object and also
   // the region to which the object belongs. An object is dead
   // iff a) it was not allocated since the last mark and b) it
   // is not marked.
+  /**
+   * 给定该对象以及该对象所属的区域，确定该对象是否已死亡。 一个对象已死亡，当且仅当
+   *    a) 自上次标记以来尚未分配该对象，
+   *       **并且**
+   *    b) 未对其进行标记。
+   * @param obj
+   * @param hr
+   * @return
+   */
   bool is_obj_dead(const oop obj, const HeapRegion* hr) const {
     return
-      !hr->obj_allocated_since_prev_marking(obj) &&
-      !isMarkedPrev(obj);
+      !hr->obj_allocated_since_prev_marking(obj) && // 上次标记的时候这个对象还没有分配
+      !isMarkedPrev(obj); // 并且 这个对象在本轮标记的时候也没有被标记
   }
 
   // This function returns true when an object has been
