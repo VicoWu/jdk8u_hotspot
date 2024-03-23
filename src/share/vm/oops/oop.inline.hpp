@@ -739,8 +739,14 @@ inline int oopDesc::adjust_pointers() {
 }
 
 /**
- * 对于InstanceKlass, 搜索 int InstanceKlass::oop_oop_iterate##nv_suffix
+ * 对于InstanceKlass, 搜索 int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure)
  * 返回值是这个object instance的大小
+ * 搜索 宏展开 define InstanceKlass_SPECIALIZED_OOP_ITERATE
+ * 这里会调用 InstanceKlass_OOP_MAP_ITERATE 宏展开，InstanceKlass_OOP_MAP_ITERATE会调用InstanceKlass_SPECIALIZED_OOP_ITERATE宏展开
+ * 以JVM维护了一个全局的OOpMap， 用于标记栈里面的数是立即数还是值。 每一个
+    InstanceKlass都维护了一个Map（ OopMapBlock） 用于标记Java类
+    里面的字段到底是OOP还是int这样的立即数类型。 这里面的字段Klass很多时候用于再次确认
+    这里的InstanceKlass_OOP_MAP_ITERATE宏展开是遍历这个class的所有的子field
  */
 #define OOP_ITERATE_DEFN(OopClosureType, nv_suffix)                        \
                                                                            \

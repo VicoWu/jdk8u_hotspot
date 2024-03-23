@@ -133,9 +133,12 @@ inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
   }
 }
 
+/**
+ * 调用者查看 inline void CMTask::process_grey_object
+ */
 template <class T>
 inline void G1CMOopClosure::do_oop_nv(T* p) {
-  oop obj = oopDesc::load_decode_heap_oop(p);
+  oop obj = oopDesc::load_decode_heap_oop(p); // 根据指针取出p所指向的object
   if (_cm->verbose_high()) {
     gclog_or_tty->print_cr("[%u] we're looking at location "
                            "*" PTR_FORMAT " = " PTR_FORMAT,

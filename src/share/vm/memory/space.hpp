@@ -77,6 +77,9 @@ class DirtyCardToOopClosure;
 class Space: public CHeapObj<mtGC> {
   friend class VMStructs;
  protected:
+    /**
+     * 注意，bottom和end是左闭右开，[_bottom,_end)
+     */
   HeapWord* _bottom;
   HeapWord* _end;
 
@@ -95,8 +98,8 @@ class Space: public CHeapObj<mtGC> {
 
  public:
   // Accessors
-  HeapWord* bottom() const         { return _bottom; }
-  HeapWord* end() const            { return _end;    }
+  HeapWord* bottom() const         { return _bottom; } // 注意，bottom和end是左闭右开，[_bottom,_end)
+  HeapWord* end() const            { return _end;    }// 注意，bottom和end是左闭右开，[_bottom,_end)
   virtual void set_bottom(HeapWord* value) { _bottom = value; }
   virtual void set_end(HeapWord* value)    { _end = value; }
 

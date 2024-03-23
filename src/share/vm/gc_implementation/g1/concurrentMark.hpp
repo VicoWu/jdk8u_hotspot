@@ -441,6 +441,7 @@ protected:
    * 在_finger后面的灰色对象
    */
   CMMarkStack             _markStack; // Grey objects behind global finger.
+  // _cm的全局finger，区别开CMTask的局部_finger
   HeapWord* volatile      _finger;  // the global finger, region aligned,
                                     // always points to the end of the
                                     // last claimed region
@@ -557,7 +558,10 @@ protected:
            "parallel workers not set up correctly");
     return _parallel_workers != NULL;
   }
-
+  /**
+   * 返回当前的全局_finger
+   * @return
+   */
   HeapWord*               finger()          { return _finger;   }
   bool                    concurrent()      { return _concurrent; }
   uint                    active_tasks()    { return _active_tasks; }
@@ -584,7 +588,7 @@ protected:
   // to satisfy an allocation without doing a GC. This is fine, because all
   // objects in those regions will be considered live anyway because of
   // SATB guarantees (i.e. their TAMS will be equal to bottom).
-  bool        out_of_regions() { return _finger >= _heap_end; }
+  bool        out_of_regions() { return _finger >= _heap_end; } // 全局的_finger是否已经在堆内存的后面了
 
   // Returns the task with the given id
   CMTask* task(int id) {
@@ -684,7 +688,7 @@ public:
   }
   void mark_stack_pop(oop* arr, int max, int* n) {
       /**
-       * 搜索 bool par_pop_arr(oop* ptr_arr, int max, int* n)
+       * 搜索 bool CMMarkStack::par_pop_arr
        */
     _markStack.par_pop_arr(arr, max, n); //
   }
@@ -1028,7 +1032,7 @@ private:
   // the region this task is scanning, NULL if we're not scanning any
   HeapRegion*                 _curr_region;
   // the local finger of this task, NULL if we're not scanning a region
-  HeapWord*                   _finger;
+  HeapWord*                   _finger; // 当前CMTask的本地_finger
   // limit of the region this task is scanning, NULL if we're not scanning one
   HeapWord*                   _region_limit;
 
@@ -1157,6 +1161,13 @@ private:
   // mark bitmap scan, and so needs to be pushed onto the mark stack.
   bool is_below_finger(oop obj, HeapWord* global_finger) const;
 
+/**
+ * 调用者
+ *       CMTask::make_reference_grey // 这时候scan=false
+ * 以及
+ *       void scan_object(oop obj) // scan_object的调用者是 CMTask::drain_local_queue,这时候scan=true
+ * 只有当scan = true的时候，才会在obj上去apply G1CMOopClosure
+ */
   template<bool scan> void process_grey_object(oop obj);
 
 public:
@@ -1195,7 +1206,10 @@ public:
   // region; or when they have become stale as a result of the region
   // being evacuated.
   void giveup_current_region();
-
+  /**
+   * 返回当前VMTask的本地finger
+   * @return
+   */
   HeapWord* finger()            { return _finger; }
 
   bool has_aborted()            { return _has_aborted; }
@@ -1221,7 +1235,12 @@ public:
   inline void deal_with_reference(oop obj);
 
   // It scans an object and visits its children.
-  void scan_object(oop obj) { process_grey_object<true>(obj); }
+  /**
+   * 这里调用process_grey_object的时候，scan=true，因此会在对应的obj上apply G1CMOopClosure
+   */
+  void scan_object(oop obj) {
+      process_grey_object<true>(obj);
+  }
 
   // It pushes an object on the local queue.
   inline void push(oop obj);
@@ -1244,6 +1263,10 @@ public:
   void drain_satb_buffers();
 
   // moves the local finger to a new location
+  /**
+   * 将当前的CMTask的本地_finger移动到new_finger
+   * @param new_finger
+   */
   inline void move_finger_to(HeapWord* new_finger) {
     assert(new_finger >= _finger && new_finger < _region_limit, "invariant");
     _finger = new_finger;

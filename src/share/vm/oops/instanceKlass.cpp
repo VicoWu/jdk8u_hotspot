@@ -2150,6 +2150,9 @@ template <class T> void assert_nothing(T *p) {}
 //               it a template function)
 //   assert_fn - assert function which is template function because performance
 //               doesn't matter when enabled.
+/**
+ * 调用者是 int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure)
+ */
 #define InstanceKlass_SPECIALIZED_OOP_ITERATE( \
   T, start_p, count, do_oop,                \
   assert_fn)                                \
@@ -2205,6 +2208,15 @@ template <class T> void assert_nothing(T *p) {}
   /* Compute oopmap block range. The common case                         \
      is nonstatic_oop_map_size == 1. */                                  \
   OopMapBlock* map           = start_of_nonstatic_oop_maps();            \
+  /**
+ *   JVM维护了一个全局的
+    OOpMap， 用于标记栈里面的数是立即数还是值。 每一个
+    InstanceKlass都维护了一个Map（ OopMapBlock） 用于标记Java类
+    里面的字段到底是OOP还是int这样的立即数类型。 这里面的字段Klass
+    很多时候用于再次确认
+    挨个访问这个obj中的每一个子field
+ *
+ */
   OopMapBlock* const end_map = map + nonstatic_oop_map_count();          \
   if (UseCompressedOops) {                                               \
     while (map < end_map) {                                              \
@@ -2305,7 +2317,8 @@ int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure) 
   /* header */                                                          \
   if_do_metadata_checked(closure, nv_suffix) {                          \
     closure->do_klass##nv_suffix(obj->klass());                         \
-  }                                                                     \
+  }                                                                          \
+   // 调用了宏展开  InstanceKlass_OOP_MAP_ITERATE  , 搜索 #define InstanceKlass_OOP_MAP_ITERATE
   InstanceKlass_OOP_MAP_ITERATE(                                        \
     obj,                                                                \
     SpecializationStats::                                               \

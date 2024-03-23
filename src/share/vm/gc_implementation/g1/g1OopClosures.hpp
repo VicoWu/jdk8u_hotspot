@@ -195,6 +195,10 @@ private:
   CMTask*            _task;
 public:
   G1CMOopClosure(G1CollectedHeap* g1h, ConcurrentMark* cm, CMTask* task);
+  /**
+   * 在CMTask::process_grey_object中被调用，
+   * 具体实现 ， 搜索 inline void G1CMOopClosure::do_oop_nv
+   */
   template <class T> void do_oop_nv(T* p);
   virtual void do_oop(      oop* p) { do_oop_nv(p); }
   virtual void do_oop(narrowOop* p) { do_oop_nv(p); }

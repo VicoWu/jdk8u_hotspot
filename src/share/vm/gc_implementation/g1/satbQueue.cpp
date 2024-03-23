@@ -292,6 +292,7 @@ void SATBMarkQueueSet::filter_thread_buffers() {
 bool SATBMarkQueueSet::apply_closure_to_completed_buffer(SATBBufferClosure* cl) {
   BufferNode* nd = NULL;
   {
+      // SATBMarkQueueSet是一个全局对象，因此这里加锁
     MutexLockerEx x(_cbl_mon, Mutex::_no_safepoint_check_flag);
     if (_completed_buffers_head != NULL) {
       nd = _completed_buffers_head; // 获取已完成的缓冲区节点（BufferNode）
@@ -316,7 +317,7 @@ bool SATBMarkQueueSet::apply_closure_to_completed_buffer(SATBBufferClosure* cl) 
     /**
      * 遍历缓冲区中的元素，找到第一个非空的元素，表示已完成的数据块的起始位置
      */
-    for (size_t i = 0; i < limit; ++i) { //
+    for (size_t i = 0; i < limit; ++i) {
       if (buf[i] != NULL) { // 找到第一个非空的buf
         // Found the end of the block of NULLs; process the remainder.
         // buffer + i是缓冲区的起始位置，limit - i为剩余元素的数量

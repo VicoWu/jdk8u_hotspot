@@ -293,7 +293,9 @@ inline void CMTask::push(oop obj) {
              }
              ++_local_pushes );
 }
-
+/**
+ * 测试 obj 是否已被标记位图扫描给超过了，即已经被全局_finger 超过了，即是否已经在全局_finger的下面了，在这种已经被超过的情况下，需要将其推送到标记堆栈上。
+ */
 inline bool CMTask::is_below_finger(oop obj, HeapWord* global_finger) const {
   // If obj is above the global finger, then the mark bitmap scan
   // will find it later, and no push is needed.  Similarly, if we have
@@ -302,6 +304,11 @@ inline bool CMTask::is_below_finger(oop obj, HeapWord* global_finger) const {
   // of checking both vs only checking the global finger is that the
   // local check will be more accurate and so result in fewer pushes,
   // but may also be a little slower.
+  /**
+   * 如果obj在全局_finger的上面，那么稍后mark bitmap扫描就会找到它，不需要push。
+   * 类似地，如果我们有一个当前区域并且 obj 位于本地_finger和当前区域的end之间，则不需要push，这个是本地检查。
+   * 检查两者与仅检查全局_finger的权衡在于，本地检查会更准确，因此会导致更少的push，但也可能会慢一些。
+   */
   HeapWord* objAddr = (HeapWord*)obj;
   if (_finger != NULL) {
     // We have a current region.
@@ -314,19 +321,20 @@ inline bool CMTask::is_below_finger(oop obj, HeapWord* global_finger) const {
 
     // True if obj is less than the local finger, or is between
     // the region limit and the global finger.
-    if (objAddr < _finger) {
+    if (objAddr < _finger) { // 如果当前的objAddr在局部_finger的下面，返回true
       return true;
-    } else if (objAddr < _region_limit) {
+    } else if (objAddr < _region_limit) { // objAddr位于region_limit的下面，返回false
       return false;
     } // Else check global finger.
   }
   // Check global finger.
-  return objAddr < global_finger;
+  return objAddr < global_finger; // 如果objAddr位于region_limit和global_finger之间，返回true
 }
 
 /**
  * 对对象进行标记和计数，这是CMTask对象的实例方法
- * 搜索 class CMSATBBufferClosure : public SATBBufferClosure 查看调用
+ * 搜索 class CMSATBBufferClosure: public SATBBufferClosure 以及
+ *     inline void CMTask::deal_with_reference中 查看调用
  * @param obj
  * @param hr
  */
@@ -334,6 +342,7 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
     /**
      * 返回true，说明成功标记了该对象，返回false，说明这个对象已经被其他对象标记
      * 对对象的标记与全局_finger 无关
+     * 这里par_mark_and_count方法是全局的_cm的成员方法，而不是当前的CMTask的成员方法
      */
 
   if (_cm->par_mark_and_count(obj, hr, _marked_bytes_array, _card_bm)) {
@@ -361,8 +370,9 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
     // be pushed on the stack. So, some duplicate work, but no
     // correctness problems.
     /**
-     *  查看 ConcurrentMark::claim_region方法查看_finger的移动过程
-     *  我们只需将 那些标记位图扫描刚刚检查的区域上的灰色对象 推送到标记堆栈上。 标记位图扫描操作，维护了一个进度 _finger 以确定这个位置
+     *  查看 ConcurrentMark::claim_region方法查看全局_finger的移动过程
+     *  这里的意思是，只有位于全局_finger的下面，或者位于局部的region_limit和全局_finger之间的对象才需要push到标记栈，而位于全局_finger后面的对象，早晚会被扫到，没必要push
+     *  我们只需将 那些标记位图扫描刚刚检查的区域(处于_finger前面的位置)上的灰色对象 推送到标记堆栈上。 标记位图扫描操作，维护了一个进度 _finger 以确定这个位置
      *  请注意，全局_finger可能同时向前移动，但是这不是问题。
      *  在最坏的情况下，我们在对象位于全局_finger上方时刚好对其进行标记，并且当我们读取全局_finger时，这个全局_finger已经向前移过该对象。
      *      在这种情况下，当任务扫描该区域时，该对象可能会被访问，并且也会被推送到堆栈上。 因此，有些重复的工作，但没有正确性问题。
@@ -379,7 +389,11 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
         // by only doing a bookkeeping update and avoiding the
         // actual scan of the object - a typeArray contains no
         // references, and the metadata is built-in.
-        process_grey_object<false>(obj);
+        /**
+         * 搜索 查看具体实现 inline void CMTask::process_grey_object
+         * 这里scan=false，因此不会在obj上去apply G1CMOopClosure，这是因为对象是基本对象primitive，不需要递归扫描了
+         */
+        process_grey_object<false>(obj); //
       } else { // 如果对象不是array
         if (_cm->verbose_high()) {
           gclog_or_tty->print_cr("[%u] below a finger (local: " PTR_FORMAT
@@ -388,12 +402,16 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
                                  _worker_id, p2i(_finger),
                                  p2i(global_finger), p2i(obj));
         }
-        push(obj); // 将对象推入标记栈
+        push(obj); // 将对象推入当前的 CMTask的本地标记栈 _task_queue，因此将会得到递归处理
       }
     }
   }
 }
 
+/**
+ * 在inline void G1CMOopClosure::do_oop_nv中被调用
+ * @param obj
+ */
 inline void CMTask::deal_with_reference(oop obj) {
   if (_cm->verbose_high()) {
     gclog_or_tty->print_cr("[%u] we're dealing with reference = " PTR_FORMAT,
@@ -411,7 +429,7 @@ inline void CMTask::deal_with_reference(oop obj) {
       // bitmap (otherwise, it's a waste of time since we won't do
       // anything with it).
       HeapRegion* hr = _g1h->heap_region_containing_raw(obj);
-      if (!hr->obj_allocated_since_next_marking(obj)) {
+      if (!hr->obj_allocated_since_next_marking(obj)) { // 这个object不可以是TAMS以后新分配的对象
         make_reference_grey(obj, hr);
       }
     }
