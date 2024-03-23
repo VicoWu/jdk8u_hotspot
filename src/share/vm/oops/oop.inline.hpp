@@ -603,7 +603,10 @@ inline bool oopDesc::has_bias_pattern() const {
 
 // used only for asserts
 inline bool oopDesc::is_oop(bool ignore_mark_word) const {
-  oop obj = (oop) this;
+    /**
+     * 由于oopDesc 指针指向对象的头部信息，而对象的头部信息位于对象内存布局的起始位置，因此可以将 oopDesc 指针强制转换为 oop 类型的指针。
+     */
+  oop obj = (oop) this; //
   if (!check_obj_alignment(obj)) return false;
   if (!Universe::heap()->is_in_reserved(obj)) return false;
   // obj is aligned and accessible in heap
@@ -616,9 +619,14 @@ inline bool oopDesc::is_oop(bool ignore_mark_word) const {
   if (ignore_mark_word) {
     return true;
   }
-  if (mark() != NULL) {
-    return true;
+  /**
+   * 注意，这里的mark()并不是说这个对象是否已经被标记，而是表示对象头部的markOop是否存在
+   */
+  if (mark() != NULL) { // 如果需要校验mark数据，那么如果这个mark地址有信息，肯定是对象
+      return true;
   }
+  // 如果mark为空，那么，如果在safepoint，肯定不可能发生，肯定不是一个obj，因此返回false，
+  // 如果当前不在safepoint，返回true
   return !SafepointSynchronize::is_at_safepoint();
 }
 

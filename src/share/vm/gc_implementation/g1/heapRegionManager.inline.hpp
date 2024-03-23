@@ -34,7 +34,9 @@ inline HeapRegion* HeapRegionManager::addr_to_region(HeapWord* addr) const {
         err_msg("addr: " PTR_FORMAT " end: " PTR_FORMAT, p2i(addr), p2i(heap_end())));
   assert(addr >= heap_bottom(),
         err_msg("addr: " PTR_FORMAT " bottom: " PTR_FORMAT, p2i(addr), p2i(heap_bottom())));
-
+  /**
+   * 基于偏移索引，根据给定的HeapWord指针在数组中查找对应的元素并返回
+   */
   HeapRegion* hr = _regions.get_by_address(addr);
   return hr;
 }

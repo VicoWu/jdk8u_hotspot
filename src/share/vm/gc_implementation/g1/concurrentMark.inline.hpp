@@ -143,16 +143,27 @@ inline void ConcurrentMark::count_object(oop obj,
 
 // Attempts to mark the given object and, if successful, counts
 // the object in the given task/worker counting structures.
+/**
+ * 这是ConcurrentMark的实例方法
+ * 尝试标记给定对象，如果成功，则在给定任务/工作人员计数结构中对对象进行计数
+ * 如果置位成功，返回true，如果发现其他线程已经对这个位图的这个位置进行了置位，返回false
+ * @param obj
+ * @param hr
+ * @param marked_bytes_array
+ * @param task_card_bm
+ * @return
+ */
 inline bool ConcurrentMark::par_mark_and_count(oop obj,
                                                HeapRegion* hr,
                                                size_t* marked_bytes_array,
                                                BitMap* task_card_bm) {
   HeapWord* addr = (HeapWord*)obj;
-  if (_nextMarkBitMap->parMark(addr)) {
+  if (_nextMarkBitMap->parMark(addr)) { // 置位成功，返回true，这里可以看到，_nextMarkBitMap是ConcurrentMark的成员变量，而ConcurrentMark全局只有一个
     // Update the task specific count data for the object.
     count_object(obj, hr, marked_bytes_array, task_card_bm);
     return true;
   }
+  // 置位失败，说明其他线程已经对这个位置进行了置位，返回false
   return false;
 }
 
@@ -234,6 +245,7 @@ inline bool CMBitMap::parMark(HeapWord* addr) {
    * 搜索 size_t heapWordToOffset(const HeapWord* addr)
    * _bm 定义在  class CMBitMapRO VALUE_OBJ_CLASS_SPEC中， CMBitMapRO是CMBitMap 的父类
    * 搜索 BitMap::par_set_bit(idx_t bit)查看 par_set_bit
+   * 可以看到，当有其他
    */
   return _bm.par_set_bit(heapWordToOffset(addr));
 }
@@ -312,9 +324,20 @@ inline bool CMTask::is_below_finger(oop obj, HeapWord* global_finger) const {
   return objAddr < global_finger;
 }
 
+/**
+ * 对对象进行标记和计数，这是CMTask对象的实例方法
+ * 搜索 class CMSATBBufferClosure : public SATBBufferClosure 查看调用
+ * @param obj
+ * @param hr
+ */
 inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
-  if (_cm->par_mark_and_count(obj, hr, _marked_bytes_array, _card_bm)) {
+    /**
+     * 返回true，说明成功标记了该对象，返回false，说明这个对象已经被其他对象标记
+     * 对对象的标记与全局_finger 无关
+     */
 
+  if (_cm->par_mark_and_count(obj, hr, _marked_bytes_array, _card_bm)) {
+    //如果成功标记了对象
     if (_cm->verbose_high()) {
       gclog_or_tty->print_cr("[%u] marked object " PTR_FORMAT,
                              _worker_id, p2i(obj));
@@ -322,7 +345,7 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
 
     // No OrderAccess:store_load() is needed. It is implicit in the
     // CAS done in CMBitMap::parMark() call in the routine above.
-    HeapWord* global_finger = _cm->finger();
+    HeapWord* global_finger = _cm->finger(); // 读取全局的finger
 
     // We only need to push a newly grey object on the mark
     // stack if it is in a section of memory the mark bitmap
@@ -337,8 +360,15 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
     // be visited when a task is scanning the region and will also
     // be pushed on the stack. So, some duplicate work, but no
     // correctness problems.
-    if (is_below_finger(obj, global_finger)) {
-      if (obj->is_typeArray()) {
+    /**
+     *  查看 ConcurrentMark::claim_region方法查看_finger的移动过程
+     *  我们只需将 那些标记位图扫描刚刚检查的区域上的灰色对象 推送到标记堆栈上。 标记位图扫描操作，维护了一个进度 _finger 以确定这个位置
+     *  请注意，全局_finger可能同时向前移动，但是这不是问题。
+     *  在最坏的情况下，我们在对象位于全局_finger上方时刚好对其进行标记，并且当我们读取全局_finger时，这个全局_finger已经向前移过该对象。
+     *      在这种情况下，当任务扫描该区域时，该对象可能会被访问，并且也会被推送到堆栈上。 因此，有些重复的工作，但没有正确性问题。
+     */
+    if (is_below_finger(obj, global_finger)) { // 只有位于全局_finger以下的灰色对象才会被放入到stack中
+      if (obj->is_typeArray()) { //如果对象是array
         // Immediately process arrays of primitive types, rather
         // than pushing on the mark stack.  This keeps us from
         // adding humongous objects to the mark stack that might
@@ -350,7 +380,7 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
         // actual scan of the object - a typeArray contains no
         // references, and the metadata is built-in.
         process_grey_object<false>(obj);
-      } else {
+      } else { // 如果对象不是array
         if (_cm->verbose_high()) {
           gclog_or_tty->print_cr("[%u] below a finger (local: " PTR_FORMAT
                                  ", global: " PTR_FORMAT ") pushing "
@@ -358,7 +388,7 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
                                  _worker_id, p2i(_finger),
                                  p2i(global_finger), p2i(obj));
         }
-        push(obj);
+        push(obj); // 将对象推入标记栈
       }
     }
   }
@@ -396,7 +426,7 @@ inline void ConcurrentMark::markPrev(oop p) {
 }
 
 /**
- * 标记对象
+ * 标记根对象
  * @param obj 对象的地址
  * @param word_size 对象的大小
  * @param worker_id 当前线程的id

@@ -59,6 +59,9 @@ class ParCompactionManager;
 class oopDesc {
   friend class VMStructs;
  private:
+    /**
+     * typedef class   markOopDesc*                markOop
+     */
   volatile markOop  _mark;
   union _metadata {
     Klass*      _klass;

@@ -79,7 +79,7 @@ public:
 /**
  *  并发标记子阶段，这里run()中的代码全部都是并发执行的
  *  在方法 G1CollectedHeap::doConcurrentMark 中设置了启动标记并启动
- *  这个方法的执行不处于安全点钟
+ *  这个方法的执行不处于safepoint
  */
 void ConcurrentMarkThread::run() {
   initialize_in_thread();
@@ -166,7 +166,7 @@ void ConcurrentMarkThread::run() {
             gclog_or_tty->print_cr("[GC concurrent-mark-end, %1.7lf secs]",
                                       mark_end_sec - mark_start_sec);
           }
-
+          // 这是再标记操作 ，通过 VM_CGC_Operation执行，因此是STW的
           CMCheckpointRootsFinalClosure final_cl(_cm);
           VM_CGC_Operation op(&final_cl, "GC remark", true /* needs_pll */);
           VMThread::execute(&op);
@@ -197,6 +197,7 @@ void ConcurrentMarkThread::run() {
           os::sleep(current_thread, sleep_time_ms, false);
         }
 
+        // 这是清理阶段，由于是VM_CGC_Operation执行的，因此是STW的
         CMCleanUp cl_cl(_cm);
         VM_CGC_Operation op(&cl_cl, "GC cleanup", false /* needs_pll */);
         VMThread::execute(&op);

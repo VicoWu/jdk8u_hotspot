@@ -398,6 +398,12 @@ class ConcurrentMark: public CHeapObj<mtGC> {
 protected:
   ConcurrentMarkThread* _cmThread;   // the thread doing the work
   G1CollectedHeap*      _g1h;        // the heap.
+    /**
+    *     从这段代码可以看到，_max_parallel_marking_threads 其实是由ConcGCThreads配置的
+    *     _parallel_marking_threads = (uint) ConcGCThreads;
+         _max_parallel_marking_threads = _parallel_marking_threads;
+         需要根 _parallel_gc_threads区别开，_parallel_gc_threads是通过ParallelGCThreads来确定的
+    */
   uint                  _parallel_marking_threads; // the number of marking
                                                    // threads we're use
   uint                  _max_parallel_marking_threads; // max number of marking
@@ -431,6 +437,9 @@ protected:
   CMRootRegions           _root_regions;
 
   // For gray objects
+  /**
+   * 在_finger后面的灰色对象
+   */
   CMMarkStack             _markStack; // Grey objects behind global finger.
   HeapWord* volatile      _finger;  // the global finger, region aligned,
                                     // always points to the end of the
@@ -525,9 +534,13 @@ protected:
   }
 
   // accessor methods
+  /**
+   * ConcGCThreads决定的并发执行的并发度
+   * @return
+   */
   uint parallel_marking_threads() const     { return _parallel_marking_threads; }
   /**
-   * 最大并行标记线程数量，并行标记发生在STW期间
+   * 最大并行标记线程数量，这是由 ConcGCThreads决定 的
    * @return
    */
   uint max_parallel_marking_threads() const { return _max_parallel_marking_threads;}
@@ -670,7 +683,10 @@ public:
     return true;
   }
   void mark_stack_pop(oop* arr, int max, int* n) {
-    _markStack.par_pop_arr(arr, max, n);
+      /**
+       * 搜索 bool par_pop_arr(oop* ptr_arr, int max, int* n)
+       */
+    _markStack.par_pop_arr(arr, max, n); //
   }
   size_t mark_stack_size()                { return _markStack.size(); }
   size_t partial_mark_stack_size_target() { return _markStack.maxElems()/3; }
@@ -965,6 +981,9 @@ protected:
 };
 
 // A class representing a marking task.
+/**
+ * 搜索 查看构造过程 ConcurrentMark::ConcurrentMark
+ */
 class CMTask : public TerminatorTerminator {
 private:
   enum PrivateConstants {

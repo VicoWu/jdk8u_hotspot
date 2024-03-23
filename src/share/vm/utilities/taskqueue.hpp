@@ -215,6 +215,13 @@ public:
 
   // Maximum number of elements allowed in the queue.  This is two less
   // than the actual queue size, for somewhat complicated reasons.
+  /**
+   * 这是TaskQueueSuper的成员方法
+   * // Default TaskQueue size is 16K (32-bit) or 128K (64-bit)
+        #define TASKQUEUE_SIZE (NOT_LP64(1<<14) LP64_ONLY(1<<17))
+   * uint max_elems() const
+   * @return
+   */
   uint max_elems() const { return N - 2; }
 
   // Total size of queue.
@@ -681,6 +688,9 @@ GenericTaskQueue<E, F, N>::push(E t) {
   }
 }
 
+/**
+ * 从本地队列中弹出元素，如果本地队列中有元素，则返回true，并将元素赋值给参数 t；如果队列为空，则返回false。
+ */
 template<class E, MEMFLAGS F, unsigned int N> inline bool
 GenericTaskQueue<E, F, N>::pop_local(volatile E& t) {
   uint localBot = _bottom;

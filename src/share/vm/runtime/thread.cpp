@@ -1512,8 +1512,8 @@ DirtyCardQueueSet JavaThread::_dirty_card_queue_set;
 JavaThread::JavaThread(bool is_attaching_via_jni) :
   Thread()
 #if INCLUDE_ALL_GCS
-  , _satb_mark_queue(&_satb_mark_queue_set),
-  _dirty_card_queue(&_dirty_card_queue_set)
+  , _satb_mark_queue(&_satb_mark_queue_set),  // 用全局的_satb_mark_queue_set 构造线程本地的 ObjPtrQueue
+  _dirty_card_queue(&_dirty_card_queue_set) // 用全局的_dirty_card_queue_set 构造线程本地的 DirtyCardQueue
 #endif // INCLUDE_ALL_GCS
 {
   initialize();

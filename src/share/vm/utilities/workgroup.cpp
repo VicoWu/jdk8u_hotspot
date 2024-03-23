@@ -174,6 +174,7 @@ void FlexibleWorkGang::run_task(AbstractGangTask* task) {
   // must only be incremented for workers that find non_null
   // work (as opposed to all those that just check that the
   // task is not null).
+  // 这些task会有不用的GangWorker::GangWorker来执行，搜索 GangWorker::loop()，而 active_workers就是GangWorker的数量
   WorkGang::run_task(task, (uint) active_workers());
 }
 

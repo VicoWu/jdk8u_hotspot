@@ -329,6 +329,7 @@ class FlexibleWorkGang: public WorkGang {
                    bool are_GC_task_threads,
                    bool  are_ConcurrentGC_threads) :
     WorkGang(name, workers, are_GC_task_threads, are_ConcurrentGC_threads),
+    // 这里可以看到，_active_workers是由ParallelGCThreads决定的，所以是STW期间的并发线程数量，这个
     _active_workers(UseDynamicNumberOfGCThreads ? 1U : ParallelGCThreads) {}
   // Accessors for fields
   virtual uint active_workers() const { return _active_workers; }
@@ -342,6 +343,10 @@ class FlexibleWorkGang: public WorkGang {
     assert(UseDynamicNumberOfGCThreads || _active_workers == _total_workers,
            "Unless dynamic should use total workers");
   }
+  /**
+   * 搜索 FlexibleWorkGang::run_task
+   * @param task
+   */
   virtual void run_task(AbstractGangTask* task);
   virtual bool needs_more_workers() const {
     return _started_workers < _active_workers;

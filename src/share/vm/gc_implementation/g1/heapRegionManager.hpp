@@ -67,7 +67,10 @@ class G1HeapRegionTable : public G1BiasedMappedArray<HeapRegion*> {
 
 class HeapRegionManager: public CHeapObj<mtGC> {
   friend class VMStructs;
-
+  /**
+   * G1HeapRegionTable是G1BiasedMappedArray的子类，而G1BiasedMappedArray专门用来处理偏移索引，
+   * 从而让我们可以根据任意一个Region的地址查询这个地址所在的region
+   */
   G1HeapRegionTable _regions;
 
   G1RegionToSpaceMapper* _heap_mapper;

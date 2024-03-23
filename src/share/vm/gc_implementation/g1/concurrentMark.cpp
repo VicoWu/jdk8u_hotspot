@@ -749,6 +749,9 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
   _active_tasks = _max_worker_id;
 
   size_t max_regions = (size_t) _g1h->max_regions();
+  /**
+   * 构造 _tasks数组，数组中的每一个CMTask都有一个CMTaskQueue* task_queue，一个
+   */
   for (uint i = 0; i < _max_worker_id; ++i) {
     CMTaskQueue* task_queue = new CMTaskQueue();
     task_queue->initialize();
@@ -820,7 +823,7 @@ void ConcurrentMark::reset_marking_state(bool clear_overflow) {
   } else {
     assert(has_overflown(), "pre-condition");
   }
-  _finger = _heap_start;
+  _finger = _heap_start; // finger的初始化
 
   for (uint i = 0; i < _max_worker_id; ++i) {
     CMTaskQueue* queue = _task_queues->queue(i);
@@ -1133,15 +1136,18 @@ public:
     ResourceMark rm;
 
     double start_vtime = os::elapsedVTime();
-
+    /**
+     * 当发生同步的时候，继续等待。SuspendibleThreadSet主要用来控制G1GC的几个特殊线程
+     */
     SuspendibleThreadSet::join();
 
     assert(worker_id < _cm->active_tasks(), "invariant");
-    CMTask* the_task = _cm->task(worker_id);
+    CMTask* the_task = _cm->task(worker_id); // 根据当前的线程id取出对应的CMTask,这个CMTask数组是在构造函数 ConcurrentMark::ConcurrentMark 中构造的
     the_task->record_start_time();
     if (!_cm->has_aborted()) {
       do {
         double start_vtime_sec = os::elapsedVTime();
+        // 设置并发标记目标时间
         double mark_step_duration_ms = G1ConcMarkStepDurationMillis;
 
         the_task->do_marking_step(mark_step_duration_ms,
@@ -1202,7 +1208,11 @@ uint ConcurrentMark::calc_parallel_marking_threads() {
     if (!UseDynamicNumberOfGCThreads ||
         (!FLAG_IS_DEFAULT(ConcGCThreads) &&
          !ForceDynamicNumberOfGCThreads)) {
-      n_conc_workers = max_parallel_marking_threads(); // 使用 最大并行标记线程数。这个值_max_parallel_marking_threads 在构造方法 ConcurrentMark::ConcurrentMark中设置了
+        /**
+         * 使用 最大并行标记线程数。这个值_max_parallel_marking_threads 在构造方法 ConcurrentMark::ConcurrentMark中设置了,
+         *  其实是根据ConcGCThreads来决定的，而不是根据ParallelGCThreads确定的
+         */
+      n_conc_workers = max_parallel_marking_threads();
     } else {
         /**
          * 用户配置了使用动态线程数量,
@@ -1309,7 +1319,7 @@ void ConcurrentMark::scanRootRegions() {
    * 在 scan_finished中，会将_scan_in_progress设置为false
    */
   if (root_regions()->scan_in_progress()) { // 如果 CM 线程正在主动扫描根区域，则返回 true，否则返回 false。
-    _parallel_marking_threads = calc_parallel_marking_threads();
+    _parallel_marking_threads = calc_parallel_marking_threads(); // 获取ConcGCThreads所配置的并发度
     assert(parallel_marking_threads() <= max_parallel_marking_threads(),
            "Maximum number of marking threads exceeded");
     uint active_workers = MAX2(1U, parallel_marking_threads());
@@ -1348,7 +1358,7 @@ void ConcurrentMark::markFromRoots() {
   force_overflow_conc()->init();
 
   // _g1h has _n_par_threads
-  _parallel_marking_threads = calc_parallel_marking_threads();
+  _parallel_marking_threads = calc_parallel_marking_threads(); // 由 ConcGCThreads 决定
   assert(parallel_marking_threads() <= max_parallel_marking_threads(),
     "Maximum number of marking threads exceeded");
 
@@ -1356,9 +1366,11 @@ void ConcurrentMark::markFromRoots() {
 
   // Parallel task terminator is set in "set_concurrency_and_phase()"
   set_concurrency_and_phase(active_workers, true /* concurrent */);
-
+  /**
+   * 执行并发标记的task，执行过程在方法 CMConcurrentMarkingTask::work中
+   */
   CMConcurrentMarkingTask markingTask(this, cmThread());
-  if (use_parallel_marking_threads()) {
+  if (use_parallel_marking_threads()) { // 是否concurrently执行
     _parallel_workers->set_active_workers((int)active_workers);
     // Don't set _n_par_threads because it affects MT in process_roots()
     // and the decisions on that MT processing is made elsewhere.
@@ -2744,10 +2756,13 @@ void ConcurrentMark::swapMarkBitMaps() {
   _nextMarkBitMap  = (CMBitMap*)  temp;
 }
 
+/**
+ * 搜索 CMTask::drain_satb_buffers  查看调用
+ */
 // Closure for marking entries in SATB buffers.
 class CMSATBBufferClosure : public SATBBufferClosure {
 private:
-  CMTask* _task;
+  CMTask* _task; // 当前的task，一个task对应了并发执行的时候的一个gc线程
   G1CollectedHeap* _g1h;
 
   // This is very similar to CMTask::deal_with_reference, but with
@@ -2756,11 +2771,18 @@ private:
   void do_entry(void* entry) const {
     _task->increment_refs_reached();
     HeapRegion* hr = _g1h->heap_region_containing_raw(entry);
+    /**
+     * 只处理位置在TAMS以前的entry，因为后面的entry都默认认为已经被标记
+     * 如果引用所指向的对象在 TAMS 之前，表示该对象尚未被标记，需要将其标记为灰色，以便后续垃圾收集器可以处理。
+     */
     if (entry < hr->next_top_at_mark_start()) {
       // Until we get here, we don't know whether entry refers to a valid
       // object; it could instead have been a stale reference.
-      oop obj = static_cast<oop>(entry);
-      assert(obj->is_oop(true /* ignore mark word */),
+      /**
+       * typedef class oopDesc*  oop;
+       */
+      oop obj = static_cast<oop>(entry);//
+      assert(obj->is_oop(true /* ignore mark word */), // 这里调用的是 oopDesc::is_oop
              err_msg("Invalid oop in SATB buffer: " PTR_FORMAT, p2i(obj)));
       _task->make_reference_grey(obj, hr);
     }
@@ -3076,13 +3098,25 @@ void ConcurrentMark::clearRangeNextBitmap(MemRegion mr) {
   _nextMarkBitMap->clearRange(mr);
 }
 
+/**
+ * 在CMTask::do_marking_step调用了这个方法
+ * 它声明标记任务/线程要扫描的下一个可用区域，并更新全局_finger。 如果下一个区域为空或者我们已经用完区域，它可能会返回 NULL。
+ * 在后一种情况下，out_of_regions() 确定我们是否真的用完了区域，或者任务是否应该再次调用claim_region()。
+ * 这可能看起来有点尴尬。 最初，编写代码是为了让claim_region() 成功返回一个非空区域，或者没有更多区域需要claim。
+ * 这样做的问题是，在某些情况下，它会遍历堆的大块，只找到空区域，并且在它工作时，它会阻止调用任务调用其常规时钟方法。 因此，这样每个任务在claim_region()中花费的时间就很少，并且可以频繁地调用常规时钟方法。
+ * @param worker_id
+ * @return
+ */
 HeapRegion*
 ConcurrentMark::claim_region(uint worker_id) {
   // "checkpoint" the finger
-  HeapWord* finger = _finger;
+  HeapWord* finger = _finger; // 暂存当前的_finger，因为后面会更新这个全局的_finger
 
   // _heap_end will not change underneath our feet; it only changes at
   // yield points.
+  /**
+   * 如果没有在循环里claim到合适的region，那么一直找到_heap_end
+   */
   while (finger < _heap_end) {
     assert(_g1h->is_in_g1_reserved(finger), "invariant");
 
@@ -3109,18 +3143,42 @@ ConcurrentMark::claim_region(uint worker_id) {
     // claim_region() and a humongous object allocation might force us
     // to do a bit of unnecessary work (due to some unnecessary bitmap
     // iterations) but it should not introduce and correctness issues.
-    HeapRegion* curr_region = _g1h->heap_region_containing_raw(finger);
+    /**
+     * 请注意此代码如何处理巨大的区域。 在正常情况下，_finger将到达“starts humongous”（SH）区域的开始处。
+     * 它的末端要么是序列中最后一个“连续巨大”(CH) 区域的末端，要么是 SH 区域的标准末端（如果 SH 是序列中唯一的区域）。
+     *     这样，claim_region() 将跳过 CH 区域。
+     *  然而，执行此方法的 并发标记 线程和执行巨大对象分配的 mutator 线程之间存在微妙的竞争。
+     *     两者并不互斥，因为 CM 线程到达此处时不需要持有 Heap_lock。
+     *     因此，claim_region() 有可能会遇到正在成为 SH 或 CH 区域的空闲区域。
+     *     在前一种情况下，它将要么
+     *      a) 错过对该区域末尾的更新，在这种情况下，它将访问每个后续的 CH 区域，将发现它们的位图为空，并且不执行任何操作，
+     *          或者
+     *          b) 将观察该区域末尾的更新 （在这种情况下，它将跳过后续的 CH 区域）。
+     *     如果遇到突然变成CH的区域，情况会类似于b)。 因此，claim_region() 和巨大的对象分配之间的竞争
+     *          可能会迫使我们做一些不必要的工作（由于一些不必要的位图迭代），但它不应该引入正确性问题。
+     *
+     */
+     /**
+      * 取出finger所在的region，如果这个region直接是合理的、非空的region，那么直接返回这个region
+      */
+    HeapRegion* curr_region = _g1h->heap_region_containing_raw(finger); //当前全局的_finger所在的region
 
     // Above heap_region_containing_raw may return NULL as we always scan claim
     // until the end of the heap. In this case, just jump to the next region.
+    /**
+     * 上面的 heap_region_containing_raw 可能会返回 NULL，因为我们总是扫描和claim一直到堆末尾。
+     * 在这种情况下，只需跳转到下一个Region即可
+     */
     HeapWord* end = curr_region != NULL ? curr_region->end() : finger + HeapRegion::GrainWords;
-
+    /**
+     * 将finger的值更新为end，如果操作成功，则表示当前线程成功获取了一个可用的HeapRegion。
+     */
     // Is the gap between reading the finger and doing the CAS too long?
     HeapWord* res = (HeapWord*) Atomic::cmpxchg_ptr(end, &_finger, finger);
     if (res == finger && curr_region != NULL) {
       // we succeeded
-      HeapWord*   bottom        = curr_region->bottom();
-      HeapWord*   limit         = curr_region->next_top_at_mark_start();
+      HeapWord*   bottom        = curr_region->bottom(); // curr_region的底部地址
+      HeapWord*   limit         = curr_region->next_top_at_mark_start(); // curr_region的 TAMS
 
       if (verbose_low()) {
         gclog_or_tty->print_cr("[%u] curr_region = " PTR_FORMAT " "
@@ -3138,13 +3196,13 @@ ConcurrentMark::claim_region(uint worker_id) {
                                PTR_FORMAT, worker_id, p2i(curr_region));
       }
 
-      if (limit > bottom) {
+      if (limit > bottom) { // 这个Region的TAMS大于bottom，说明这个region不是空的
         if (verbose_low()) {
           gclog_or_tty->print_cr("[%u] region " PTR_FORMAT " is not empty, "
                                  "returning it ", worker_id, p2i(curr_region));
         }
         return curr_region;
-      } else {
+      } else { // 这是一个空的region，直接返回
         assert(limit == bottom,
                "the region limit should be at bottom");
         if (verbose_low()) {
@@ -3153,9 +3211,9 @@ ConcurrentMark::claim_region(uint worker_id) {
         }
         // we return NULL and the caller should try calling
         // claim_region() again.
-        return NULL;
+        return NULL; // 返回空，调用者必须重新调用claim_region
       }
-    } else {
+    } else { // finger往后移动，继续寻找
       assert(_finger > finger, "the finger should have moved forward");
       if (verbose_low()) {
         if (curr_region == NULL) {
@@ -3876,9 +3934,9 @@ void CMTask::regular_clock_call() {
   // (5) We check whether we've reached our time quota. If we have,
   // then we abort.
   double elapsed_time_ms = curr_time_ms - _start_time_ms;
-  if (elapsed_time_ms > _time_target_ms) {
-    set_has_aborted();
-    _has_timed_out = true;
+  if (elapsed_time_ms > _time_target_ms) { // 实际花费的时间已经超过了时间配额
+    set_has_aborted(); // _has_aborted置位为true
+    _has_timed_out = true;  // 设置timeout标记
     statsOnly( ++_aborted_timed_out );
     return;
   }
@@ -3970,6 +4028,9 @@ void CMTask::get_entries_from_global_stack() {
   // from the global stack.
   oop buffer[global_stack_transfer_size];
   int n;
+  /**
+   * 方法返回的时候，global_stack_transfer_size中存放了弹出的元素，&n中存放了元素的数量
+   */
   _cm->mark_stack_pop(buffer, global_stack_transfer_size, &n);
   assert(n <= global_stack_transfer_size,
          "we should not pop more than the given limit");
@@ -3982,6 +4043,9 @@ void CMTask::get_entries_from_global_stack() {
                              _worker_id, n);
     }
     for (int i = 0; i < n; ++i) {
+        /**
+         * 将弹出的元素一次性存放到CMTask的本地_task_queue中
+         */
       bool success = _task_queue->push(buffer[i]);
       // We only call this when the local queue is empty or under a
       // given target limit. So, we do not expect this push to fail.
@@ -3999,26 +4063,40 @@ void CMTask::get_entries_from_global_stack() {
   decrease_limits();
 }
 
+/**
+ * 调用者是 CMTask::do_marking_step
+ * 从当前的CMTask所维护的task_queue中弹出task
+ * @param partially
+ */
 void CMTask::drain_local_queue(bool partially) {
   if (has_aborted()) return;
 
   // Decide what the target size is, depending whether we're going to
   // drain it partially (so that other tasks can steal if they run out
   // of things to do) or totally (at the very end).
-  size_t target_size;
-  if (partially) {
+  size_t target_size; // 期望将目标_task_queue清空到的目标大小
+  if (partially) { // 部分清空，绝对不会超过目标task_queue的
+      /**
+       * 搜索  uint max_elems() const
+       * target_size 最大只能是_task_queue最大的1/3，或者配置的GCDrainStackTargetSize(默认64)
+       */
     target_size = MIN2((size_t)_task_queue->max_elems()/3, GCDrainStackTargetSize);
   } else {
-    target_size = 0;
+    target_size = 0; // 全部清空，那么target_size = 0
   }
-
+  /**
+   * 当前大小大于清空的目标，那么就进行清空操作
+   */
   if (_task_queue->size() > target_size) {
     if (_cm->verbose_high()) {
       gclog_or_tty->print_cr("[%u] draining local queue, target size = " SIZE_FORMAT,
                              _worker_id, target_size);
     }
 
-    oop obj;
+    oop obj; // typedef class oopDesc*                            oop;
+    /**
+     * 从本地队列中弹出元素，如果本地队列中有元素，则返回true，并将元素赋值给参数 obj；如果队列为空，则返回false。
+     */
     bool ret = _task_queue->pop_local(obj);
     while (ret) {
       statsOnly( ++_local_pops );
@@ -4032,12 +4110,12 @@ void CMTask::drain_local_queue(bool partially) {
       assert(!_g1h->is_on_master_free_list(
                   _g1h->heap_region_containing((HeapWord*) obj)), "invariant");
 
-      scan_object(obj);
+      scan_object(obj); // 扫描
 
       if (_task_queue->size() <= target_size || has_aborted()) {
         ret = false;
       } else {
-        ret = _task_queue->pop_local(obj);
+        ret = _task_queue->pop_local(obj); // 继续弹出
       }
     }
 
@@ -4048,11 +4126,20 @@ void CMTask::drain_local_queue(bool partially) {
   }
 }
 
+/**
+ * 调用者是 CMTask::do_marking_step
+ * 从当前的CMTask所维护的task_queue中弹出task
+ * 如果 partially 为 false，那么local的_task_queue必须已经清空，即必须已经调用了drain_local_queue(false)
+ * @param partially
+ */
 void CMTask::drain_global_stack(bool partially) {
   if (has_aborted()) return;
 
   // We have a policy to drain the local queue before we attempt to
   // drain the global stack.
+  /**
+   * 如果partially 为 false，那么local的_task_queue必须已经清空
+   */
   assert(partially || _task_queue->size() == 0, "invariant");
 
   // Decide what the target size is, depending whether we're going to
@@ -4061,14 +4148,22 @@ void CMTask::drain_global_stack(bool partially) {
   // because we move entries from the global stack in chunks or
   // because another task might be doing the same, we might in fact
   // drop below the target. But, this is not a problem.
+  /**
+   * 决定目标大小是多少，具体取决于我们是否要部分耗尽它（以便其他任务在没有事情可做时可以窃取）或完全耗尽它（在最后）。
+   * 请注意，因为我们从全局堆栈中分块移动条目，或者因为另一个任务可能正在执行相同的操作，所以我们实际上可能会低于目标。 但是，这不是问题。
+   */
   size_t target_size;
-  if (partially) {
-    target_size = _cm->partial_mark_stack_size_target();
-  } else {
+  if (partially) { // 部分清空
+      /**
+       * 目标为全局标记栈的最大元素个数(注意不是当前元素个数)的1/3
+       * 注意，当前的全局标记栈中的元素个数可能不足target_size个
+       */
+    target_size = _cm->partial_mark_stack_size_target(); //
+  } else { // 完全清空，目标大小为0
     target_size = 0;
   }
 
-  if (_cm->mark_stack_size() > target_size) {
+  if (_cm->mark_stack_size() > target_size) {// stack中的实际元素个数大于目标size，因此需要进行一些清空操作
     if (_cm->verbose_low()) {
       gclog_or_tty->print_cr("[%u] draining global_stack, target size " SIZE_FORMAT,
                              _worker_id, target_size);
@@ -4090,6 +4185,9 @@ void CMTask::drain_global_stack(bool partially) {
 // non-par versions of the methods. this is why some of the code is
 // replicated. We should really get rid of the single-threaded version
 // of the code to simplify things.
+/**
+ * 这是CMTask对象的实例方法
+ */
 void CMTask::drain_satb_buffers() {
   if (has_aborted()) return;
 
@@ -4099,11 +4197,15 @@ void CMTask::drain_satb_buffers() {
   // very counter productive if it did that. :-)
   _draining_satb_buffers = true;
 
+  // SATB标记队列处理类
   CMSATBBufferClosure satb_cl(this, _g1h);
-  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set();
+  SATBMarkQueueSet& satb_mq_set = JavaThread::satb_mark_queue_set(); // 获取全局的SATB标记队列集合
 
   // This keeps claiming and applying the closure to completed buffers
   // until we run out of buffers or we need to abort.
+  /**
+   * 对于全局的SATB标记队列集合中的元素应用CMSATBBufferClosure
+   */
   while (!has_aborted() &&
          satb_mq_set.apply_closure_to_completed_buffer(&satb_cl)) {
     if (_cm->verbose_medium()) {
@@ -4279,6 +4381,13 @@ void CMTask::print_stats() {
 
  *****************************************************************************/
 
+/**
+ * 搜 class CMConcurrentMarkingTask: public AbstractGangTask 查看 该方法的调用
+ * 一个 CMTask代表了并发标记阶段的一个线程
+ * @param time_target_ms
+ * @param do_termination
+ * @param is_serial
+ */
 void CMTask::do_marking_step(double time_target_ms,
                              bool do_termination,
                              bool is_serial) {
@@ -4308,9 +4417,10 @@ void CMTask::do_marking_step(double time_target_ms,
   // and do_marking_step() is not being called serially.
   bool do_stealing = do_termination && !is_serial;
 
+  //根据以前的标记历史信息，预测本次标记需要花费的时间
   double diff_prediction_ms =
     g1_policy->get_new_prediction(&_marking_step_diffs_ms);
-  _time_target_ms = time_target_ms - diff_prediction_ms;
+  _time_target_ms = time_target_ms - diff_prediction_ms; // 剩余时间
 
   // set up the variables that are used in the work-based scheme to
   // call the regular clock method
@@ -4350,12 +4460,24 @@ void CMTask::do_marking_step(double time_target_ms,
   // look at SATB buffers before the next invocation of this method.
   // If enough completed SATB buffers are queued up, the regular clock
   // will abort this task so that it restarts.
+  /**
+   * 处理SATB队列，这里会调用 make_reference_grey
+   */
   drain_satb_buffers();
   // ...then partially drain the local queue and the global stack
+  // 清空本地的队列和全局的队列，partially = true
   drain_local_queue(true);
   drain_global_stack(true);
 
+  /**
+   * 外层循环
+   */
   do {
+      /**
+       * 还没有收到 _has_aborted信号，并且已经claim到了一个region(_curr_region)
+       * 在下面的内层循环会尝试claim一个region，尝试设置到_curr_region
+       */
+
     if (!has_aborted() && _curr_region != NULL) {
       // This means that we're already holding on to a region.
       assert(_finger != NULL, "if region is not NULL, then the finger "
@@ -4367,12 +4489,20 @@ void CMTask::do_marking_step(double time_target_ms,
       // that we do not iterate over a region of the heap that
       // contains garbage (update_region_limit() will also move
       // _finger to the start of the region if it is found empty).
+      /**
+       * 我们可能会在疏散暂停后重新开始这项任务，这可能会疏散我们脚下的区域。
+       * 所以我们再次读取它的limit，以确保我们不会迭代包含垃圾的堆区域（如果发现它为空，update_region_limit() 也会将 _finger 移动到该区域的开头）。
+       */
       update_region_limit();
       // We will start from _finger not from the start of the region,
       // as we might be restarting this task after aborting half-way
       // through scanning this region. In this case, _finger points to
       // the address where we last found a marked object. If this is a
       // fresh region, _finger points to start().
+      /**
+       * 我们将从 _finger 开始，而不是从该区域的开头开始，因为我们可能会在扫描该区域中途中止后重新启动该任务。
+       * 在这种情况下，_finger 指向我们最后找到标记对象的地址。 如果这是一个新区域，_finger 指向 start()。
+       */
       MemRegion mr = MemRegion(_finger, _region_limit);
 
       if (_cm->verbose_low()) {
@@ -4426,13 +4556,20 @@ void CMTask::do_marking_step(double time_target_ms,
         // enough to point to the next possible object header (the
         // bitmap knows by how much we need to move it as it knows its
         // granularity).
+        /**
+         * 中止位图迭代的唯一方法是从 do_bit() 方法返回 false。 然而，在 do_bit() 方法中，我们移动 _finger 以指向当前正在查看的对象。
+         * 因此，如果我们退出，我们肯定会将 _finger 设置为非空值。
+         * 区域迭代实际上被中止。 所以现在_finger指向我们上次扫描的对象的地址。
+         * 如果我们将其留在那里，当我们重新启动此任务时，我们将重新扫描该对象。 避免这种情况很容易。
+         * 我们将手指移动足够的距离以指向下一个可能的对象头（位图知道我们需要移动它多少，因为它知道它的粒度）。
+         */
         assert(_finger < _region_limit, "invariant");
-        HeapWord* new_finger = _nextMarkBitMap->nextObject(_finger);
+        HeapWord* new_finger = _nextMarkBitMap->nextObject(_finger);  // 搜索 HeapWord* nextObject
         // Check if bitmap iteration was aborted while scanning the last object
         if (new_finger >= _region_limit) {
           giveup_current_region();
         } else {
-          move_finger_to(new_finger);
+          move_finger_to(new_finger); // 将finger移动到下一个地方，从这个新的_finger的位置来重新启动扫描
         }
       }
     }
@@ -4441,6 +4578,9 @@ void CMTask::do_marking_step(double time_target_ms,
 
     // We then partially drain the local queue and the global stack.
     // (Do we really need this?)
+    /**
+     * 第二次尝试清空local queue 和 global stack, partially = true
+     */
     drain_local_queue(true);
     drain_global_stack(true);
 
@@ -4448,6 +4588,10 @@ void CMTask::do_marking_step(double time_target_ms,
     // return NULL with potentially more regions available for
     // claiming and why we have to check out_of_regions() to determine
     // whether we're done or not.
+    /**
+     * 内层循环
+     * 不断循环，直到当前的CMTask成功claim到了一个region，存入到_curr_region
+     */
     while (!has_aborted() && _curr_region == NULL && !_cm->out_of_regions()) {
       // We are going to try to claim a new region. We should have
       // given up on the previous one.
@@ -4468,7 +4612,7 @@ void CMTask::do_marking_step(double time_target_ms,
                                  "region " PTR_FORMAT,
                                  _worker_id, p2i(claimed_region));
         }
-
+        // 将claim得到的region设置为_current_region
         setup_for_region(claimed_region);
         assert(_curr_region == claimed_region, "invariant");
       }
@@ -4485,6 +4629,7 @@ void CMTask::do_marking_step(double time_target_ms,
              "at this point we should be out of regions");
     }
   } while ( _curr_region != NULL && !has_aborted());
+  // 退出while循环的时候，说明成功claim了一个region
 
   if (!has_aborted()) {
     // We cannot check whether the global stack is empty, since other
@@ -4498,11 +4643,17 @@ void CMTask::do_marking_step(double time_target_ms,
 
     // Try to reduce the number of available SATB buffers so that
     // remark has less work to do.
+    /**
+     * 再次尝试清空全局的SATB 队列集合
+     */
     drain_satb_buffers();
   }
 
   // Since we've done everything else, we can now totally drain the
   // local queue and global stack.
+    /**
+     * 第二次尝试清空local queue 和 global stack, partially = false, 代表需要清空全部
+     */
   drain_local_queue(false);
   drain_global_stack(false);
 
@@ -4625,9 +4776,9 @@ void CMTask::do_marking_step(double time_target_ms,
   // escape it by accident.
   set_cm_oop_closure(NULL);
   double end_time_ms = os::elapsedVTime() * 1000.0;
-  double elapsed_time_ms = end_time_ms - _start_time_ms;
+  double elapsed_time_ms = end_time_ms - _start_time_ms; // 本次标记实际花费的时间
   // Update the step history.
-  _step_times_ms.add(elapsed_time_ms);
+  _step_times_ms.add(elapsed_time_ms); // 更新实际花费时间的历史列表
 
   if (has_aborted()) {
     // The task was aborted for some reason.
@@ -4635,7 +4786,7 @@ void CMTask::do_marking_step(double time_target_ms,
     statsOnly( ++_aborted );
 
     if (_has_timed_out) {
-      double diff_ms = elapsed_time_ms - _time_target_ms;
+      double diff_ms = elapsed_time_ms - _time_target_ms; // 实际花费的时间，减去目标时间
       // Keep statistics of how well we did with respect to hitting
       // our target only if we actually timed out (if we aborted for
       // other reasons, then the results might get skewed).
@@ -4699,11 +4850,14 @@ void CMTask::do_marking_step(double time_target_ms,
   _claimed = false;
 }
 
+/**
+ * 查看 ConcurrentMark::ConcurrentMark
+ */
 CMTask::CMTask(uint worker_id,
                ConcurrentMark* cm,
                size_t* marked_bytes,
                BitMap* card_bm,
-               CMTaskQueue* task_queue,
+               CMTaskQueue* task_queue, // typedef GenericTaskQueue<oop, mtGC>            CMTaskQueue
                CMTaskQueueSet* task_queues)
   : _g1h(G1CollectedHeap::heap()),
     _worker_id(worker_id), _cm(cm),

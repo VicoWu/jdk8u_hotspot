@@ -117,6 +117,10 @@ inline HeapRegion* G1CollectedHeap::heap_region_containing_raw(const T addr) con
   assert(is_in_g1_reserved((const void*) addr),
       err_msg("Address " PTR_FORMAT " is outside of the heap ranging from [" PTR_FORMAT " to " PTR_FORMAT ")",
           p2i((void*)addr), p2i(g1_reserved().start()), p2i(g1_reserved().end())));
+  /**
+   * 调用 HeapRegionManager的addr_to_region方法，有可能返回null
+   * 搜索 HeapRegion* HeapRegionManager::addr_to_region
+   */
   return _hrm.addr_to_region((HeapWord*) addr);
 }
 

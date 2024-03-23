@@ -283,35 +283,57 @@ void SATBMarkQueueSet::filter_thread_buffers() {
   shared_satb_queue()->filter();
 }
 
+/**
+ * SATBMarkQueueSet的实例方法，用来对已完成的缓冲区应用 SATBBufferClosure
+ * 调用者 搜索 CMTask::drain_satb_buffers
+ * @param cl
+ * @return
+ */
 bool SATBMarkQueueSet::apply_closure_to_completed_buffer(SATBBufferClosure* cl) {
   BufferNode* nd = NULL;
   {
     MutexLockerEx x(_cbl_mon, Mutex::_no_safepoint_check_flag);
     if (_completed_buffers_head != NULL) {
-      nd = _completed_buffers_head;
-      _completed_buffers_head = nd->next();
-      if (_completed_buffers_head == NULL) _completed_buffers_tail = NULL;
-      _n_completed_buffers--;
+      nd = _completed_buffers_head; // 获取已完成的缓冲区节点（BufferNode）
+      _completed_buffers_head = nd->next(); // 将_completed_buffers_head指向下一个节点
+      if (_completed_buffers_head == NULL)  // 下一个节点为空，则说明之前的节点是最后一个节点，更新_completed_buffers_tail指针为空
+          _completed_buffers_tail = NULL;
+      _n_completed_buffers--; // 递减已完成的缓冲区数量_n_completed_buffers，
+      // 检查已完成的缓冲区数量是否为0，如果是，则将_process_completed标志设置为false，表示不需要继续处理已完成的缓冲区
       if (_n_completed_buffers == 0) _process_completed = false;
     }
   }
-  if (nd != NULL) {
+  if (nd != NULL) { // 获取了一个有效的 BufferNode
+      /**
+       * 将该节点转换为一个缓冲区指针buf
+       */
     void **buf = BufferNode::make_buffer_from_node(nd);
     // Skip over NULL entries at beginning (e.g. push end) of buffer.
     // Filtering can result in non-full completed buffers; see
     // should_enqueue_buffer.
     assert(_sz % sizeof(void*) == 0, "invariant");
     size_t limit = ObjPtrQueue::byte_index_to_index((int)_sz);
-    for (size_t i = 0; i < limit; ++i) {
-      if (buf[i] != NULL) {
+    /**
+     * 遍历缓冲区中的元素，找到第一个非空的元素，表示已完成的数据块的起始位置
+     */
+    for (size_t i = 0; i < limit; ++i) { //
+      if (buf[i] != NULL) { // 找到第一个非空的buf
         // Found the end of the block of NULLs; process the remainder.
+        // buffer + i是缓冲区的起始位置，limit - i为剩余元素的数量
+        /**
+         * 对BufferNode中的每一个元素应用 CMSATBBufferClosure，
+         * 搜索 virtual void do_buffer
+         */
         cl->do_buffer(buf + i, limit - i);
         break;
       }
     }
-    deallocate_buffer(buf);
+    /**
+     * 释放缓冲区的内存空间
+     */
+    deallocate_buffer(buf); // 具体实现 查看 PtrQueueSet::deallocate_buffer
     return true;
-  } else {
+  } else { // 没有找到一个可以处理的缓冲区，返回false
     return false;
   }
 }

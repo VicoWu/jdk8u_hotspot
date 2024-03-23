@@ -1693,6 +1693,9 @@ public:
    * 查看 G1SATBCardTableModRefBS::enqueue方法关于写屏障中向SATB本地队列插入的操作
    */
   ObjPtrQueue& satb_mark_queue() { return _satb_mark_queue; }
+  /**
+   * 返回全局的位图 satb queue set
+   */
   static SATBMarkQueueSet& satb_mark_queue_set() {
     return _satb_mark_queue_set;
   }
@@ -1703,6 +1706,9 @@ public:
    * 查看方法 G1SATBCardTableLoggingModRefBS::write_ref_field_work ,写屏障向线程本地的DCQ中插入元素
    */
   DirtyCardQueue& dirty_card_queue() { return _dirty_card_queue; }
+  /**
+   * 返回全局的dirty card queue set
+   */
   static DirtyCardQueueSet& dirty_card_queue_set() {
     return _dirty_card_queue_set;
   }

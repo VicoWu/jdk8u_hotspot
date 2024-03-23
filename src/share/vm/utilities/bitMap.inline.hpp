@@ -50,23 +50,32 @@ inline void BitMap::clear_bit(idx_t bit) {
   *word_addr(bit) &= ~bit_mask(bit);
 }
 
+/**
+ * BitMap的实例方法
+ * 在指定的位置进行置位设置，通过原子的方式保证在多线程环境下的一致性
+ * 如果发现其他线程已经进行了置位(这个位置的值等于即将设置的值)，返回false
+ * 如果设置成功，返回true
+ */
 inline bool BitMap::par_set_bit(idx_t bit) {
   verify_index(bit);
   volatile bm_word_t* const addr = word_addr(bit);
   const bm_word_t mask = bit_mask(bit);
-  bm_word_t old_val = *addr;
+  bm_word_t old_val = *addr; // 当前位置的旧值
 
   do {
     const bm_word_t new_val = old_val | mask;
+    // 如果 old_val | mask == old_val，说明old_val已经是一个被设置过的值了
     if (new_val == old_val) {
       return false;     // Someone else beat us to it.
     }
+    // 使用原子比较交换（CAS）操作将新值写入地址，并返回当前值。
     const bm_word_t cur_val = (bm_word_t) Atomic::cmpxchg_ptr((void*) new_val,
                                                       (volatile void*) addr,
                                                       (void*) old_val);
-    if (cur_val == old_val) {
+    if (cur_val == old_val) { // 如果当前值与旧值相同，则说明设置位成功，返回true
       return true;      // Success.
     }
+    // 如果当前值与旧值不同，则更新旧值，继续循环尝试设置位。
     old_val = cur_val;  // The value changed, try again.
   } while (true);
 }

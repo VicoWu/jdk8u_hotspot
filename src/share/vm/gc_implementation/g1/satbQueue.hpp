@@ -113,6 +113,15 @@ public:
   // consists of applying the closure to the buffer range starting
   // with the first non-NULL entry to the end of the buffer; the
   // leading entries may be NULL due to filtering.
+  /**
+   * 这个方法是SATBMarkQueueSet的实例方法，用来处理线程本地的SATB队列
+   * 具体实现，搜索 SATBMarkQueueSet::apply_closure_to_completed_buffer
+   * 在 CMTask::drain_satb_buffers中调用
+   * 如果存在已完成的缓冲区，则弹出并处理它，并返回 true。 否则返回 false。
+   * 处理缓冲区包括将闭包应用于从第一个非 NULL 条目开始到缓冲区末尾的缓冲区范围； 由于过滤，前导条目可能为 NULL。
+   * @param cl
+   * @return
+   */
   bool apply_closure_to_completed_buffer(SATBBufferClosure* cl);
 
 #ifndef PRODUCT

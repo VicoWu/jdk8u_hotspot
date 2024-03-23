@@ -4148,7 +4148,8 @@ void G1CollectedHeap::log_gc_footer(double pause_time_sec) {
 /**
  * 这个方法是在STW中执行的，可能会借道进行初始标记
  * 进行某种STW的safepoint暂停。这个STW可能是初始标记导致的，也可能是gc导致的
- * 我们看到，这个方法是被VM_G1IncCollectionPause::doit()调用的，因此说明这个方法只是针对增量gc,并且当前线程是vm_thread，
+ * 我们看到，这个方法是被VM_G1IncCollectionPause::doit()调用的，而VM_G1IncCollectionPause是一个 VM_Operation，
+ *      因此说明这个方法只是针对增量gc,并且当前线程是vm_thread，
  *      显然，搜索 Mode evaluation_mode，说明所有的VM_Operation都是需要在安全点执行的，只是在 VMThread::loop中决定的
  * 这个方法不是full gc，因为它调用了increment_total_collections(false)而
  * 而G1CollectedHeap::do_collection() 是 full gc
@@ -6143,6 +6144,10 @@ void G1CollectedHeap::enqueue_discovered_references(uint no_of_gc_workers) {
   g1_policy()->phase_times()->record_ref_enq_time(ref_enq_time * 1000.0);
 }
 
+/**
+ * 这个方法是在 G1CollectedHeap::do_collection_pause_at_safepoint调用的，执行的环境已经是STW了
+ * @param evacuation_info
+ */
 void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
   _expand_heap_after_alloc_failure = true;
   _evacuation_failed = false;
@@ -6179,6 +6184,11 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
       ClassLoaderDataGraph::clear_claimed_marks();
     }
 
+    /**
+     * 是否并行执行
+     * 可以看到，这个use_parallel_gc_threads方法既用来决定是否并行执行，比如在ConcurrentMark::calc_parallel_marking_threads中
+     *      也用来决定是否并发执行，比如在这里
+     */
     if (G1CollectedHeap::use_parallel_gc_threads()) {
       // The individual threads will set their evac-failure closures.
       if (ParallelGCVerbose) G1ParScanThreadState::print_termination_stats_hdr();
@@ -6186,8 +6196,12 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
       assert(UseDynamicNumberOfGCThreads ||
              workers()->active_workers() == workers()->total_workers(),
              "If not dynamic should be using all the  workers");
-      workers()->run_task(&g1_par_task);
-    } else {
+      /*
+       * run_task的实现，搜索 void FlexibleWorkGang::run_task
+       * 以STW并行的方式执行g1_par_task
+       */
+      workers()->run_task(&g1_par_task); //
+    } else { // 单独执行
       g1_par_task.set_for_termination(n_workers);
       g1_par_task.work(0);
     }
