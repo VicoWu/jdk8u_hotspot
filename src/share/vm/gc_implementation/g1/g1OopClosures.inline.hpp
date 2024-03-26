@@ -97,7 +97,7 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
 
 /**
  * 这个方法是在根扫描的过程中调用的, 类G1ParPushHeapRSClosure 的构造
- *  需要搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)
+ *   需要搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)
  * @tparam T
  * @param p
  */

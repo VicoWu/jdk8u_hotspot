@@ -226,7 +226,7 @@ void ConcurrentMarkThread::run() {
         }
 
         // Now do the concurrent cleanup operation.
-        _cm->completeCleanup(); // 现在进行并发清除阶段
+        _cm->completeCleanup(); // 现在进行清理，这个阶段需要STW.注意，这里的cleanup，并不是evacuation，只是并发标记最后的一个子阶段，用来进行分区计数，RSet清理等
 
         // Notify anyone who's waiting that there are no more free
         // regions coming. We have to do this before we join the STS

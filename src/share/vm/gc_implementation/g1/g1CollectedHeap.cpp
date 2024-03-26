@@ -967,7 +967,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
               ->mutator_alloc_region(context) // 返回负责维护eden区域的region管理的G1AllocRegion的实现类的对象MutatorAllocRegion的地址
               // 进行二级分配，调用MutatorAllocRegion的attempt_allocation_locked()方法，
               // 实际上是调用其父类的G1AllocRegion::attempt_allocation_locked方法
-              ->attempt_allocation_locked(word_size, false /* bot_updates */);//  这个方法
+              ->attempt_allocation_locked(word_size, false /* bot_updates */);//  这个方法在年轻代分配region因此不需要更新bot
       if (result != NULL) {
         return result; // 二级分配，终于分配成功
       }
@@ -1195,7 +1195,9 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
   return NULL;
 }
 
-// 必须处于safepoint才能调用这个方法，即这个方法调用是STW的,调用线程必须是STW的
+/**
+ * 必须处于safepoint才能调用这个方法，即这个方法调用是STW的,调用线程必须是STW的, 方法是在VM_G1IncCollectionPause这个VM_Operation中执行的，肯定是STW的
+**/
 HeapWord* G1CollectedHeap::attempt_allocation_at_safepoint(size_t word_size,
                                                            AllocationContext_t context,
                                                            bool expect_null_mutator_alloc_region) {
@@ -1325,6 +1327,7 @@ void G1CollectedHeap::print_hrm_post_compaction() {
 }
 
 /**
+ * full gc
  * 这个方法要求调用线程必须是vm_thread
  * 这个方法主要是在G1CollectedHeap::satisfy_failed_allocation()中和G1CollectedHeap::do_full_collection中调用的
  * 在G1CollectedHeap::satisfy_failed_allocation()中，explicit_gc都为false，表示这次gc的触发并不是一个规律的显式调度触发，而是由于分配失败导致的，因此wordsize不等于0;
@@ -1954,7 +1957,7 @@ void G1CollectedHeap::shrink(size_t shrink_bytes) {
 
 
 G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
-  SharedHeap(policy_),
+  SharedHeap(policy_), // 首先调用父类SharedHeap:SharedHeap的构造函数，构造相应的FlexiableWorkGang并初始化下面的对应线程
   _g1_policy(policy_),
   _dirty_card_queue_set(false),
   _into_cset_dirty_card_queue_set(false),
@@ -2625,7 +2628,7 @@ G1YCType G1CollectedHeap::yc_type() {
  *     2. 同时，在分配对象的时候导致的分配失败，也会触发这个方法的执行，比如attempt_allocation_humongous()中, 即分配大对象的时候，分配以前就会检查是否需要进行回收
  *     3. 同时, GCLocker在离开关键区的时候，也会经过条件判断，尝试调用collect()
  *  从satisfy_failed_allocation()方法可以看到，一次分配失败导致的gc是不会调用到这里的，因为按照目前的设计，一次分配失败导致的gc的首先尝试是扩展内存，如果扩展内存都失败，直接full gc
- *  所以在进行回收的时候尽管是调用VMThread，但是很可能是用户线程在调用
+ *  所以在进行回收的时候尽管是调用VMThread，但是很可能是用户线程在调用，但是进行回收的VMOperation是被VMThread执行的
  *  真正的gc操作是委托给对应的VM_GC_Operation的实现类，然后在不同的线程中同步或者异步执行，比如VM_G1IncCollectionPause，VM_G1CollectFull
  * @param cause
  */
@@ -2698,7 +2701,7 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
                                    false, /* should_initiate_conc_mark */  // 不调度并发标记
                                    g1_policy()->max_pause_time_ms(),
                                    cause);
-        VMThread::execute(&op); // 并发执行
+        VMThread::execute(&op); // 并发执行，这里是提交到线程池执行，而不是直接执行
       } else {  // 进行STW的full gc，这会发生在用户调用了system.gc()，并且我们没有配置-XX:+ExplicitGCInvokesConcurrent
         // Schedule a Full GC.
         VM_G1CollectFull op(gc_count_before, full_gc_count_before, cause); // 进行一次full gc,这个full gc是stw的
@@ -2789,6 +2792,10 @@ void G1CollectedHeap::space_iterate(SpaceClosure* cl) {
   heap_region_iterate(&blk);
 }
 
+/**
+ * 调用者之一是 G1CollectedHeap::reset_heap_region_claim_values，用来遍历所有的HeapRegion
+ * @param cl
+ */
 void G1CollectedHeap::heap_region_iterate(HeapRegionClosure* cl) const {
   _hrm.iterate(cl);
 }
@@ -4146,7 +4153,8 @@ void G1CollectedHeap::log_gc_footer(double pause_time_sec) {
 }
 
 /**
- * 这个方法是在STW中执行的，可能会借道进行初始标记
+ * 这个方法是在STW中执行的(因为这个方法是在 VM_G1IncCollectionPause 中执行的， 而VM_G1IncCollectionPause是一个 VM_Operation)，可能会借道进行初始标记
+ * 这是非full gc
  * 进行某种STW的safepoint暂停。这个STW可能是初始标记导致的，也可能是gc导致的
  * 我们看到，这个方法是被VM_G1IncCollectionPause::doit()调用的，而VM_G1IncCollectionPause是一个 VM_Operation，
  *      因此说明这个方法只是针对增量gc,并且当前线程是vm_thread，
@@ -4180,8 +4188,10 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // This call will decide whether this pause is an initial-mark
   // pause. If it is, during_initial_mark_pause() will return true
   // for the duration of this pause.
-  // 先决定是否进行并发标记，决定的结果保存在如果_during_initial_mark_pause中
-  g1_policy()->decide_on_conc_mark_initiation(); // 决定是否当前的暂停是由于初始标记导致的暂停
+  /**
+   * 先决定是否进行并发标记，决定的结果保存在如果_during_initial_mark_pause中
+   **/
+  g1_policy()->decide_on_conc_mark_initiation();
 
   // 如果当前正在进行初始标记（g1_policy()->during_initial_mark_pause() = true），
   // 并且正在进行mixed gc(g1_policy()->gcs_are_young() == false()),那么assert将失败
@@ -4765,8 +4775,10 @@ void G1ParCopyHelper::do_klass_barrier(T* p, oop new_obj) {
 template <G1Barrier barrier, G1Mark do_mark_object>
 template <class T>
 /**
- * 这个G1ParCopyClosure 在 G1ParTask::work中被构造
+ * 这个G1ParCopyClosure 在 G1ParTask::work() 中被构造
  * 当进行一般的YGC时， 参数设置为参数do_mark_object为 G1MarkNone， 当发现开启了并发标记，则将参数do_mark_object设置为G1MarkFromRoot
+ * 对比 G1ParScanThreadState::do_oop_evac和G1ParCopyClosure<barrier, do_mark_object>::do_oop_work，
+ *    二者调用了copy_to_survivor_space方法
  * @tparam barrier
  * @tparam do_mark_object
  * @tparam T 对象类型
@@ -4920,6 +4932,16 @@ class G1KlassScanClosure : public KlassClosure {
   }
 };
 
+/**
+ *
+ * 继承关系
+ * AbstractWorkGang
+  -- WorkGang
+  		-- FlexiableWorkGang
+
+    AbstractGangTask
+        ---G1ParTask
+ */
 class G1ParTask : public AbstractGangTask {
 protected:
   G1CollectedHeap*       _g1h;
@@ -5006,9 +5028,10 @@ public:
   };
 
   /**
-   * G1ParTask::work方法，这个G1ParTask是通过 FlexibleWorkGang来执行的
+   * G1ParTask::work() 方法，这个G1ParTask是通过 FlexibleWorkGang来执行的
    *    用来进行收集阶段的并行任务
    * 搜索 G1CollectedHeap::evacuate_collection_set 查看构造G1ParTask的过程
+   * worker_id 是执行当前的G1ParTask的GangWorker的线程id
    * @param worker_id
    */
   void work(uint worker_id) {
@@ -6145,7 +6168,8 @@ void G1CollectedHeap::enqueue_discovered_references(uint no_of_gc_workers) {
 }
 
 /**
- * 这个方法是在 G1CollectedHeap::do_collection_pause_at_safepoint调用的，执行的环境已经是STW了
+ * young/mix gc
+ * 这个方法是在 G1CollectedHeap::do_collection_pause_at_safepoint调用的，执行的环境已经是STW了，因此是young/mix gc才会调用的
  * @param evacuation_info
  */
 void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
@@ -6178,9 +6202,16 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
 
   {
     G1RootProcessor root_processor(this);
+    /**
+     * 构造G1ParTask对象，这个G1ParTask::work()方法将会被FlexibleWorkGang所管理的多个GangWorker执行，每一个GangWorker其实就是一个NamedThread
+     */
     G1ParTask g1_par_task(this, _task_queues, &root_processor);
     // InitialMark needs claim bits to keep track of the marked-through CLDs.
     if (g1_policy()->during_initial_mark_pause()) {
+        /**
+         * 搜索 void ClassLoaderDataGraph::clear_claimed_marks()
+         *  将ClassLoaderDataGraph对象下面的所有的ClassLoaderData的_claimed状态清除
+         */
       ClassLoaderDataGraph::clear_claimed_marks();
     }
 
@@ -6197,18 +6228,19 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
              workers()->active_workers() == workers()->total_workers(),
              "If not dynamic should be using all the  workers");
       /*
+       * workers()返回当前的全局的 FlexibleWorkGang对象指针, 这个FlexibleWorkGang的构造是在 SharedHeap::SharedHeap的构造函数中进行创建并初始化了它负责的所有的GangWorker
        * run_task的实现，搜索 void FlexibleWorkGang::run_task
        * 以STW并行的方式执行g1_par_task
        */
-      workers()->run_task(&g1_par_task); //
-    } else { // 单独执行
+      workers()->run_task(&g1_par_task);
+    } else { //
       g1_par_task.set_for_termination(n_workers);
       g1_par_task.work(0);
     }
     end_par_time_sec = os::elapsedTime();
 
     // Closing the inner scope will execute the destructor
-    // for the G1RootProcessor object. We record the current
+    // for the G1单独执行RootProcessor object. We record the current
     // elapsed time before closing the scope so that time
     // taken for the destructor is NOT included in the
     // reported parallel time.
@@ -6256,11 +6288,11 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
 
   if (g1_policy()->during_initial_mark_pause()) {
     // Reset the claim values set during marking the strong code roots
-    reset_heap_region_claim_values();
+    reset_heap_region_claim_values(); //重置每一个HeapRegion的_claimed的状态为InitialClaimValue
   }
 
   finalize_for_evac_failure();
-
+  // 如果回收失败
   if (evacuation_failed()) {
     remove_self_forwarding_pointers();
 
@@ -7118,6 +7150,13 @@ HeapRegion* G1CollectedHeap::new_mutator_alloc_region(size_t word_size,
   return NULL;
 }
 
+/**
+ * 在 MutatorAllocRegion::retire_region 中调用，
+ * 区分G1CollectedHeap::retire_mutator_alloc_region 和 G1CollectedHeap::retire_gc_alloc_region
+ * 前者是retire enden space，后者是retire survivor和old space
+ * @param alloc_region
+ * @param allocated_bytes
+ */
 void G1CollectedHeap::retire_mutator_alloc_region(HeapRegion* alloc_region,
                                                   size_t allocated_bytes) {
   assert_heap_locked_or_at_safepoint(true /* should_be_vm_thread */);
@@ -7149,7 +7188,10 @@ void G1CollectedHeap::set_par_threads() {
 }
 
 // Methods for the GC alloc regions
-
+/**
+ *  gc进行的region的分配，因此调用方是
+ *  SurvivorGCAllocRegion::allocate_new_region 和 OldGCAllocRegion::allocate_new_region
+ */
 HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
                                                  uint count,
                                                  InCSetState dest) {
@@ -7182,15 +7224,24 @@ HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
   return NULL;
 }
 
+/**
+ * 卸载一个gc alloc region，这里卸载的是gc_alloc_region，因此只有可能是survivor和old region,
+ *                  而young region的卸载是retire_mutator_alloc_region
+ *
+ * @param alloc_region 当前需要卸载的region
+ * @param allocated_bytes
+ * @param dest 代表当前正在卸载的region的类型，对于gc alloc region，
+ *             只有可能是survivor或者old，如果是survivor，那么dest=young，如果是old，那么dest = old
+ */
 void G1CollectedHeap::retire_gc_alloc_region(HeapRegion* alloc_region,
                                              size_t allocated_bytes,
                                              InCSetState dest) {
   bool during_im = g1_policy()->during_initial_mark_pause();
   alloc_region->note_end_of_copying(during_im);
   g1_policy()->record_bytes_copied_during_gc(allocated_bytes);
-  if (dest.is_young()) {
-    young_list()->add_survivor_region(alloc_region);
-  } else {
+  if (dest.is_young()) { //  当前卸载的是young region，即survivor region
+    young_list()->add_survivor_region(alloc_region); // 将刚刚卸载的region加回到survivor list中
+  } else { // 当前卸载的是old region，添加到G1CollectedHeap的_old_set中
     _old_set.add(alloc_region);
   }
   _hr_printer.retire(alloc_region);

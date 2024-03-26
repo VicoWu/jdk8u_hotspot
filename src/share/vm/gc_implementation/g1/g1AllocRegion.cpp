@@ -90,10 +90,18 @@ void G1AllocRegion::fill_up_remaining_space(HeapRegion* alloc_region,
          "post-condition");
 }
 
+/**
+ * 调用者 搜索 HeapWord* G1AllocRegion::attempt_allocation_locked
+ * 方法中会调用子类的retire_region方法，比如MutatorAllocRegion,
+ *    SurvivorGCAllocRegion, OldGCAllocRegion的retire_region方法
+ */
 void G1AllocRegion::retire(bool fill_up) {
   assert(_alloc_region != NULL, ar_ext_msg(this, "not initialized properly"));
 
   trace("retiring");
+  /**
+   *  一个G1AllocRegion的具体实现类的对象中都有一个当前的active region，叫做_alloc_region
+   */
   HeapRegion* alloc_region = _alloc_region;
   if (alloc_region != _dummy_region) {
     // We never have to check whether the active region is empty or not,
@@ -103,12 +111,21 @@ void G1AllocRegion::retire(bool fill_up) {
            ar_ext_msg(this, "the alloc region should never be empty"));
 
     if (fill_up) {
+        /**
+         *
+         *  从几个G1AllocRegion的实现可以看到，只有OldGCAllocRegion的_bot_updates是true
+         *  而SurvivorGCAllocRegion 和 MutatorGCAllocRegion的_bot_updates都是false
+         */
       fill_up_remaining_space(alloc_region, _bot_updates);
     }
 
     assert(alloc_region->used() >= _used_bytes_before,
            ar_ext_msg(this, "invariant"));
     size_t allocated_bytes = alloc_region->used() - _used_bytes_before;
+    /**
+     * 会调用子类的retire_region方法，比如MutatorAllocRegion,
+     * SurvivorGCAllocRegion, OldGCAllocRegion的 retire_region方法
+     */
     retire_region(alloc_region, allocated_bytes);
     _used_bytes_before = 0;
     _alloc_region = _dummy_region;
@@ -116,6 +133,10 @@ void G1AllocRegion::retire(bool fill_up) {
   trace("retired");
 }
 
+/**
+ * 在方法 G1AllocRegion::attempt_allocation_locked中和G1AllocRegion::attempt_allocation_force中调用，
+ *      调用完成以后，设置当前的G1AllocRegion具体实现类的_alloc_region
+ */
 HeapWord* G1AllocRegion::new_alloc_region_and_allocate(size_t word_size,
                                                        bool force) {
   assert(_alloc_region == _dummy_region, ar_ext_msg(this, "pre-condition"));
@@ -134,7 +155,10 @@ HeapWord* G1AllocRegion::new_alloc_region_and_allocate(size_t word_size,
     // Note that we first perform the allocation and then we store the
     // region in _alloc_region. This is the reason why an active region
     // can never be empty.
-    update_alloc_region(new_alloc_region); // 将这个新的Region设置为当前的active region
+    /**
+     * 将这个新的Region设置为当前的active region
+     */
+    update_alloc_region(new_alloc_region);
     trace("region allocation successful");
     return result;
   } else {
@@ -248,14 +272,22 @@ G1AllocRegion::G1AllocRegion(const char* name,
     _alloc_region(NULL), _count(0), _used_bytes_before(0),
     _allocation_context(AllocationContext::system()) { }
 
-// 创建eden region，即为用户线程直接分配对象的regino
+// 创建eden region，即为用户线程直接分配对象的region
 HeapRegion* MutatorAllocRegion::allocate_new_region(size_t word_size,
                                                     bool force) {
   return _g1h->new_mutator_alloc_region(word_size, force);
 }
 
+/**
+ * MutatorAllocRegion是G1AllocRegion的子类，这个方法 在 void G1AllocRegion::retire中调用
+ * @param alloc_region
+ * @param allocated_bytes
+ */
 void MutatorAllocRegion::retire_region(HeapRegion* alloc_region,
                                        size_t allocated_bytes) {
+    /**
+     * eden区域的retire调用的是retire_mutator_alloc_region这个方法，区别survivor和 old区域的region，调用的是 retire_gc_alloc_region
+     */
   _g1h->retire_mutator_alloc_region(alloc_region, allocated_bytes);
 }
 
@@ -266,6 +298,11 @@ HeapRegion* SurvivorGCAllocRegion::allocate_new_region(size_t word_size,
   return _g1h->new_gc_alloc_region(word_size, count(), InCSetState::Young);
 }
 
+/**
+ * 在 void G1AllocRegion::retire中调用
+ * @param alloc_region
+ * @param allocated_bytes
+ */
 void SurvivorGCAllocRegion::retire_region(HeapRegion* alloc_region,
                                           size_t allocated_bytes) {
   _g1h->retire_gc_alloc_region(alloc_region, allocated_bytes, InCSetState::Young);

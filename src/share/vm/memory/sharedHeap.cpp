@@ -38,7 +38,10 @@
 PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 SharedHeap* SharedHeap::_sh;
-
+/**
+ * 在G1CollectedHeap的构造函数中调用，构造 FlexibleWorkGang，并初始化它所管理的worker，这些worker会用来在stw期间进行evacuation操作
+ * @param policy_
+ */
 SharedHeap::SharedHeap(CollectorPolicy* policy_) :
   CollectedHeap(),
   _collector_policy(policy_),
@@ -52,13 +55,17 @@ SharedHeap::SharedHeap(CollectorPolicy* policy_) :
                               CMSParallelRemarkEnabled)) ||
        UseG1GC) &&
       ParallelGCThreads > 0) {
+      /**
+       * 构造 FlexibleWorkGang，并初始化它所管理的worker，这些worker会用来在stw期间进行evacuation操作
+       * 在并发标记阶段所使用的并发标记线程也是使用FlxeiableWorkGang来进行多线程的管理的，但是显然他们执行的任务不同，并发度也不同
+       */
     _workers = new FlexibleWorkGang("Parallel GC Threads", ParallelGCThreads,
                             /* are_GC_task_threads */true,
                             /* are_ConcurrentGC_threads */false);
     if (_workers == NULL) {
       vm_exit_during_initialization("Failed necessary allocation.");
     } else {
-      _workers->initialize_workers();
+      _workers->initialize_workers(); // 初始化这个WorkGang负责的所有的GangWorker，每一个GangWorker属于一个NamedThread
     }
   }
 }

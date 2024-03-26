@@ -194,6 +194,16 @@ inline bool ConcurrentMark::par_mark_and_count(oop obj,
   return false;
 }
 
+/**
+ * 调用者是 void CMTask::do_marking_step
+ * 在这个位图对应的mr区域范围内apply对应的closure
+ * mr代表了HeapRegion的一块区域，这里会将mr的左右边界通过方法 heapWordToOffset
+ *   映射为对应的bitmap的左右边界，然后在这个bitmap的左右边界上apply对应的closure
+ * 当所有的位置都do_bit成功，则返回成功，有一个失败，就终止并返回失败
+ * @param cl
+ * @param mr
+ * @return
+ */
 inline bool CMBitMapRO::iterate(BitMapClosure* cl, MemRegion mr) {
   HeapWord* start_addr = MAX2(startWord(), mr.start());
   HeapWord* end_addr = MIN2(endWord(), mr.end());
@@ -205,7 +215,7 @@ inline bool CMBitMapRO::iterate(BitMapClosure* cl, MemRegion mr) {
 
     start_offset = _bm.get_next_one_offset(start_offset, end_offset);
     while (start_offset < end_offset) {
-      if (!cl->do_bit(start_offset)) {
+      if (!cl->do_bit(start_offset)) { // 搜索  class CMBitMapClosure : public BitMapClosure
         return false;
       }
       HeapWord* next_addr = MIN2(nextObject(offsetToHeapWord(start_offset)), end_addr);

@@ -423,8 +423,8 @@ protected:
   // Concurrent marking support structures
   CMBitMap                _markBitMap1;
   CMBitMap                _markBitMap2;
-  CMBitMapRO*             _prevMarkBitMap; // completed mark bitmap
-  CMBitMap*               _nextMarkBitMap; // under-construction mark bitmap
+  CMBitMapRO*             _prevMarkBitMap; // ConcurrentMark的全局变量，已经完成的mark bitmap
+  CMBitMap*               _nextMarkBitMap; // ConcurrentMark的全局变量，正在进行构建的mark bitmap
 
   BitMap                  _region_bm;
   BitMap                  _card_bm;
@@ -1173,7 +1173,12 @@ private:
 public:
   // It resets the task; it should be called right at the beginning of
   // a marking phase.
-  void reset(CMBitMap* _nextMarkBitMap);
+  /**
+   * 这是 CMTzsk的重置方法， 在 ConcurrentMark::reset中被调用
+   * 在标记阶段开始阶段调用，重置这个CMTask的_nextMarkBitMap
+   * @param _nextMarkBitMap
+   */
+  void reset(CMBitMap* _nextMarkBitMap); //
   // it clears all the fields that correspond to a claimed region.
   void clear_region_fields();
 

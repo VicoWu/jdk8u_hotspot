@@ -30,8 +30,12 @@
 #include "oops/oop.inline.hpp"
 
 /**
- * 在这里，指针p对应的位置存放了一个指针，指向了回收集合中的某个对象。
+ * 调用者是 G1ParScanThreadState::deal_with_reference
+ * 在这里，指针p对应的位置存放了一个指针，指向了回收集合中的某个对象
  * 当这个对象转移到survivor区域以后，就需要在这个位置写入对象的新地址
+ *
+ * 对比 G1ParScanThreadState::do_oop_evac和G1ParCopyClosure<barrier, do_mark_object>::do_oop_work，
+ *    二者调用了copy_to_survivor_space
  * @tparam T
  * @param p
  * @param from
@@ -73,7 +77,7 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
   }
 
   assert(obj != NULL, "Must be");
-  update_rs(from, p, queue_num());
+  update_rs(from, p, queue_num());// 更新RSet
 }
 
 inline void G1ParScanThreadState::do_oop_partial_array(oop* p) {
@@ -127,7 +131,7 @@ inline void G1ParScanThreadState::do_oop_partial_array(oop* p) {
 
 /**
  * 搜索 G1ParPushHeapRSClosure::do_oop_nv， 可以看到往_refs中插入堆指针的条件是:
- *  这个对指针指向的位置能够加载出一个对象指针，并且这个对象指针指向了回收集合或者大对象
+ *      这个对指针指向的位置能够加载出一个对象指针，并且这个对象指针指向了回收集合或者大对象
  * @tparam T
  * @param ref_to_scan
  */

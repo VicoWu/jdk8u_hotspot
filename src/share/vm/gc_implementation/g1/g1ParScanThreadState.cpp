@@ -221,7 +221,9 @@ InCSetState G1ParScanThreadState::next_state(InCSetState const state, markOop co
    */
   return dest(state); // 或者这个state的目标state
 }
-
+/**
+ * 在方法  G1ParCopyClosure<barrier, do_mark_object>::do_oop_work 和方法 template <class T> void G1ParScanThreadState::do_oop_evac中被调用
+ */
 oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
                                                  oop const old, //需要移动的对象，oop是一个typedef oopDesc*   oop;
                                                  markOop const old_mark) {
@@ -254,6 +256,9 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
       if (obj_ptr == NULL) { // 最终失败，进行转移失败的相关处理
         // This will either forward-to-self, or detect that someone else has
         // installed a forwarding pointer.
+        /**
+         * 搜索 G1CollectedHeap::handle_evacuation_failure_par
+         */
         return _g1h->handle_evacuation_failure_par(this, old); // 处理转移失败的情况
       }
     }
@@ -262,10 +267,13 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
   assert(obj_ptr != NULL, "when we get here, allocation should have succeeded");
 #ifndef PRODUCT
   // Should this evacuation fail?
-  if (_g1h->evacuation_should_fail()) {
+  if (_g1h->evacuation_should_fail()) { // 这里返回true，说明
     // Doing this after all the allocation attempts also tests the
     // undo_allocation() method too.
     _g1_par_allocator->undo_allocation(dest_state, obj_ptr, word_sz, context);
+    /**
+     * 搜索 G1CollectedHeap::handle_evacuation_failure_par
+     */
     return _g1h->handle_evacuation_failure_par(this, old);
   }
 #endif // !PRODUCT

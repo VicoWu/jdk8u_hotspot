@@ -119,6 +119,8 @@ bool VM_G1IncCollectionPause::doit_prologue() {
   return res;
 }
 /**
+ * 在 G1CollectedHeap::collect中调用
+ * VM_G1IncCollectionPause是一个VM_Operation，因此是在VMThread中执行
  * 并发full gc的操作类，所以需要跟VM_G1CollectForAllocation::doit()区别开
  * 这个方法属于g1CollectedHeap的下层，即被比如g1CollectedHeap::collect调用，调用者通过_pause_succeeded判断这次的转移是否成功，从而决定是否进行重试
  */
@@ -131,6 +133,9 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
   // 在do_collection_pause()方法中，word_size!=0,说明是一次分配失败导致的gc，并且调用attempt_allocation_at_safepoint的时候，已经STW了
   if (_word_size > 0) { // 如果_word_size > 0，那么先尝试进行一次safepoint的STW分配
     // An allocation has been requested. So, try to do that first.
+    /**
+     * 由于VM_G1IncCollectionPause是VM_Operation，因此肯定是在safepoint中执行的
+     */
     _result = g1h->attempt_allocation_at_safepoint(_word_size, allocation_context(),
                                      false /* expect_null_cur_alloc_region */);
     if (_result != NULL) {

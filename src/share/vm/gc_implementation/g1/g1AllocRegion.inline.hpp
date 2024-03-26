@@ -108,6 +108,14 @@ inline HeapWord* G1AllocRegion::attempt_allocation(size_t word_size,
  * 二级分配：调用者自己负责获取Heap_lock，查看G1CollectedHeap::attempt_allocation_slow可以看到调用该方法的时候已经上了Heap_Lock
  * 它将尝试首先在活动区域之外进行无锁分配，或者，如果无法分配，它将尝试用新的区域替换活动分配区域。
  * 我们要求调用者在调用此函数之前获取适当的锁，以便更容易使其符合其锁定协议。
+ *
+ * 这里可能是给G1AllocRegion的三个子类在分配region
+   G1AllocRegion
+	-- MutatorAllocRegion
+	-- SurvivorGCAllocRegion
+	-- OldGCAllocRegion
+   G1Alloctor对象持有G1AllocRegion的三个子类的各自的实例
+   搜索 ->attempt_allocation_locked 可以看到三个不同的子类所代表的三个不同区域对这个方法的调用
  * @param word_size
  * @param bot_updates
  * @return
@@ -123,6 +131,9 @@ inline HeapWord* G1AllocRegion::attempt_allocation_locked(size_t word_size,
     return result;
   }
   // 不上锁分配内存失败，清空当前的region
+  /**
+   * 这里调用的是 G1AllocRegion::retire，代表的含义是卸载掉当前这个区域的对应的active region，因为将会分配一个新的region
+   */
   retire(true /* fill_up */);
   /**
    * 对应了G1AllocRegion::new_alloc_region_and_allocate

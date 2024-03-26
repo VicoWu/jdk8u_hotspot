@@ -556,8 +556,8 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
             CardTableModRefBS::card_shift,
             false /* in_resource_area*/),
 
-  _prevMarkBitMap(&_markBitMap1),
-  _nextMarkBitMap(&_markBitMap2),
+  _prevMarkBitMap(&_markBitMap1), // 设置一个空的_prevMarkBitMap
+  _nextMarkBitMap(&_markBitMap2), // 设置一个空的_nextMarkBitMap
 
   _markStack(this),
   // _finger set in set_non_marking_state
@@ -689,12 +689,16 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
 #endif
 
     guarantee(parallel_marking_threads() > 0, "peace of mind");
+    /**
+     * 构造一个全局的FlexibleWorkGang，负责这次并发标记的线程的管理
+     * 在构造G1CollectedHeap::G1CollectedHeap的时候，也会构造一个FlexibleWorkGang
+     */
     _parallel_workers = new FlexibleWorkGang("G1 Parallel Marking Threads",
          _max_parallel_marking_threads, false, true);
     if (_parallel_workers == NULL) {
       vm_exit_during_initialization("Failed necessary allocation.");
     } else {
-      _parallel_workers->initialize_workers();
+      _parallel_workers->initialize_workers(); // 初始化这个FlexibleWorkGang所管理的所有的GangWoker，每一个GangWorker都是一个线程
     }
   }
 
@@ -783,6 +787,9 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
   _completed_initialization = true;
 }
 
+/**
+ * ConcurrentMark的全局reset方法，
+ */
 void ConcurrentMark::reset() {
   // Starting values for these two. This should be called in a STW
   // phase.
@@ -806,11 +813,14 @@ void ConcurrentMark::reset() {
   // different number of active threads. So, it's easiest to have all
   // of them ready.
   for (uint i = 0; i < _max_worker_id; ++i) {
-    _tasks[i]->reset(_nextMarkBitMap);
+    _tasks[i]->reset(_nextMarkBitMap); // 所有的task都共享这个全局的共享的 _nextMarkBitMap
   }
 
   // we need this to make sure that the flag is on during the evac
   // pause with initial mark piggy-backed
+  /**
+   * 设置 _concurrent_marking_in_progress=true，这样在初始标记借道的时候可以被读取到
+   */
   set_concurrent_marking_in_progress();
 }
 
@@ -934,12 +944,18 @@ class NoteStartOfMarkHRClosure: public HeapRegionClosure {
 public:
   bool doHeapRegion(HeapRegion* r) {
     if (!r->continuesHumongous()) {
+        /**
+         * 只要这个region不是一个连续的大对象region，就调用这个HeapRegion的note_start_of_marking方法
+         */
       r->note_start_of_marking();
     }
     return false;
   }
 };
 
+/**
+ * 在初始标记借道中被调用，对应的方法还有checkpointRootsInitialPost
+ */
 void ConcurrentMark::checkpointRootsInitialPre() {
   G1CollectedHeap*   g1h = G1CollectedHeap::heap();
   G1CollectorPolicy* g1p = g1h->g1_policy();
@@ -954,10 +970,13 @@ void ConcurrentMark::checkpointRootsInitialPre() {
 #endif
 
   // Initialise marking structures. This has to be done in a STW phase.
-  reset();
+  reset(); // 调用 ConcurrentMark::reset
 
   // For each region note start of marking.
-  NoteStartOfMarkHRClosure startcl; // 对于每一个region，通知标记开始
+  /**
+   * 对于每一个region，通知初始标记开始，主要是设置每一个region的ntams为当前的top
+   */
+  NoteStartOfMarkHRClosure startcl;
   g1h->heap_region_iterate(&startcl);
 }
 
@@ -3715,19 +3734,22 @@ template void CMTask::process_grey_object<true>(oop);
 template void CMTask::process_grey_object<false>(oop);
 
 // Closure for iteration over bitmaps
+/**
+ * 这个Closure 用来对bitmap进行遍历
+ */
 class CMBitMapClosure : public BitMapClosure {
 private:
   // the bitmap that is being iterated over
-  CMBitMap*                   _nextMarkBitMap;
-  ConcurrentMark*             _cm;
-  CMTask*                     _task;
+  CMBitMap*                   _nextMarkBitMap; //当前全局的_nextMarkBitMap
+  ConcurrentMark*             _cm; // 全局的CM
+  CMTask*                     _task; //当前apply这个closure的CMTask
 
 public:
   CMBitMapClosure(CMTask *task, ConcurrentMark* cm, CMBitMap* nextMarkBitMap) :
     _task(task), _cm(cm), _nextMarkBitMap(nextMarkBitMap) { }
 
   bool do_bit(size_t offset) {
-    HeapWord* addr = _nextMarkBitMap->offsetToHeapWord(offset);
+    HeapWord* addr = _nextMarkBitMap->offsetToHeapWord(offset);  // 通过offset转换成这个bit对应的内存字地址 ，搜索 HeapWord* offsetToHeapWord(size_t offset)
     assert(_nextMarkBitMap->isMarked(addr), "invariant");
     assert( addr < _cm->finger(), "invariant");
 
@@ -3735,16 +3757,20 @@ public:
     assert(addr >= _task->finger(), "invariant");
 
     // We move that task's local finger along.
-    _task->move_finger_to(addr);
+    _task->move_finger_to(addr); // 移动当前的CMTask的local finger到这个位置
 
-    _task->scan_object(oop(addr));
+    _task->scan_object(oop(addr)); // 对这个对象进行扫描，从scan_object调用到process_grey_object的时候，scan=true
     // we only partially drain the local queue and global stack
     _task->drain_local_queue(true);
     _task->drain_global_stack(true);
 
     // if the has_aborted flag has been raised, we need to bail out of
     // the iteration
-    return !_task->has_aborted();
+    /**
+     * 如果收到了abort信号，那么返回false，上层迭代调用这个closure的会终止迭代，
+     * 否则返回true
+     */
+    return !_task->has_aborted(); //
   }
 };
 
@@ -3784,9 +3810,9 @@ void CMTask::setup_for_region(HeapRegion* hr) {
 void CMTask::update_region_limit() {
   HeapRegion* hr            = _curr_region;
   HeapWord* bottom          = hr->bottom();
-  HeapWord* limit           = hr->next_top_at_mark_start();
+  HeapWord* limit           = hr->next_top_at_mark_start(); // 获取当前region的tams
 
-  if (limit == bottom) {
+  if (limit == bottom) { // 当前region的tams刚好在region的bottom
     if (_cm->verbose_low()) {
       gclog_or_tty->print_cr("[%u] found an empty region "
                              "[" PTR_FORMAT ", " PTR_FORMAT ")",
@@ -3797,7 +3823,7 @@ void CMTask::update_region_limit() {
     // iteration that will follow this will not do anything.
     // (this is not a condition that holds when we set the region up,
     // as the region is not supposed to be empty in the first place)
-    _finger = bottom;
+    _finger = bottom; // 设置local _finger为当前的bottom
   } else if (limit >= _region_limit) {
     assert(limit >= _finger, "peace of mind");
   } else {
@@ -3815,7 +3841,7 @@ void CMTask::update_region_limit() {
     _finger = limit;
   }
 
-  _region_limit = limit;
+  _region_limit = limit; // 将_region_limit 更新为limit
 }
 
 void CMTask::giveup_current_region() {
@@ -3848,13 +3874,19 @@ void CMTask::set_cm_oop_closure(G1CMOopClosure* cm_oop_closure) {
   _cm_oop_closure = cm_oop_closure;
 }
 
+/**
+ * 在 ConcurrentMark::reset中调用
+ * @param nextMarkBitMap
+ */
 void CMTask::reset(CMBitMap* nextMarkBitMap) {
   guarantee(nextMarkBitMap != NULL, "invariant");
 
   if (_cm->verbose_low()) {
     gclog_or_tty->print_cr("[%u] resetting", _worker_id);
   }
-
+  /**
+   * 全局的_nextMarkBitMap设置当前的CMTask的_nextMarkBitMap
+   */
   _nextMarkBitMap                = nextMarkBitMap;
   clear_region_fields();
 
@@ -4421,6 +4453,48 @@ void CMTask::print_stats() {
  *****************************************************************************/
 
 /**
+ *
+ * do_marking_step(time_target_ms, ...) 方法是Concurrent Marking 框架的最核心部分。
+ * 它可以与不同CMTask上的 do_marking_step() 的其他调用并行调用（显然，每个CMTask 只能调用一个），并且可以与用户的 mutator 线程同时调用，或者与remark同时运行，
+ * 因此它消除了对两个版本的代码的需要，全部功能放在一段代码中。 当在重新标记期间调用时，它将从并发标记阶段任务停止的地方继续执行。
+ * 有趣的是，任务在疏散暂停期间也可以claim，因为 do_marking_step() 确保它在需要yield之前中止。
+   它用于进行标记工作的主要数据结构如下：
+     (1) 标记位图。 如果存在仅出现在位图上的灰色对象（这种情况发生在处理溢出时或initial mark只是标记了根并且没有将它们推入堆栈时），
+            则任务将声明其位图所在的堆区域 然后扫描找到gray object。
+            global finger 指示最后claim的区域的末尾在哪里。 local finger指示任务已扫描到该区域的深度。
+            两个finger 用于确定如何使对象变灰（即是否简单地标记它就可以了，因为它将来会被CMTask访问，或者是否也需要将其压入堆栈）。
+     (2) 本地队列。 任务的本地队列，任务可以合理有效地访问该队列。 当其他任务用完工作时，它们可以窃取它。
+            在整个标记阶段，任务尝试保持其本地队列较短但不完全为空，以便其他任务可以窃取条目。 仅当没有更多工作时，任务才会完全耗尽其本地队列。
+     (3) 全局标记堆栈。 这可以用来解决本地队列的溢出。
+            在标记期间，仅在它和本地队列之间移动条目集，而不会向操作本地队列一样直接从中取出元素，因为对它的访问需要互斥锁以及与其进行更细粒度的交互，这可能会导致contention。
+            如果溢出，则标记阶段应重新启动并迭代位图以识别灰色对象。
+            同本地队列一样，在整个标记阶段，任务尝试将全局标记堆栈保持在较小的长度但不完全为空，以便其他任务可以弹出条目。
+            只有当没有更多工作时，任务才会完全耗尽全局标记堆栈。
+     (4) SATB 缓冲队列。 这是提供完整 SATB(Snapshot-At-The-Beginning) 缓冲区的地方。
+            我们会定期从此队列中删除buffer并进行根扫描(所以SATB中的元素也是作为根的)，以便队列不会变得太长。
+            在重新标记期间，将处理所有已完成的缓冲区以及任何未完成的缓冲区的填充部分。
+    do_marking_step() 方法尝试在达到时间目标时中止。 还有一些其他情况 do_marking_step() 方法也会中止：
+     (1) 当标记阶段已中止时（在 Full GC 之后）。
+     (2) 当全局溢出（在全局标记堆栈上）被触发时。 在任务中止之前，它实际上会与其他任务同步，以确保重新初始化所有标记数据结构（本地队列、堆栈、指针等），
+        以便在 do_marking_step() 完成时，标记阶段可以立即重新开始。
+     (3) 当有足够的已完成 SATB 缓冲区可用时， do_marking_step() 方法仅尝试在开始时耗尽 SATB 缓冲区。
+        因此，如果有足够的缓冲区可用，标记步骤将中止，并在下一次调用开始时处理 SATB 缓冲区。
+     (4) yield。 当我们必须yield时，我们会在 do_marking_step() 结束时abort并yield。
+     这让我们免去了很多麻烦，因为yield我们可能会允许进行 Full GC。 如果发生这种情况，那么对象将被compact在我们脚下，堆可能会缩小，等等。
+     我们通过abort并在最后执行yield来节省检查。
+   从上面可以看出，应该循环（或者定期）调用 do_marking_step() 方法，直到完成。
+   如果标记步骤完成时其 has_aborted() 标志不为 true，则意味着它已完成当前标记阶段（并且所有其他标记任务也已完成并已全部同步）。
+   在整个标记过程中，会“定期”（以亚毫秒间隔）调用一个名为 regular_clock_call() 的方法。 正是这个时钟方法检查上面提到的所有中止条件并决定任务何时应该中止。
+   一个work-based scheme的方案用于触发该时钟方法：当标记阶段已扫描的对象字数或标记阶段已访问的引用数达到给定限制时。
+   对时钟方法的额外调用也被植入到其他一些策略性位置。 使用 时钟方法 的最初原因是为了避免过于频繁地调用 vtime，因为它的成本相当高。
+   因此，一旦调用时钟方法，很自然地也会搭载所有其他的一些条件检查，而不是在整个代码中不断检查它们。
+   如果 do_termination 为 true，则 do_marking_step 将进入其终止协议。
+   当 do_marking_step 被串行调用（即由 VMThread）时，is_serial 的值必须为 true，
+        并且 do_marking_step 应跳过终止和溢出代码中的任何同步，具体例子包括串行注释代码和串行引用处理闭包。
+   当work gang中的任何工作线程调用 do_marking_step 时，is_serial 的值必须为 false，
+        比如包括并发标记代码 (CMMarkingTask)、MT 注释代码和 MT 参考处理闭包。
+
+
  * 搜 ->do_marking_step  查看 该方法的调用的四个地方
  * 一个 CMTask代表了并发标记阶段的一个线程
  * 当do_termination = false，那么肯定不会进行steal操作
@@ -4554,8 +4628,9 @@ void CMTask::do_marking_step(double time_target_ms,
       // the address where we last found a marked object. If this is a
       // fresh region, _finger points to start().
       /**
-       * 我们将从 _finger 开始，而不是从该区域的开头开始，因为我们可能会在扫描该区域中途中止后重新启动该任务。
+       * 我们将从local的 _finger 开始，而不是从该区域的开头开始，因为我们可能会在扫描该区域中途中止后重新启动该任务。
        * 在这种情况下，_finger 指向我们最后找到标记对象的地址。 如果这是一个新区域，_finger 指向 start()。
+       * 一个region需要扫描的右侧边界是_region_limit
        */
       MemRegion mr = MemRegion(_finger, _region_limit);
 
@@ -4582,16 +4657,24 @@ void CMTask::do_marking_step(double time_target_ms,
         giveup_current_region();
         regular_clock_call();
       } else if (_curr_region->isHumongous() && mr.start() == _curr_region->bottom()) {
-        if (_nextMarkBitMap->isMarked(mr.start())) {
+        if (_nextMarkBitMap->isMarked(mr.start())) { // 这个对象已经被标记，那么就apply对应的bit closure CMBitMapClosure
           // The object is marked - apply the closure
           BitMap::idx_t offset = _nextMarkBitMap->heapWordToOffset(mr.start());
-          bitmap_closure.do_bit(offset);
+          bitmap_closure.do_bit(offset); // 对offset的这个对象进行递归扫描，同时也会移动CMTask的本地_finger 到这个地址
         }
         // Even if this task aborted while scanning the humongous object
         // we can (and should) give up the current region.
         giveup_current_region();
         regular_clock_call();
-      } else if (_nextMarkBitMap->iterate(&bitmap_closure, mr)) {
+        /**
+         * 搜索 class CMBitMapClosure : public BitMapClosure 查看具体实现，
+         *          它会在指定的区域(mr限定)扫描位图，同时在扫描的时候不断更新本地的_finger
+         * 虽然_nextMarkBitMap是全局的，但是通过mr(Memory Region)限制了遍历的区域
+         * CMBitMap是CMBitMapRO 的子类，搜索 inline bool CMBitMapRO::iterate查看iterate方法的具体实现
+         * 返回true，说明成功地apply了对应的closure
+         * 返回false，说明收到了abort 的信号(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
+         */
+      } else if (_nextMarkBitMap->iterate(&bitmap_closure, mr)) { //
         giveup_current_region();
         regular_clock_call();
       } else {
@@ -4612,11 +4695,12 @@ void CMTask::do_marking_step(double time_target_ms,
         // bitmap knows by how much we need to move it as it knows its
         // granularity).
         /**
-         * 中止位图迭代的唯一方法是从 do_bit() 方法返回 false。 然而，在 do_bit() 方法中，我们移动 _finger 以指向当前正在查看的对象。
-         * 因此，如果我们退出，我们肯定会将 _finger 设置为非空值。
-         * 区域迭代实际上被中止。 所以现在_finger指向我们上次扫描的对象的地址。
-         * 如果我们将其留在那里，当我们重新启动此任务时，我们将重新扫描该对象。 避免这种情况很容易。
-         * 我们将手指移动足够的距离以指向下一个可能的对象头（位图知道我们需要移动它多少，因为它知道它的粒度）。
+         * 中止位图迭代的唯一方法是从 do_bit() 方法返回 false(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
+         * 然而，在 do_bit() 方法中，我们会移动 _finger 以指向当前正在扫描的对象，
+         * 所以，如果我们中途abort，我们需要将 _finger 设置为非空值。
+         * 在当前迭代过程被终止的时候，现在_finger正指向我们上次扫描的对象的地址。
+         * 如果我们将其留在那里，当我们重新启动此任务时，我们将重新扫描该对象。但是，避免这种情况很容易，
+         *      我们将手指移动足够的距离以指向下一个可能的对象头（位图知道我们需要移动它多少，因为它知道它的粒度）。
          */
         assert(_finger < _region_limit, "invariant");
         HeapWord* new_finger = _nextMarkBitMap->nextObject(_finger);  // 搜索 HeapWord* nextObject
@@ -4934,7 +5018,8 @@ CMTask::CMTask(uint worker_id,
   : _g1h(G1CollectedHeap::heap()),
     _worker_id(worker_id), _cm(cm),
     _claimed(false),
-    _nextMarkBitMap(NULL), _hash_seed(17),
+    _nextMarkBitMap(NULL), // 构造的时候，_nextMarkBitMap是空的。具体的 _nextMarkBitMap是在reset方法中设置的
+    _hash_seed(17),
     _task_queue(task_queue),
     _task_queues(task_queues),
     _cm_oop_closure(NULL),

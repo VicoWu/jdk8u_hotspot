@@ -132,6 +132,15 @@ void WorkGang::run_task(AbstractGangTask* task) {
   run_task(task, total_workers());
 }
 
+/**
+ * 继承关系
+ * AbstractWorkGang
+ *   -- WorkGang
+ *     -- FlexiableWorkGang
+ * 调用者是 FlexibleWorkGang::run_task
+ * @param task
+ * @param no_of_parallel_workers
+ */
 void WorkGang::run_task(AbstractGangTask* task, uint no_of_parallel_workers) {
   task->set_for_termination(no_of_parallel_workers);
 
@@ -144,11 +153,15 @@ void WorkGang::run_task(AbstractGangTask* task, uint no_of_parallel_workers) {
   // Tell all the workers to run a task.
   assert(task != NULL, "Running a null task");
   // Initialize.
-  _task = task;
+  _task = task; // 设置当前gang的task，这些task会被不同的worker去拆分执行
   _sequence_number += 1;
   _started_workers = 0;
   _finished_workers = 0;
   // Tell the workers to get to work.
+  /**
+   * 这里调用的notify_all，即所有在这里wait的线程都会收到通知然后执行。
+   * 查看void GangWorker::run()中调用loop()方法中对这个锁的wait操作
+   */
   monitor()->notify_all();
   // Wait for them to be finished
   while (finished_workers() < no_of_parallel_workers) {
@@ -169,12 +182,20 @@ void WorkGang::run_task(AbstractGangTask* task, uint no_of_parallel_workers) {
   }
 }
 
+/**
+ * 调用者是 G1CollectedHeap::evacuate_collection_set
+ * 这个task是一个任务描述，在一次收集过程中，会有一个FlexibleWorkGang，对应了一个task，这个task会被这个gang管理的多个work进行执行
+ * @param task
+ */
 void FlexibleWorkGang::run_task(AbstractGangTask* task) {
   // If active_workers() is passed, _finished_workers
   // must only be incremented for workers that find non_null
   // work (as opposed to all those that just check that the
   // task is not null).
-  // 这些task会有不用的GangWorker::GangWorker来执行，搜索 GangWorker::loop()，而 active_workers就是GangWorker的数量
+  /**
+   * 这些task会有不用的GangWorker::GangWorker来执行，搜索 void GangWorker::run()，而 active_workers就是GangWorker的数量
+   */
+
   WorkGang::run_task(task, (uint) active_workers());
 }
 
@@ -201,6 +222,9 @@ void AbstractWorkGang::internal_worker_poll(WorkData* data) const {
   assert(data != NULL, "worker data is null");
   data->set_terminate(terminate());
   data->set_task(task());
+  /**
+   * 这里的_sequence_number是跟一轮调用相关的，即一轮调用的AbstractWorkGang的所有GangWorker的sequence_number都是相同的
+   */
   data->set_sequence_number(sequence_number());
 }
 
@@ -243,6 +267,9 @@ void GangWorker::run() {
   loop();
 }
 
+/**
+ * 初始化这个GangWorker现成
+ */
 void GangWorker::initialize() {
   this->initialize_thread_local_storage();
   this->record_stack_base_and_size();
@@ -258,19 +285,22 @@ void GangWorker::initialize() {
          " of a work gang");
 }
 
+/**
+ * 每一个GangWorker都是一个NamedThread
+ */
 void GangWorker::loop() {
   int previous_sequence_number = 0;
-  Monitor* gang_monitor = gang()->monitor();
+  Monitor* gang_monitor = gang()->monitor(); // 获取全局的 FlexibleWorkGang的全局锁
   for ( ; /* !terminate() */; ) {
     WorkData data;
     int part;  // Initialized below.
     {
       // Grab the gang mutex.
-      MutexLocker ml(gang_monitor);
-      // Wait for something to do.
+      MutexLocker ml(gang_monitor); // 获取了全局锁
+      // Wait for so
       // Polling outside the while { wait } avoids missed notifies
       // in the outer loop.
-      gang()->internal_worker_poll(&data);
+      gang()->internal_worker_poll(&data); // 调用的是全局的WorkGang，领取任务，任务放入WorkData中
       if (TraceWorkGang) {
         tty->print("Polled outside for work in gang %s worker %d",
                    gang()->name(), id());
@@ -327,6 +357,10 @@ void GangWorker::loop() {
                  gang()->name(), id(), data.task()->name(), part);
     }
     assert(data.task() != NULL, "Got null task");
+    /**
+     * data.task就是返回当前的 AbstractGangTask的实现类的work方法
+     * 比如，G1ParTask::work()方法
+    **/
     data.task()->work(part);
     {
       if (TraceWorkGang) {

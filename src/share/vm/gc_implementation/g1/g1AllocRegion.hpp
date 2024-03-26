@@ -126,6 +126,10 @@ private:
   // allocation. The force parameter will be passed on to
   // G1CollectedHeap::allocate_new_alloc_region() and tells it to try
   // to allocate a new region even if the max has been reached.
+     /**
+     * 在方法 G1AllocRegion::attempt_allocation_locked中和G1AllocRegion::attempt_allocation_force中调用，
+     *      调用完成以后，设置当前的G1AllocRegion具体实现类的_alloc_region
+     */
   HeapWord* new_alloc_region_and_allocate(size_t word_size, bool force);
 
   void fill_in_ext_msg(ar_ext_msg* msg, const char* message);

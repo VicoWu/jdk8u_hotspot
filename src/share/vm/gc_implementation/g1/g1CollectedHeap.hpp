@@ -191,6 +191,9 @@ class G1RegionMappingChangedListener : public G1MappingChangedListener {
   virtual void on_commit(uint start_idx, size_t num_regions, bool zero_filled);
 };
 
+/**
+ * 在父类的构造函数SharedHeap::SharedHeap 中构造了FlexibleGangWorker对象并初始化它下面的所有的worker
+ */
 class G1CollectedHeap : public SharedHeap {
   friend class VM_CollectForMetadataAllocation;
   friend class VM_G1CollectForAllocation;
@@ -931,6 +934,10 @@ protected:
 
   // Records whether G1EvacuationFailureALot should be in effect
   // for the current GC
+  /**
+   * 支持强制疏散失败，类似于其他收集器的 PromotionFailureALot。
+   * 这个变量记录 G1EvacuationFailureALot配置参数 是否应该对当前的这一轮GC 生效
+   */
   bool _evacuation_failure_alot_for_current_gc;
 
   // Used to record the GC number for interval checking when

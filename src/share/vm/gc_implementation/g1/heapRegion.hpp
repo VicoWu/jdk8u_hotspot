@@ -619,12 +619,18 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // info fields.
   inline void note_end_of_marking();
 
+  /**
+   * 通知该区域它将在 GC 期间用作目标空间，并且我们即将开始将对象复制到其中。
+   */
   // Notify the region that it will be used as to-space during a GC
   // and we are about to start copying objects into it.
   inline void note_start_of_copying(bool during_initial_mark);
 
   // Notify the region that it ceases being to-space during a GC and
   // we will not copy objects into it any more.
+  /**
+   * 通知这个region 它已经不会再在GC操作过程中作为一个目标region进行数据拷贝，并且我们将不再将对象复制到其中。
+   */
   inline void note_end_of_copying(bool during_initial_mark);
 
   // Notify the region that we are about to start processing

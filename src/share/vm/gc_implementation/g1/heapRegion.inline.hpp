@@ -206,11 +206,19 @@ inline HeapWord* HeapRegion::allocate_no_bot_updates(size_t word_size) {
   return allocate_impl(word_size, end());
 }
 
+/**
+ *
+ * 在NoteStartOfMarkHRClosure中被调用，发生在初始标记开始的时候，
+ *      设置_next_top_at_mark_start的地址为当前的分配位置,随后，top就一直往前移动，但是_next_top_at_mark_start保持不变
+ */
 inline void HeapRegion::note_start_of_marking() {
   _next_marked_bytes = 0;
   _next_top_at_mark_start = top();
 }
 
+/**
+ * 在 G1NoteEndOfConcMarkClosure的do_heap 方法中调用，发生在并发标记结束以后，用来交换ptams 和 ntams
+ */
 inline void HeapRegion::note_end_of_marking() {
   _prev_top_at_mark_start = _next_top_at_mark_start;
   _prev_marked_bytes = _next_marked_bytes;
@@ -221,11 +229,18 @@ inline void HeapRegion::note_end_of_marking() {
          HeapWordSize, "invariant");
 }
 
+/**
+ 通知该区域它将在 GC 期间用作目标空间，并且我们即将开始将对象复制到其中。
+ * 在方法 G1CollectedHeap::retire_gc_alloc_region和 G1Allocator::reuse_retained_old_region 中调用，
+ * 因此只用于survivor 和 old region开始进行拷贝时候的调用
+ * 当这个region刚刚被分配出来，准备用来存放数据的时候调用
+ * @param during_initial_mark
+ */
 inline void HeapRegion::note_start_of_copying(bool during_initial_mark) {
-  if (is_survivor()) {
+  if (is_survivor()) { // 如果是survivor区域，那么_next_top_at_mark_start等于bottom
     // This is how we always allocate survivors.
     assert(_next_top_at_mark_start == bottom(), "invariant");
-  } else {
+  } else { // 如果是old区域
     if (during_initial_mark) {
       // During initial-mark we'll explicitly mark any objects on old
       // regions that are pointed to by roots. Given that explicit
@@ -234,8 +249,14 @@ inline void HeapRegion::note_start_of_copying(bool during_initial_mark) {
       // know where the top of this region will end up, we simply set
       // NTAMS to the end of the region so all marks will be below
       // NTAMS. We'll set it to the actual top when we retire this region.
+      /**
+       * 在initial-mark期间，我们将明确标记根指向的旧区域上的任何对象。
+       * 鉴于显式标记仅在 NTAMS 下才有意义，如果我们愿意的话，如果我们能够检查该条件，那就太好了。
+       * 鉴于当前开始进行复制，我们不知道该区域的顶部将在哪里结束，我们只需将 NTAMS 设置为该区域的末尾，以便所有标记都将低于 NTAMS。
+       * 当我们退出该区域时，我们会将其设置为实际顶部，即更新为NTAMS当前的真实的top。
+       */
       _next_top_at_mark_start = end();
-    } else {
+    } else { // 当前不是在初始标记阶段，但是可能处于并发标记阶段
       // We could have re-used this old region as to-space over a
       // couple of GCs since the start of the concurrent marking
       // cycle. This means that [bottom,NTAMS) will contain objects
@@ -246,17 +267,29 @@ inline void HeapRegion::note_start_of_copying(bool during_initial_mark) {
   }
 }
 
+/**
+ * 通知这个region 它已经不会再在GC操作过程中作为一个目标region进行数据拷贝，并且我们将不再将对象复制到其中。
+ * 在方法 G1CollectedHeap::retire_gc_alloc_region中调用，因此只用于survivor和old region的拷贝结束时的调用
+ * @param during_initial_mark
+ */
 inline void HeapRegion::note_end_of_copying(bool during_initial_mark) {
-  if (is_survivor()) {
+    /**
+     * 如果是survivor区域，由于对象根本不会在这里直接分配，都是从eden区域转移过来的，
+     *  因此survivor区域的_next_top_at_mark_start等于bottom()是一个恒定值
+     */
+  if (is_survivor()) { //
     // This is how we always allocate survivors.
     assert(_next_top_at_mark_start == bottom(), "invariant");
-  } else {
+  } else { //  对于old区域
     if (during_initial_mark) {
       // See the comment for note_start_of_copying() for the details
       // on this.
       assert(_next_top_at_mark_start == end(), "pre-condition");
+      /**
+       * 对于old区域，当前复制结束了，top的位置已经知道了，因此可以将_next_top_at_mark_start更新为当前的top的位置
+       */
       _next_top_at_mark_start = top();
-    } else {
+    } else { // 当前不是在初始标记阶段，但是可能处于并发标记阶段
       // See the comment for note_start_of_copying() for the details
       // on this.
       assert(top() >= _next_top_at_mark_start, "invariant");

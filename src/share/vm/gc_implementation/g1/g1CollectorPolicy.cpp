@@ -1556,8 +1556,10 @@ bool G1CollectorPolicy::force_initial_mark_if_outside_cycle(
   }
 }
 
-// 决定是否进入一个新的标记cycle，如果是，那么，就设置_during_initial_mark_pause=true，
-// 这样，在一次evacuation pause中，就会借道进行一次初始标记暂停
+/**
+ * 这个方法在 do_collection_pause_at_safepoint开始的时候调用，即开始进行evacuation pause的时候，会调用这个方法，决定在转移暂停以后，是否进行初始标记暂停
+ * 即决定是否进入一个新的标记cycle，如果是，那么，就设置_during_initial_mark_pause=true，这样，在一次evacuation pause中，就会借道进行一次初始标记暂停
+ */
 void
 G1CollectorPolicy::decide_on_conc_mark_initiation() {
   // We are about to decide on whether this pause will be an
@@ -1592,7 +1594,10 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
 
       // And we can now clear initiate_conc_mark_if_possible() as
       // we've already acted on it.
-      clear_initiate_conc_mark_if_possible(); // 已经设置了during_initial_mark_pause，这个变量的本次使命完成，重新设置为false,直到比如evacuation pause结束以后发现需要进行gc，或者目前分配了大对象
+      /**
+       * 已经设置了during_initial_mark_pause，这个变量的本次使命完成，重新设置为false,直到比如evacuation pause结束以后发现需要进行gc，或者目前分配了大对象
+       */
+      clear_initiate_conc_mark_if_possible();
 
       ergo_verbose0(ErgoConcCycles,
                   "initiate concurrent cycle",

@@ -219,6 +219,9 @@ inline HeapWord* G1CollectedHeap::survivor_attempt_allocation(size_t word_size,
           ->attempt_allocation(word_size,false /* bot_updates */); // 搜索 G1AllocRegion::attempt_allocation 查看具体实现
   if (result == NULL) {
     MutexLockerEx x(FreeList_lock, Mutex::_no_safepoint_check_flag);
+    /**
+     * 由于是在年轻代进行分配，因此不需要update bot
+     */
     result = _allocator->survivor_gc_alloc_region(context)->attempt_allocation_locked(word_size,
                                                                                       false /* bot_updates */);
   }
@@ -315,6 +318,10 @@ void G1CollectedHeap::register_humongous_region_with_in_cset_fast_test(uint inde
 #ifndef PRODUCT
 // Support for G1EvacuationFailureALot
 
+/**
+ * 根据传入的参数逐个检查是否在指定的GC类型期间启用了EFL策略。
+ * 如果传入的参数指示某个阶段需要启用EFL策略，就将相应的EFL标志位设置为true。最后，函数返回res，表示是否启用了EFL策略。
+ */
 inline bool
 G1CollectedHeap::evacuation_failure_alot_for_gc_type(bool gcs_are_young,
                                                      bool during_initial_mark,
@@ -326,6 +333,9 @@ G1CollectedHeap::evacuation_failure_alot_for_gc_type(bool gcs_are_young,
   if (during_initial_mark) {
     res |= G1EvacuationFailureALotDuringInitialMark;
   }
+  /**
+   *  下面的是一个if/else clause
+   */
   if (gcs_are_young) {
     res |= G1EvacuationFailureALotDuringYoungGC;
   } else {
@@ -335,25 +345,43 @@ G1CollectedHeap::evacuation_failure_alot_for_gc_type(bool gcs_are_young,
   return res;
 }
 
+/**
+ * 调用者是 G1CollectedHeap::do_collection_pause_at_safepoint -> G1CollectedHeap::evacuate_collection_set
+ * 所以这个方法只是在young/mix gc调用开始的时候会调用，用来根据当前总的gc次数设置_evacuation_failure_alot_for_current_gc
+ *   而在方法 G1CollectedHeap::evacuation_should_fail() 中会判断是否应该fail掉这个evacuation
+ */
 inline void
 G1CollectedHeap::set_evacuation_failure_alot_for_current_gc() {
-  if (G1EvacuationFailureALot) {
+  if (G1EvacuationFailureALot) { // 如果当前jvm设置了G1EvacuationFailureALot
     // Note we can't assert that _evacuation_failure_alot_for_current_gc
     // is clear here. It may have been set during a previous GC but that GC
     // did not copy enough objects (i.e. G1EvacuationFailureALotCount) to
     // trigger an evacuation failure and clear the flags and and counts.
 
     // Check if we have gone over the interval.
-    const size_t gc_num = total_collections();
-    const size_t elapsed_gcs = gc_num - _evacuation_failure_alot_gc_number;
+    /**
+     * 搜 increment_total_collections 查看_tocal_collections的增加过程,在进行young/mix gc或者full gc的时候都会调用这个方法
+     */
+    const size_t gc_num = total_collections(); // 统计整个gc次数(包括young gc和full gc)
+    /**
+     * _evacuation_failure_alot_gc_number记录的是本地full gc开始的时候的total_collections()
+     * 因此elapsed_gcs代表这个interval之间发生的gc的次数
+     */
 
+    const size_t elapsed_gcs = gc_num - _evacuation_failure_alot_gc_number;
+    /**
+     * 判断在这个interval中间发生的gc次数是否大于配置的 G1EvacuationFailureALotInterval
+     */
     _evacuation_failure_alot_for_current_gc = (elapsed_gcs >= G1EvacuationFailureALotInterval);
 
     // Now check if G1EvacuationFailureALot is enabled for the current GC type.
     const bool gcs_are_young = g1_policy()->gcs_are_young();
     const bool during_im = g1_policy()->during_initial_mark_pause();
     const bool during_marking = mark_in_progress();
-
+    /**
+     * 最终的_evacuation_failure_alot_for_current_gc 还取决于evacuation_failure_alot_for_gc_type的计算值
+     * 即根据当前的标记状态(初始标记还是并发标记)，以及gc类型(young还是mix),和用户配置的各种状态下是否需要enable EFL，来决定是否可以对当前的gc enable EFL
+     */
     _evacuation_failure_alot_for_current_gc &=
       evacuation_failure_alot_for_gc_type(gcs_are_young,
                                           during_im,
@@ -361,6 +389,10 @@ G1CollectedHeap::set_evacuation_failure_alot_for_current_gc() {
   }
 }
 
+/**
+ *  在 copy_to_survivor_space 中调用
+ * @return
+ */
 inline bool G1CollectedHeap::evacuation_should_fail() {
   if (!G1EvacuationFailureALot || !_evacuation_failure_alot_for_current_gc) {
     return false;
@@ -368,9 +400,17 @@ inline bool G1CollectedHeap::evacuation_should_fail() {
   // G1EvacuationFailureALot is in effect for current GC
   // Access to _evacuation_failure_alot_count is not atomic;
   // the value does not have to be exact.
+  /**
+   * 执行到这里，意味着G1EvacuationFailureALot = true，并且 _evacuation_failure_alot_for_current_gc = true
+   * 即用户配置了着G1EvacuationFailureALot，同时_evacuation_failure_alot_for_current_gc意味着G1EvacuationFailureALot在本轮gc中应该生效
+   *
+   */
   if (++_evacuation_failure_alot_count < G1EvacuationFailureALotCount) {
-    return false;
+    return false; // 次数还没达到，先不进行fail
   }
+  /**
+   * 次数达到，重置_evacuation_failure_alot_count，返回true
+   */
   _evacuation_failure_alot_count = 0;
   return true;
 }

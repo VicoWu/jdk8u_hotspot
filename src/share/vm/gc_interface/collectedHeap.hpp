@@ -493,7 +493,11 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Increment total number of GC collections (started)
   // Should be protected but used by PSMarkSweep - cleanup for 1.4.2
-  void increment_total_collections(bool full = false) { // 在G1CollectedHeap::do_collection 和 G1CollectedHeap::do_collection_pause_at_safepoint中被调用
+  /**
+   * 在G1CollectedHeap::do_collection 和 G1CollectedHeap::do_collection_pause_at_safepoint中被调用
+   * 通过参数full来指定是full gc还是非full gc，默认为 非full gc
+   */
+  void increment_total_collections(bool full = false) { //
     _total_collections++;
     if (full) {
       increment_total_full_collections();
