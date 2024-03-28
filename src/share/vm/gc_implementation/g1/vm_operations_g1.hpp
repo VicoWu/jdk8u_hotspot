@@ -82,6 +82,9 @@ public:
   }
 };
 
+/**
+ * 这个类不会负责full gc，full gc 是由VM_G1CollectFull负责的。通过父类 VM_GC_Operation的构造参数的搜素可以看出来，通过_full来表示
+ */
 class VM_G1IncCollectionPause: public VM_G1OperationWithAllocRequest {
 private:
     /**

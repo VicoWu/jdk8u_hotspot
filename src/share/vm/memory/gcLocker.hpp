@@ -117,7 +117,10 @@ class GC_locker: public AllStatic {
     // Use is_active_internal since _needs_gc can change from true to
     // false outside of a safepoint, triggering the assert in
     // is_active.
-    return needs_gc() // 在方法check_active_before_gc()中设置为true，说明有线程请求了gc，但是发现is_active为true，因此设置了needs_gc =true，然后放弃回收
+    /**
+     * 在方法check_active_before_gc()中设置为true，说明有线程请求了gc，但是发现is_active为true，因此设置了needs_gc =true，然后放弃回收
+     */
+    return needs_gc() //
       && is_active_internal();
   }
 

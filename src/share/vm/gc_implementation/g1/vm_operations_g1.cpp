@@ -92,8 +92,13 @@ bool VM_G1IncCollectionPause::doit_prologue() {
    * 其实是调用 VM_GC_Operation::doit_prologue()，做的事情主要是判断在构造VM_G1IncCollectionPause的事后到现在
    * 准备执行的时候，是否已经进行过其他的gc，从而避免重复gc操作
    */
-
   bool res = VM_G1OperationWithAllocRequest::doit_prologue();
+  /**
+   * 父类告知不需要进行重复gc，那么就返回false，但是返回的时候将VM_G1IncCollectionPause的_should_retry_gc设置为true，
+   *    这样G1CollectedHeap::collect方法中的循环就会继续尝试判断，否则，就不尝试进行gc重试，返回false
+   * 父类告知需要进行gc，就返回true，接着会调用doit
+   *
+   */
   if (!res) { // 父类的VM_GC_Operation::doit_prologue()返回false，自己也会返回false，但是需要对_should_retry_gc进行一些设置
     if (_should_initiate_conc_mark) { // 用户构造VM_G1IncCollectionPause的时候，制定应该初始化_should_initiate_conc_mark
       // The prologue can fail for a couple of reasons. The first is that another GC
@@ -104,8 +109,8 @@ bool VM_G1IncCollectionPause::doit_prologue() {
       // until the GC locker is no longer active and then retry the initial mark GC.
       /**
        * doit_prologue()可能会因为几个原因而失败，返回false。
-       * 第一个是另一个GC被调度并且阻止了初始标记GC的调度。
-       * 第二个是GC locker可能处于活动状态并且堆无法扩展。
+       *    第一个是另一个GC被调度并且阻止了初始标记GC的调度。
+       *    第二个是GC locker可能处于活动状态并且堆无法扩展。
        * 在这两种情况下，我们都希望重试 GC，以便实际安排初始标记暂停。
        * 然而，在第二种情况下，我们应该停止直到 GC 锁不再处于活动状态，然后重试初始标记 GC。
        */
@@ -120,6 +125,7 @@ bool VM_G1IncCollectionPause::doit_prologue() {
 }
 /**
  * 在 G1CollectedHeap::collect中调用
+ * 这里会在stw的环境中尝试进行分配，如果分配失败，就在stw的环境下进行一次回收，然后再尝试进行分配
  * VM_G1IncCollectionPause是一个VM_Operation，因此是在VMThread中执行
  * 并发full gc的操作类，所以需要跟VM_G1CollectForAllocation::doit()区别开
  * 这个方法属于g1CollectedHeap的下层，即被比如g1CollectedHeap::collect调用，调用者通过_pause_succeeded判断这次的转移是否成功，从而决定是否进行重试
@@ -135,6 +141,9 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
     // An allocation has been requested. So, try to do that first.
     /**
      * 由于VM_G1IncCollectionPause是VM_Operation，因此肯定是在safepoint中执行的
+     * 区别 do_collection_pause_at_safepoint。
+     * attempt_allocation_at_safepoint是尝试在VM_G1IncCollectionPause中进行分配，
+     * do_collection_pause_at_safepoint是尝试在VM_G1IncCollectionPause中进行回收和初始标记
      */
     _result = g1h->attempt_allocation_at_safepoint(_word_size, allocation_context(),
                                      false /* expect_null_cur_alloc_region */);
@@ -160,7 +169,11 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
 
     // At this point we are supposed to start a concurrent cycle. We
     // will do so if one is not already in progress.
-    // 只要当前不在一个cycle中，就强制设置_initiate_conc_mark_if_possible=true
+    /**
+   * G1CollectorPolicy的成员方法
+   * 如果我们不处于一个并发标记的cycle中，那么设置G1CollectorPolicy的成员变量_initiate_conc_mark_if_possible为true，返回true
+   * 否则，如果当前已经处于一个并发标记cycle中，返回false
+     */
     bool res = g1h->g1_policy()->force_initial_mark_if_outside_cycle(_gc_cause);
 
     // The above routine returns true if we were able to force the
@@ -182,29 +195,40 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
     // just started marking cycle is complete - which may be a while. So
     // we do NOT retry the GC.
     /**
-      如果上面的代码成功地将_initiate_conc_mark_if_possible设置为true，那么res的值为 true；如果标记周期已在进行中，则返回 false。
+      如果上面的代码成功地将_initiate_conc_mark_if_possible设置为true，那么res的值为 true,这时候会继续下面的暂停
+      如果标记周期已在进行中，则返回 false。在返回false的情况下，不会进行下面的标记暂停，但是这时候会通过_should_retry_gc告诉上面的调用者是否进行重试
 
       如果标记周期已经在进行中即res=false，只需返回并跳过下面的暂停
       如果请求此初始标记暂停的原因是由于 System.gc()，则请求线程应阻塞在 doit_epilogue() 中，直到标记周期完成。
 
       如果这个初始标记暂停是作为巨大分配的一部分请求的，那么我们知道标记周期一定是由另一个线程（可能也分配了一个巨大对象）启动的，
-      因为当请求线程在调用之前检查时没有活动的标记周期 try_allocation_humongous() 中的collect()。
+      因为当请求线程在调用collect()之前检查时没有活动的标记周期 try_allocation_humongous() 中的collect()。
       在这种情况下，重试GC将导致请求线程在collect()内部旋转，直到刚刚开始的标记周期完成——这可能需要一段时间。
       所以我们不会重试 GC。
    */
     if (!res) {  // 当前正处于一个cycle中，那么将跳过下面的转移暂停evacuation pause
       assert(_word_size == 0, "Concurrent Full GC/Humongous Object IM shouldn't be allocating");
-      if (_gc_cause != GCCause::_g1_humongous_allocation) {
+      if (_gc_cause != GCCause::_g1_humongous_allocation) { // 基于大对象分配所进行的收集，不进行尝试
         _should_retry_gc = true;
       }
       return; // 直接返回，不再尝试下面的gc，这时候，_pause_succeeded=false，并没有被置为true
     }
   }
 
-  // 尝试进行增量的回收暂停。执行线程必须是vm_thread
+  /**
+   * 调用实例方法 G1CollectedHeap::do_collection_pause_at_safepoint
+   * 执行到这里，说明_should_initiate_conc_mark==false，或者_should_initiate_conc_mark=true，并且通过检查，发现当前的确不处于一个并发标记的cycle，
+   * 尝试进行增量的回收暂停。执行线程必须是vm_thread
+   *      attempt_allocation_at_safepoint是尝试在VM_G1IncCollectionPause中进行分配，
+   *      do_collection_pause_at_safepoint是尝试在VM_G1IncCollectionPause中进行回收和初始标记
+   **/
   _pause_succeeded =
     g1h->do_collection_pause_at_safepoint(_target_pause_time_ms);
-  if (_pause_succeeded && _word_size > 0) { // 如果成功地进行了一次回收，并且当前正在申请分配空间，那么，立刻进行一次分配
+  /**
+   * 如果成功地进行了一次回收，并且当前正在申请分配空间，那么，立刻进行一次分配
+   * 如果回收本身是失败的 ，那么根本不会再尝试进行分配
+   */
+  if (_pause_succeeded && _word_size > 0) { //
     // An allocation had been requested.
     _result = g1h->attempt_allocation_at_safepoint(_word_size, allocation_context(),
                                       true /* expect_null_cur_alloc_region */);

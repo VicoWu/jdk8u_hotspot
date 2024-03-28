@@ -833,7 +833,11 @@ protected:
   // The guts of the incremental collection pause, executed by the vm
   // thread. It returns false if it is unable to do the collection due
   // to the GC locker being active, true otherwise
-  // 增量的回收暂停，必须是vm_trhread执行
+  /**
+   * 增量的回收暂停，必须是vm_trhread执行
+   * 如果当前处于临界区，无法进行回收，那么返回false，否则，进行回收，返回true
+   */
+
   bool do_collection_pause_at_safepoint(double target_pause_time_ms);
 
   // Actually do the work of evacuating the collection set.

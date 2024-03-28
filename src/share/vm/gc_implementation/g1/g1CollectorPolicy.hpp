@@ -804,7 +804,8 @@ public:
   // is called during a safepoint when the test whether a cycle is in
   // progress or not is stable.
   /**
-   * 如果我们不处于一个并发标记的cycle中，那么设置_initiate_conc_mark_if_possible为true，返回true
+   * G1CollectorPolicy的成员方法
+   * 如果我们不处于一个并发标记的cycle中，那么设置G1CollectorPolicy的成员变量_initiate_conc_mark_if_possible为true，返回true
    * 否则，如果当前已经处于一个并发标记cycle中，返回false
    */
   bool force_initial_mark_if_outside_cycle(GCCause::Cause gc_cause);
@@ -816,6 +817,7 @@ public:
   // it will set during_initial_mark_pause() to so that the pause does
   // the initial-mark work and start a marking cycle.
   /**
+   *  G1CollectorPolicy的成员方法
    * 这个方法在转移暂停开始的时候被调用，如果上一轮的并发标记已经结束，
    * 并且_initiate_conc_mark_if_possible是true，
    * 那么_during_initial_mark_pause就会被设置为True，这样，就可以开始一个新的标记轮回

@@ -967,7 +967,7 @@ bool G1CollectorPolicy::need_to_start_conc_mark(const char* source, size_t alloc
   size_t cur_used_bytes = _g1->non_young_capacity_bytes();
   size_t alloc_byte_size = alloc_word_size * HeapWordSize;
 
-  // 如果当前使用的数据字节数再加上新分配的对象的字节数，大于InitiatingHeapOccupancyPercent
+  // 如果当前使用的数据字节数再加上新分配的对象的字节数，大于 InitiatingHeapOccupancyPercent
   if ((cur_used_bytes + alloc_byte_size) > marking_initiating_used_threshold) {
     //  _last_young_gc在record_concurrent_mark_cleanup_completed中设置为true，这里的意思是，并发标记结束了，然后young gc又将这个值设置为了false，防止连续进行两次并发标记，导致第二次并发标记没有任何意义
     if (gcs_are_young() && !_last_young_gc) { // 如果我们当前正处在young gc 阶段(mixed gc阶段不允许进行concurrent mark阶段)，并且不是_last_young_gc，那么就开始进行并发标记.
@@ -1533,7 +1533,9 @@ void G1CollectorPolicy::update_survivors_policy() {
         HeapRegion::GrainWords * _max_survivor_regions);
 }
 /**
- * 如果并发标记进行中，就返回false，如果不是进行中，那么就设置_initiate_conc_mark_if_possible
+ * G1CollectorPolicy的成员方法
+ * 如果并发标记进行中，就返回false，
+ * 如果不是进行中，那么就设置_initiate_conc_mark_if_possible
  */
 bool G1CollectorPolicy::force_initial_mark_if_outside_cycle(
                                                      GCCause::Cause gc_cause) {
@@ -1557,7 +1559,7 @@ bool G1CollectorPolicy::force_initial_mark_if_outside_cycle(
 }
 
 /**
- * 这个方法在 do_collection_pause_at_safepoint开始的时候调用，即开始进行evacuation pause的时候，会调用这个方法，决定在转移暂停以后，是否进行初始标记暂停
+ * 这个方法在 do_collection_pause_at_safepoint 开始的时候调用，即开始进行evacuation pause的时候，会调用这个方法，决定在转移暂停以后，是否进行初始标记暂停
  * 即决定是否进入一个新的标记cycle，如果是，那么，就设置_during_initial_mark_pause=true，这样，在一次evacuation pause中，就会借道进行一次初始标记暂停
  */
 void
@@ -1585,7 +1587,7 @@ G1CollectorPolicy::decide_on_conc_mark_initiation() {
       // 这里设置during_initial_mark_pause为true,那么在do_collection_pause_at_safepoint()中的最后，即完成了初始标记pause以后，就会通知并发标记线程开始进行并发标记
       set_during_initial_mark_pause(); // 设置_during_initial_mark_pause为true，代表正在进行初始标记暂停，那么待会儿在暂停的时候就会借道进行初始标记
       // We do not allow mixed GCs during marking.
-      if (!gcs_are_young()) { // 标记阶段不允许mixed gc
+      if (!gcs_are_young()) { // 初始标记阶段不允许mixed gc
         set_gcs_are_young(true); // 标记当前状态为young gc
         ergo_verbose0(ErgoMixedGCs,
                       "end mixed GCs",

@@ -1196,7 +1196,8 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
 }
 
 /**
- * 必须处于safepoint才能调用这个方法，即这个方法调用是STW的,调用线程必须是STW的, 方法是在VM_G1IncCollectionPause这个VM_Operation中执行的，肯定是STW的
+ * 必须处于safepoint才能调用这个方法，即这个方法调用是STW的,调用线程必须是STW的, 方
+ *  法是在VM_G1IncCollectionPause这个VM_Operation中执行的，肯定是STW的
 **/
 HeapWord* G1CollectedHeap::attempt_allocation_at_safepoint(size_t word_size,
                                                            AllocationContext_t context,
@@ -1329,18 +1330,19 @@ void G1CollectedHeap::print_hrm_post_compaction() {
 /**
  * full gc
  * 这个方法要求调用线程必须是vm_thread
- * 这个方法主要是在G1CollectedHeap::satisfy_failed_allocation()中和G1CollectedHeap::do_full_collection中调用的
+ * 这个方法主要是在G1CollectedHeap::satisfy_failed_allocation()(在VM_G1CollectForAllocation这个VM_Operation中) 中和G1CollectedHeap::do_full_collection（在VM_G1CollectFull这个VM_Operation中调用） 中调用的
  * 在G1CollectedHeap::satisfy_failed_allocation()中，explicit_gc都为false，表示这次gc的触发并不是一个规律的显式调度触发，而是由于分配失败导致的，因此wordsize不等于0;
  *    因此，在gc完成以后重新resize内存的时候，会考虑这个wordsize(但是看resize_if_necessary_after_full_collection()代码，虽然传入参数wordsize，却似乎没有用到wordsize)，
  *    两次尝试调用satisfy_failed_allocation()中，clear_all_soft_refs第一次先为false，第二次则为true
  * 在G1CollectedHeap::do_full_collection()中，explicit_gc都为true,表示这是为了gc而gc，而不是某次分配失败导致的gc
  *
- * 从代码来看，do_collection()就是进行的STW的full gc， 而G1CollectedHeap::do_collection_pause_at_safepoint并不是full gc，虽然也是在safepoint执行的
+ * 从代码来看，do_collection()就是进行的STW的full gc，
+ *  而G1CollectedHeap::do_collection_pause_at_safepoint并不是full gc，虽然也是在safepoint执行的
  * @param explicit_gc
  * @param clear_all_soft_refs
  * @param word_size
  * @return
- */
+ **/
 bool G1CollectedHeap::do_collection(bool explicit_gc,
                                     bool clear_all_soft_refs,
                                     size_t word_size) {
@@ -1403,6 +1405,9 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
 
       gc_prologue(true);
       increment_total_collections(true /* full gc */); // full gc计数器加1
+        /**
+         * full gc和初始标记暂停的时候，都会增加_old_marking_cycles_started的值，标记初始标记和full gc的次数
+         */
       increment_old_marking_cycles_started();
 
       assert(used() == recalculate_used(), "Should be equal");
@@ -1742,7 +1747,7 @@ resize_if_necessary_after_full_collection(size_t word_size) {
 
 
 /**
- * 这个方法专门处理来自 VM_G1CollectForAllocation doit()操作的回调,要求调用线程必须是vm_thread
+ * 这个方法专门处理来自 VM_G1CollectForAllocation doit()操作的回调,要求调用线程必须是vm_thread，因此是STW的
  * 该函数会执行所有必要/可能的操作来满足失败的分配请求（包括垃圾收集、内存扩展等）
  * @param word_size
  * @param context
@@ -2479,9 +2484,18 @@ size_t G1CollectedHeap::recalculate_used() const {
 // 查看 const char* GCCause::to_string(GCCause::Cause cause)获取各个cause的含义
 bool G1CollectedHeap::should_do_concurrent_full_gc(GCCause::Cause cause) {
   switch (cause) {
-    case GCCause::_gc_locker:               return GCLockerInvokesConcurrent; //  gcInvoker触发的gc，根据配置，返回GCLockerInvokesConcurrent，默认false
-    case GCCause::_java_lang_system_gc:     return ExplicitGCInvokesConcurrent; //用户显式调用System.gc，根据配置，返回ExplicitGCInvokesConcurrent，默认false
-    case GCCause::_g1_humongous_allocation: return true; // 大对象分配失败，使用并发full gc进行处理
+      /**
+       * 临界区线程清空导致的gc，gcInvoker触发的gc，根据配置，返回GCLockerInvokesConcurrent，默认false
+       */
+    case GCCause::_gc_locker:               return GCLockerInvokesConcurrent; //
+    /**
+     * 用户显式调用System.gc，根据配置，返回ExplicitGCInvokesConcurrent，默认false
+     */
+    case GCCause::_java_lang_system_gc:     return ExplicitGCInvokesConcurrent; //
+    /**
+     * 大对象分配失败，使用并发full gc进行处理
+     */
+    case GCCause::_g1_humongous_allocation: return true; //
     case GCCause::_update_allocation_context_stats_inc: return true;
     case GCCause::_wb_conc_mark:            return true;
     default:                                return false;
@@ -2623,15 +2637,18 @@ G1YCType G1CollectedHeap::yc_type() {
 }
 
 /**
+ *  这个方法是最上层的触发垃圾回收的方法
+ *
  *  在这个方法里，
  *     1. 如果，用户执行了System.gc()，就会调用这个方法,参数中的gc_cause是 GCCause::_java_lang_system_gc
- *     2. 同时，在分配对象的时候导致的分配失败，也会触发这个方法的执行，比如attempt_allocation_humongous()中, 即分配大对象的时候，分配以前就会检查是否需要进行回收
+ *     2. 同时，在分配对象的时候导致的分配失败，也会触发这个方法的执行，比如 attempt_allocation_humongous()中, 即分配大对象的时候，分配以前就会检查是否需要进行回收
  *     3. 同时, GCLocker在离开关键区的时候，也会经过条件判断，尝试调用collect()
- *  从satisfy_failed_allocation()方法可以看到，一次分配失败导致的gc是不会调用到这里的，因为按照目前的设计，一次分配失败导致的gc的首先尝试是扩展内存，如果扩展内存都失败，直接full gc
+ *  从satisfy_failed_allocation()方法可以看到，一次分配失败导致的gc是不会调用到这里的，因为按照目前的设计，
+ *      一次分配失败导致的gc的首先尝试是扩展内存，如果扩展内存都失败，直接full gc
  *  所以在进行回收的时候尽管是调用VMThread，但是很可能是用户线程在调用，但是进行回收的VMOperation是被VMThread执行的
  *  真正的gc操作是委托给对应的VM_GC_Operation的实现类，然后在不同的线程中同步或者异步执行，比如VM_G1IncCollectionPause，VM_G1CollectFull
  * @param cause
- */
+ **/
 void G1CollectedHeap::collect(GCCause::Cause cause) {
   assert_heap_not_locked();
 
@@ -2649,15 +2666,24 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
       // Read the GC count while holding the Heap_lock
       gc_count_before = total_collections();
       full_gc_count_before = total_full_collections();
-      old_marking_count_before = _old_marking_cycles_started;
+      old_marking_count_before = _old_marking_cycles_started;// 暂时保存当前的G1CollectedHeap中的_old_marking_cycles_started
     }
-    // 根据gc cause的不同，确定是否需要进行需要进行并发标记的并发full gc
-    // 如果是用户调用system.gc，这里默认其实返回false
+    /**
+     * 根据gc cause的不同，确定是否需要进行需要进行并发标记的并发full gc
+     * 如果是用户调用system.gc，或者是刚离开关键区，并且用户通过
+     *      GCLockerInvokesConcurrent或者ExplicitGCInvokesConcurrent表示都希望在这种情况下触发初始标记，那么就构造一个需要进行初始标记的gc pause
+     * 如果返回true，比如回收的原因是当前分配了大对象，那么就调度一次顺道进行初始标记的gc
+     * 由于是并发的，所以必须有初始标记
+     */
     if (should_do_concurrent_full_gc(cause)) {
       // Schedule an initial-mark evacuation pause that will start a
       // concurrent cycle. We're setting word_size to 0 which means that
       // we are not requesting a post-GC allocation.
-      // 调度一个初始标记暂停，我们设置word_size=0，因为我们不需要在gc结束以后进行一次分配,因为这是由于GcLocker的临界区结束导致的
+      /**
+       * 调度一个初始标记暂停，搜索 void VM_G1IncCollectionPause::doit()
+       *  我们设置word_size=0，因为我们不需要在gc结束以后进行一次分配,因为这是由于GcLocker的临界区结束导致的
+       */
+
       VM_G1IncCollectionPause op(gc_count_before,
                                  0,     /* word_size */
                                  true,  /* should_initiate_conc_mark */ // 调度并发标记
@@ -2665,17 +2691,26 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
                                  cause);
       op.set_allocation_context(AllocationContext::current());
       // 调用VM_G1IncCollectionPause::doit()
-      VMThread::execute(&op);
-      if (!op.pause_succeeded()) { // 这一次的回收没有成功，查看VM_G1IncCollectionPause的doit()方法
+      VMThread::execute(&op); // 由于是vm thread，因此会stw
+      /**
+       * 这一次的回收没有成功，查看void VM_G1IncCollectionPause::doit()方法
+       */
+      if (!op.pause_succeeded()) {
+          /**
+           * _old_marking_cycles_started 没有发生变化，搜索方法G1CollectedHeap的成员方法 increment_old_marking_cycles_started
+           */
         if (old_marking_count_before == _old_marking_cycles_started) {
-          retry_gc = op.should_retry_gc();
+          retry_gc = op.should_retry_gc(); // 读取op的_should_retry标记，获取是否需要重试，在while循环中会判断retry_gc
         } else {
+            /***
+             *  _old_marking_cycles_started已经发生了变化，说明刚刚发生了一次full gc不用重试了
+             */
           // A Full GC happened while we were trying to schedule the
           // initial-mark GC. No point in starting a new cycle given
           // that the whole heap was collected anyway.
         }
 
-        if (retry_gc) {
+        if (retry_gc) { // 如果需要
           if (GC_locker::is_active_and_needs_gc()) {
             GC_locker::stall_until_clear();
           }
@@ -2689,13 +2724,14 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
       // request is processed.  _gc_locker collections upgraded by
       // GCLockerInvokesConcurrent are handled above and never discarded.
       return;
-    } else { // 进行并发的、不带有初始标记的gc
+    } else { // 进行并发的、单纯的不带有初始标记的gc，一般_gc_locker情况下，只要不是配置GCLockerInvokesConcurrent，
+        // 就仅仅触发一次gc pause，即目标是进行资源的回收，不进行初始标记的任何处理
       if (cause == GCCause::_gc_locker || cause == GCCause::_wb_young_gc
           DEBUG_ONLY(|| cause == GCCause::_scavenge_alot)) {
 
         // Schedule a standard evacuation pause. We're setting word_size
         // to 0 which means that we are not requesting a post-GC allocation.
-        // 启动一个增量并发gc，并且不需要进行初始标记暂停
+        // 启动一个增量并发gc暂停，并且不需要进行初始标记暂停
         VM_G1IncCollectionPause op(gc_count_before,
                                    0,     /* word_size */
                                    false, /* should_initiate_conc_mark */  // 不调度并发标记
@@ -3811,7 +3847,13 @@ void G1CollectedHeap::gc_epilogue(bool full) {
 }
 
 /**
- * 一次转移操作，需要safepoint
+ * 一次转移操作，需要通过VM_G1IncCollectionPause进行safepoint下的回收
+ * 这个回收不进行初始标记借道操作
+ * 调用者是G1CollectedHeap::attempt_allocation_humongous 进行大对象回收 和 G1CollectedHeap::attempt_allocation_slow进行普通对象回收
+ * 根G1CollectedHeap::collect 方法比较,
+ * do_collection_pause 只是构造VM_G1IncCollectionPause，不进行并发标记
+ *   collect()方法中的cause有很多，比如在 attempt_allocation_humongous，
+ *      或者用户的显式gc，或者离开关键区等，会根据不同的参数进行不同的回收，会判断是否进行初始标记，可能构造 VM_G1IncCollectionPause，VM_G1CollectFull
  * @param word_size
  * @param gc_count_before
  * @param succeeded
@@ -3827,7 +3869,7 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
   // 仅仅是一次转移暂停，不进行初始标记暂停
   VM_G1IncCollectionPause op(gc_count_before,
                              word_size,
-                             false,
+                             false, //
                              g1_policy()->max_pause_time_ms(),
                              gc_cause);
 
@@ -4153,6 +4195,7 @@ void G1CollectedHeap::log_gc_footer(double pause_time_sec) {
 }
 
 /**
+ * 这个方法就是evacuation pause，可能会进行初始标记
  * 这个方法是在STW中执行的(因为这个方法是在 VM_G1IncCollectionPause 中执行的， 而VM_G1IncCollectionPause是一个 VM_Operation)，可能会借道进行初始标记
  * 这是非full gc
  * 进行某种STW的safepoint暂停。这个STW可能是初始标记导致的，也可能是gc导致的
@@ -4167,7 +4210,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   assert_at_safepoint(true /* should_be_vm_thread */); // 搜索 #define assert_at_safepoint
   guarantee(!is_gc_active(), "collection is not reentrant");
   // 将_needs_gc设置为true，同时返回is_active()的结果
-  // 当前有现成处于临界区，直接放弃gc。在临界区状态结束以后，会重新立刻调度gc
+  // 当前有现成处于Critical Zone，直接放弃gc。在临界区状态结束以后，会重新立刻调度gc
   if (GC_locker::check_active_before_gc()) {
     return false;
   }
@@ -4188,9 +4231,12 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // This call will decide whether this pause is an initial-mark
   // pause. If it is, during_initial_mark_pause() will return true
   // for the duration of this pause.
-  /**
-   * 先决定是否进行并发标记，决定的结果保存在如果_during_initial_mark_pause中
-   **/
+    /**
+     *  G1CollectorPolicy的成员方法
+     * 这个方法在转移暂停开始的时候被调用，如果上一轮的并发标记已经结束，
+     * 并且_initiate_conc_mark_if_possible是true，
+     * 那么_during_initial_mark_pause就会被设置为True，这样，就可以开始一个新的标记轮回
+     **/
   g1_policy()->decide_on_conc_mark_initiation();
 
   // 如果当前正在进行初始标记（g1_policy()->during_initial_mark_pause() = true），
@@ -4340,7 +4386,10 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 #endif // YOUNG_LIST_VERBOSE
 
         if (g1_policy()->during_initial_mark_pause()) {
-          concurrent_mark()->checkpointRootsInitialPre(); // 进行初始标记暂停前的准备工作，搜索 搜索ConcurrentMark::checkpointRootsInitialPre查看具体实现
+            /**
+             * 进行初始标记暂停前的准备工作，搜索 搜索ConcurrentMark::checkpointRootsInitialPre查看具体实现
+             */
+          concurrent_mark()->checkpointRootsInitialPre(); //
         }
 
 #if YOUNG_LIST_VERBOSE
@@ -4388,7 +4437,8 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 
         // Actually do the work...
         /**
-         * 进行垃圾收集，在这里会调用G1ParTask的work方法，进行根扫描，疏散等等工作，
+         * 进行垃圾收集
+         * 在这里会调用G1ParTask的work方法，进行根扫描，疏散等等工作，
          * 以及通过方法 cleanup_after_oops_into_collection_set_do进行回收失败的处理工作
          */
         evacuate_collection_set(evacuation_info);
@@ -4444,6 +4494,9 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
           // We have to do this before we notify the CM threads that
           // they can start working to make sure that all the
           // appropriate initialization is done on the CM object.
+            /**
+                * 进行初始标记暂停前的准备工作，搜索 搜索ConcurrentMark::checkpointRootsInitialPre查看具体实现
+             */
           concurrent_mark()->checkpointRootsInitialPost(); // 结束了初始标记的暂停，搜索ConcurrentMark::checkpointRootsInitialPost查看具体实现
           set_marking_started();
           // Note that we don't actually trigger the CM thread at
@@ -5107,6 +5160,11 @@ public:
 
       /**
        * 初始标记暂停只是用户线程STW了,虚拟机的Worker thread不会暂停
+       * 这时候如果发现有从根集合到老年代的引用，就会进行标记操作。这就是初始标记的处理过程。
+       * 这个G1ParTask::work()方法肯定是在方法 do_collection_pause_at_safepoint 中调用的，
+       *        调用前会有concurrent_mark()->checkpointRootsInitialPre()，
+       *        调用后会有concurrent_mark()->checkpointRootsInitialPost()的调用，形成一个完成的STW状态下初始标记的过程
+       * 在
        */
       if (_g1h->g1_policy()->during_initial_mark_pause()) { // IM GC, 即现在处于初始标记暂停阶段
           /**
