@@ -100,6 +100,7 @@ class GC_locker: public AllStatic {
   }
   /**
    * GC_locker::check_active_before_gc() 会将_needs_gc设置为true
+   * 在GC_locker::jni_unlock即退出安全区的时候中，如果发现needs_gc=true，会直接进行gc，然后设置_needs_gc=false
    * 由于这是一个静态变量，因此当一次内存分配失败之后尝试gc，检查这个变量为true，有可能是其他gc线程准备开始执行
    * @return
    */

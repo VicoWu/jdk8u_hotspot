@@ -121,6 +121,7 @@ void ConcurrentMarkThread::run() {
           gclog_or_tty->print_cr("[GC concurrent-root-region-scan-start]");
         }
         /**
+         * 需要跟 markFromRoot区别开
          * 扫描root region，这里的root region应该是survivor region，因为经过上一轮 young gc，实际上除了老年代，所有的young region的对象都进入了survivor
          * 为了弥补从直接的Java根指向老年代的情况，在G1ParCopyClosure<barrier, do_mark_object>::do_oop_work中，
          *      使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone，

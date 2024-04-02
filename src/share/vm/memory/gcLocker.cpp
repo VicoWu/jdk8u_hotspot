@@ -88,10 +88,13 @@ bool GC_locker::check_active_before_gc() {
   return is_active(); // _jni_lock_count是否大于0, is_active这个方法要求必须处于安全点
 }
 
+/**
+ * 只要当前还是needs_gc，就一直循环等待
+ */
 void GC_locker::stall_until_clear() {
   assert(!JavaThread::current()->in_critical(), "Would deadlock");
   MutexLocker   ml(JNICritical_lock);
-
+  // 如果当前的_needs_gc置位了
   if (needs_gc()) {
     if (PrintJNIGCStalls && PrintGCDetails) {
       ResourceMark rm; // JavaThread::name() allocates to convert to UTF8

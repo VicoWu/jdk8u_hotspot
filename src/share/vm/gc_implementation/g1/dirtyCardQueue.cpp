@@ -32,6 +32,13 @@
 #include "runtime/thread.inline.hpp"
 #include "utilities/workgroup.hpp"
 
+/**
+ * 搜索 DirtyCardQueueSet::iterate_closure_all_threads
+ * @param cl
+ * @param consume
+ * @param worker_i
+ * @return
+ */
 bool DirtyCardQueue::apply_closure(CardTableEntryClosure* cl,
                                    bool consume,
                                    uint worker_i) {
@@ -113,14 +120,26 @@ void DirtyCardQueueSet::handle_zero_index_for_thread(JavaThread* t) {
   t->dirty_card_queue().handle_zero_index();
 }
 
+/**
+ * push的过程，搜索 dirty_card_queue().enqueue
+ * @param cl
+ * @param consume
+ * @param worker_i
+ */
 void DirtyCardQueueSet::iterate_closure_all_threads(CardTableEntryClosure* cl,
                                                     bool consume,
                                                     uint worker_i) {
   assert(SafepointSynchronize::is_at_safepoint(), "Must be at safepoint.");
+  /**
+   * 先处理JavaThread的各自的local的DCQ
+   */
   for(JavaThread* t = Threads::first(); t; t = t->next()) {
     bool b = t->dirty_card_queue().apply_closure(cl, consume);
     guarantee(b, "Should not be interrupted.");
   }
+  /**
+   * 然后处理共享的dcq，这个共享的dcq来自于gc线程
+   */
   bool b = shared_dirty_card_queue()->apply_closure(cl,
                                                     consume,
                                                     worker_i);
@@ -221,7 +240,7 @@ apply_closure_to_completed_buffer_helper(CardTableEntryClosure* cl,
     void **buf = BufferNode::make_buffer_from_node(nd); //
     size_t index = nd->index(); // 在**buf中的索引，当前的索引位置。前面说过，往一个buf中写入数据是从 _nd一直向0写数据，所以当前的有效数据位于[index, _sz]之间
     bool b =
-            // 调用静态方法DirtyCardQueue::apply_closure_to_buffer， 对于这个buf，去apply对应的CardTableEntryClosure
+            // 调用静态方法DirtyCardQueue::apply_closure_to_buffer， 对于这个buf，去apply对应的 CardTableEntryClosure
       DirtyCardQueue::apply_closure_to_buffer(cl, buf,
                                               index, _sz,
                                               true, worker_i);
@@ -239,9 +258,10 @@ apply_closure_to_completed_buffer_helper(CardTableEntryClosure* cl,
 
 /**
  * 获取这个DCQS在stop_at位置的BufferNode，然后在这个位置apply对应的CardTableEntryClosure(具体实现类是RefineRecordRefsIntoCSCardTableEntryClosure)
- * 调用位置 查看 G1CollectedHeap::iterate_dirty_card_closure，可以看到，当前的DCQS对象是Java_Thread的全局DCQS对象，
+ * 调用位置
+ *  1. 查看 G1CollectedHeap::iterate_dirty_card_closure，可以看到，当前的DCQS对象是Java_Thread的全局DCQS对象，
  *          这时候stop_at = 0，表示处理所有， 对应的closure 是 RefineRecordRefsIntoCSCardTableEntryClosure
- * 同时Refine现成也会调用这个方法来处理DCQS,调用方法在ConcurrentG1RefineThread::run 中，
+ *  2. Refine线程也会调用这个方法来处理DCQS,调用方法在ConcurrentG1RefineThread::run 中，
  *          但是Refine现成处理的时候stop_at是green_zone，对应的closure 是 RefineCardTableEntryClosure
  * RefineRecordRefsIntoCSCardTableEntryClosure 和 RefineCardTableEntryClosure 都是CardTableEntryClosure的子类
  */

@@ -66,7 +66,8 @@ class nmethod;
 // in the concurrent marker used by G1 to filter remembered
 // sets.
 /**
- * 用来给HeapRegion将脏卡片转换成oop的闭包。 它知道如何获取G1堆以及如何使用G1使用的并发标记中的标记位图来过滤记忆集。
+ * 用来给HeapRegion将脏卡片转换成oop的闭包。
+ * 它知道如何获取G1堆以及如何使用G1使用的并发标记中的标记位图来过滤记忆集。
  */
 class HeapRegionDCTOC : public DirtyCardToOopClosure {
 private:

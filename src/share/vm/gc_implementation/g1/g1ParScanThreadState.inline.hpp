@@ -55,7 +55,7 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
   // than one thread might claim the same card. So the same card may be
   // processed multiple times. So redo this check.
   const InCSetState in_cset_state = _g1h->in_cset_state(obj); //  这个对象在回收集合中
-  if (in_cset_state.is_in_cset()) { //
+  if (in_cset_state.is_in_cset()) { //这个引用在回收集合中，应该回收
     oop forwardee;
     markOop m = obj->mark();
     /**
@@ -66,7 +66,7 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
       forwardee = (oop) m->decode_pointer();
     } else {
         // 搜索 G1ParScanThreadState::copy_to_survivor_space
-      forwardee = copy_to_survivor_space(in_cset_state, obj, m); // 转移到survivor，确定转发地址
+      forwardee = copy_to_survivor_space(in_cset_state, obj, m); // 转移到survivor，确定转发地址，这里可能会继续往 pss的_ref中添加新的引用
     }
     oopDesc::encode_store_heap_oop(p, forwardee);// 使用转发以后的地址更新引用者所引用该对象的地址
   } else if (in_cset_state.is_humongous()) { // 是大对象

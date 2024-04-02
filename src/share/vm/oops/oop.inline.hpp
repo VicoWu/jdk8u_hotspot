@@ -246,6 +246,11 @@ inline oop oopDesc::load_decode_heap_oop_not_null(narrowOop* p) {
   return decode_heap_oop_not_null(*p);
 }
 
+/**
+ * 取出指针p所指向的地址上存放的值
+ * @param p
+ * @return
+ */
 // Load and decode an oop out of the heap accepting null
 inline oop oopDesc::load_decode_heap_oop(oop* p) { return *p; }
 inline oop oopDesc::load_decode_heap_oop(narrowOop* p) {

@@ -42,8 +42,8 @@ class G1ParScanThreadState : public StackObj {
  private:
   G1CollectedHeap* _g1h;
   /**
-   * 这是一个 OverflowTaskQueue对象
-   * 搜索 push_on_queue可以看到往这里添加引用的过程，搜索 G1ParScanThreadState::trim_queue，可以看到从queue中弹出引用进行处理的过程
+   * 这是一个 OverflowTaskQueue 对象
+   * 搜索 push_on_queue 可以看到往这里添加引用的过程，搜索 G1ParScanThreadState::trim_queue，可以看到从queue中弹出引用进行处理的过程
    */
   RefToScanQueue*  _refs;
   DirtyCardQueue   _dcq;
@@ -56,7 +56,11 @@ class G1ParScanThreadState : public StackObj {
   InCSetState       _dest[InCSetState::Num];
   // Local tenuring threshold.
   uint              _tenuring_threshold; // 初始化的时候(查看构造方法 G1ParScanThreadState::G1ParScanThreadState)，是根据Policy设置了晋升的年龄值
-  G1ParScanClosure  _scanner;
+    /**
+   * 这个scanner用于在完成了一个对象的evacuation以后，对对象进行一个递归的扫描
+   * 搜索 obj->oop_iterate_backwards(&_scanner);
+   */
+  G1ParScanClosure  _scanner; //
 
   size_t            _alloc_buffer_waste;
   size_t            _undo_waste;
@@ -111,12 +115,15 @@ class G1ParScanThreadState : public StackObj {
 #endif // ASSERT
 
   /**
-   * 这个方法是类G1ParScanThreadState的方法
-   * 搜索 G1ParPushHeapRSClosure::do_oop_nv 方法 可以看到根扫描过程中往这个队列中添加引用的过程
+   * 这个方法是类G1ParScanThreadState的成员方法
+   * 搜索 G1ParPushHeapRSClosure::do_oop_nv 方法 可以看到基于cset进行转移的时候，使用这个closure往pss的_ref队列中添加引用的过程
    *    比如 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)就将G1ParScanThreadState作为自己的成员
    *
+   * 搜索 G1ParScanClosure::do_oop_nv(T* p) 方法，可以看到在 转移暂停的 copy_to_survivor 的过程中往这个pss的_ref中添加元素的过程，
+   *    即当我们完成了一个obj的拷贝，那么这个obj的所有的reference都需要递归进行处理
+   *
    * 搜索 G1ParScanThreadState::trim_queue() 可以看到从_refs中取出元素处理的过程，
-   *    其实就是在根扫描完成以后进行转移的时候通过G1ParEvacuateFollowersClosure调用的
+   *    其实就是在根扫描完成以后，进行转移的时候通过G1ParEvacuateFollowersClosure调用的
    * @tparam T
    * @param ref
    */
@@ -125,18 +132,45 @@ class G1ParScanThreadState : public StackObj {
     _refs->push(ref);
   }
 
+  /**
+   * 这是 G1ParScanThreadState::update_rs
+   * 注意，一个G1ParTask会有一个G1ParScanThreadState对象
+   * 搜索 _par_scan_state->update_rs 查看调用位置
+   * p 代表了对象的原始地址，
+   * @tparam T
+   * @param from 对象原始所在的region
+   * @param p 指向移动前的指针，目前这个位置已经更新为对象的新地址
+   * @param tid
+   */
   template <class T> void update_rs(HeapRegion* from, T* p, int tid) {
     // If the new value of the field points to the same region or
     // is the to-space, we don't need to include it in the Rset updates.
+    /**
+     * oopDesc::load_decode_heap_oop(p) 是取出指针p所指向的地址上存放的值
+     * 因此,from代表原来的地址，oopDesc::load_decode_heap_oop(p)代表转移到的新的地址,两个地址不可以相同，不然更新卡片没有任何意义
+     */
     if (!from->is_in_reserved(oopDesc::load_decode_heap_oop(p)) && !from->is_survivor()) {
-      size_t card_index = ctbs()->index_for(p);
+      size_t card_index = ctbs()->index_for(p); // 对象原始地址对应的卡片索引, 搜索 size_t index_for(void* p) 查看具体实现
       // If the card hasn't been added to the buffer, do it.
+      /**
+       * 检查当前卡片是否已经变更为deferred，变更为deferred的卡片意味着需要进行后续的相应更新操作
+       * 搜索 bool G1SATBCardTableModRefBS::mark_card_deferred 查看具体实现
+       */
       if (ctbs()->mark_card_deferred(card_index)) {
+          /**
+           * dirty_card_queue() 返回的是当前的G1ParScanThreadState的DCQ
+           * 将源对象地址存入到这个回收线程本地的转移专用记忆集合日志中，后续会有Refine线程来进行处理
+           * ctbs()->byte_for_index(card_index) 返回了这个卡片索引在卡片数组中的真实偏移量
+           */
         dirty_card_queue().enqueue((jbyte*)ctbs()->byte_for_index(card_index));
       }
    }
   }
 
+  /**
+   * 搜索  G1ParScanHeapEvacFailureClosure evac_failure_cl(_g1h, &pss, rp);
+   * @param evac_failure_cl
+   */
   void set_evac_failure_closure(OopsInHeapRegionClosure* evac_failure_cl) {
     _evac_failure_cl = evac_failure_cl;
   }

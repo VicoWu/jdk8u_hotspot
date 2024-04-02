@@ -38,7 +38,7 @@ class G1SATBCardTableLoggingModRefBS;
 // snapshot-at-the-beginning marking.
 
 /**
- * Card Table Modification Reference Barrier Set ， 卡表修改引用栅栏集合
+ * Card Table Modification Reference Barrier Set ， 卡表修改引用 栅栏集合
  * 主要用写屏障来支持SATB的写操作。
  * 需要跟子类G1SATBCardTableLoggingModRefBS相区别，子类G1SATBCardTableLoggingModRefBS主要负责RSet的写屏障
  */

@@ -87,10 +87,17 @@ void G1SATBCardTableModRefBS::write_ref_array_pre(narrowOop* dst, int count, boo
 bool G1SATBCardTableModRefBS::mark_card_deferred(size_t card_index) {
   jbyte val = _byte_map[card_index];
   // It's already processed
+  /**
+   * 检查当前卡是否已经被标记为延迟标记。
+        如果卡已经被标记为延迟标记，则直接返回 false，表示不需要重复处理。
+   */
   if ((val & (clean_card_mask_val() | deferred_card_val())) == deferred_card_val()) {
     return false;
   }
-
+  /**
+   * 检查当前卡是否属于年轻代（young generation）。
+        如果是年轻代的卡，则不需要记录所有指向年轻代区域的指针，直接返回 false。
+   */
   if  (val == g1_young_gen) {
     // the card is for a young gen region. We don't need to keep track of all pointers into young
     return false;
@@ -98,14 +105,25 @@ bool G1SATBCardTableModRefBS::mark_card_deferred(size_t card_index) {
 
   // Cached bit can be installed either on a clean card or on a claimed card.
   jbyte new_val = val;
+  /**
+   * 检查当前卡是否为干净卡（clean card）。
+        如果是干净卡，则将其标记为延迟标记。
+   */
   if (val == clean_card_val()) {
     new_val = (jbyte)deferred_card_val();
   } else {
+      /**
+       * 如果不是干净卡，则检查当前卡是否为已声明卡（claimed card）。
+            如果是已声明卡，则将其标记为延迟标记。
+       */
     if (val & claimed_card_val()) {
       new_val = val | (jbyte)deferred_card_val();
     }
   }
   if (new_val != val) {
+      /**
+       * 如果 new_val 与原来的值不相同，则进行原子操作更新卡标记数组中的值。
+       */
     Atomic::cmpxchg(new_val, &_byte_map[card_index], val);
   }
   return true;
@@ -190,8 +208,12 @@ void G1SATBCardTableLoggingModRefBS::initialize(G1RegionToSpaceMapper* mapper) {
  */
 void
 G1SATBCardTableLoggingModRefBS::write_ref_field_work(void* field,
-                                                     oop new_val,
+                                                     oop new_val, // oopDesc*
                                                      bool release) {
+    /**
+     * 搜索 jbyte* byte_for(const void* p) const { 查看 byte_for方法
+     * 取出field指针对应的卡片索引值
+     */
   volatile jbyte* byte = byte_for(field); // 获取源对象地址，比如a.field = b ， 那么 byte就是a的地址
   if (*byte == g1_young_gen) { // 对于a.field = b ,假如a在young区，那么不用处理
     return;
@@ -207,7 +229,12 @@ G1SATBCardTableLoggingModRefBS::write_ref_field_work(void* field,
      */
     if (thr->is_Java_thread()) { // 如果是java线程，那么就放到线程本地的DCQ中
       JavaThread* jt = (JavaThread*)thr;
-      jt->dirty_card_queue().enqueue(byte); // 将源对象地址存入到这个Java线程本地的转移专用记忆集合日志中，后续会有Refine线程来进行处理
+      /**
+       * 将源对象地址存入到这个Java线程本地的转移专用记忆集合日志中，后续会有Refine线程来进行处理
+       * 在 gc过程中也会enqueue ， 搜索 template <class T> void update_rs
+       * 对于这个 dcq的处理，搜索 DirtyCardQueueSet::iterate_closure_all_threads
+       */
+      jt->dirty_card_queue().enqueue(byte);
     } else { // 不是Java线程，就使用公共的_shared_dirty_card_queue中
       MutexLockerEx x(Shared_DirtyCardQ_lock,
                       Mutex::_no_safepoint_check_flag);

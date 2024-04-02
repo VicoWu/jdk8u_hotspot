@@ -1005,16 +1005,18 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
         }
       }
     }
-
+    // 内存扩展也失败了，我们判断了当前的状态，的确应该尝试进行一次gc，因此调用do_collection_pause进行一次gc
     if (should_try_gc) {
       bool succeeded;
       result = do_collection_pause(word_size, gc_count_before, &succeeded,
                                    GCCause::_g1_inc_collection_pause);
       if (result != NULL) {
         assert(succeeded, "only way to get back a non-NULL result");
-        return result;
+        return result; // 成功，直接返回
       }
-
+      /**
+       * 这里的意思是，gc成功了，但是依然没有成功分配到内存
+       */
       if (succeeded) {
         // If we get here we successfully scheduled a collection which
         // failed to allocate. No point in trying to allocate
@@ -1032,7 +1034,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
       // The GCLocker is either active or the GCLocker initiated
       // GC has not yet been performed. Stall until it is and
       // then retry the allocation.
-      GC_locker::stall_until_clear();
+      GC_locker::stall_until_clear(); // 一直等待，直到完成evacuation pause
       (*gclocker_retry_count_ret) += 1;
     }
 
@@ -1125,14 +1127,22 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
         return result; // 分配成功，直接返回
       }
       // GC_locker主要对跟GC相关的操作进行并发控制操作，因此涉及到critical region（临界区，不要将临界区和安全点混淆）
+      /**
+       *    GC_locker::check_active_before_gc() 会将_needs_gc设置为true,
+       *    在GC_locker::jni_unlock即退出安全区的时候中，如果发现needs_gc=true，会直接进行gc，然后设置_needs_gc=false
+       */
       if (GC_locker::is_active_and_needs_gc()) {
-        should_try_gc = false;
+        should_try_gc = false; // 当前处于安全区，并且needs_gc，那么当退出安全区的时候，自然会触发gc，不需要我们处理
       } else {
          // The GCLocker may not be active but the GCLocker initiated
         // GC may not yet have been performed (GCLocker::needs_gc()
         // returns true). In this case we do not try this GC and
         // wait until the GCLocker initiated GC is performed, and
         // then retry the allocation.
+        /**
+         * 这时候 is_active 是 false，但是由gclocker触发的gc还没有进行，因此needs_gc 还是等于true
+         * 这时候我们在下面会通过stall_until_clear()方法一直等待needs_gc为false
+         */
         if (GC_locker::needs_gc()) {
           should_try_gc = false;
         } else {
@@ -1151,11 +1161,13 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
       bool succeeded;
       result = do_collection_pause(word_size, gc_count_before, &succeeded,
                                    GCCause::_g1_humongous_allocation);
-      if (result != NULL) {
+      if (result != NULL) { // 分配成功，这个分配成功可能进行了evacuation pause，可能没进行，总之分配成功了，返回分配结果
         assert(succeeded, "only way to get back a non-NULL result");
         return result;
       }
-
+      /**
+       * 分配失败，但是我们其实成功进行了evacuation pause，但是分配失败了
+       */
       if (succeeded) {
         // If we get here we successfully scheduled a collection which
         // failed to allocate. No point in trying to allocate
@@ -1165,6 +1177,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
         return NULL;
       }
     } else {
+        // 不应该try gc
       if (*gclocker_retry_count_ret > GCLockerRetryAllocationCount) {
         MutexLockerEx x(Heap_lock);
         *gc_count_before_ret = total_collections();
@@ -1173,7 +1186,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
       // The GCLocker is either active or the GCLocker initiated
       // GC has not yet been performed. Stall until it is and
       // then retry the allocation.
-      GC_locker::stall_until_clear();
+      GC_locker::stall_until_clear(); // 一直等到needs_gc为false，然后重新进行一次分配
       (*gclocker_retry_count_ret) += 1;
     }
 
@@ -2712,7 +2725,7 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
 
         if (retry_gc) { // 如果需要
           if (GC_locker::is_active_and_needs_gc()) {
-            GC_locker::stall_until_clear();
+            GC_locker::stall_until_clear(); // 循环等待_needs_gc清空
           }
         }
       }
@@ -3876,7 +3889,11 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
   op.set_allocation_context(AllocationContext::current());
   VMThread::execute(&op); // 我们看VMThread::execute，其实会调用op.evaluate()方法，对应的VM_G1IncCollectionPause.doit()方法
 
-  HeapWord* result = op.result();
+  HeapWord* result = op.result(); // 分配的结果
+  /**
+   * VM_GC_Operation::doit_prologue
+   * 表示 这个 VM_G1IncCollectionPause得到了执行
+   */
   bool ret_succeeded = op.prologue_succeeded() && op.pause_succeeded();
   assert(result == NULL || ret_succeeded,
          "the result should be NULL if the VM did not succeed");
@@ -4704,6 +4721,13 @@ void G1CollectedHeap::drain_evac_failure_scan_stack() {
   }
 }
 
+/**
+ * _par_scan_state 是当前的pss，记住，一个pss是和一个Task对应起来的
+ * old是在将这个对象进行evacuate以前对象的oopDesc*
+ * @param _par_scan_state
+ * @param old
+ * @return
+ */
 oop
 G1CollectedHeap::handle_evacuation_failure_par(G1ParScanThreadState* _par_scan_state,
                                                oop old) {
@@ -4780,13 +4804,15 @@ void G1CollectedHeap::preserve_mark_if_necessary(oop obj, markOop m) {
 
 /**
  * 搜索 do_mark_object == G1MarkFromRoot 查看调用者,
+ * 这个方法的调用可能发生在STW 的初始标记阶段，也可能发生在 非STW 的并发标记阶段
  * 如果尚未标记该对象，则对其进行标记。 这用于标记根所指向的对象，这些对象保证在 GC 期间不会移动（即非 CSet 对象）。 它是 MT 安全的。
+ * 这个方法没有递归，即没有将这个对象push到任何的标记栈以递归处理
  */
 void G1ParCopyHelper::mark_object(oop obj) {
   assert(!_g1->heap_region_containing(obj)->in_collection_set(), "should not mark objects in the CSet");
 
   // We know that the object is not moving so it's safe to read its size.
-  _cm->grayRoot(obj, (size_t) obj->size(), _worker_id);
+  _cm->grayRoot(obj, (size_t) obj->size(), _worker_id); /
 }
 
 /**
@@ -4818,7 +4844,6 @@ template <class T>
 void G1ParCopyHelper::do_klass_barrier(T* p, oop new_obj) {
     /**
      *  搜索 void record_modified_oops(), 就是设置Klass的_modified_oops变量为1，代表这个对象的oop被修改过,即对象被移动过
-     *
      */
   if (_g1->heap_region_containing_raw(new_obj)->is_young()) {
     _scanned_klass->record_modified_oops();
@@ -4852,7 +4877,7 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
   assert(_worker_id == _par_scan_state->queue_num(), "sanity");
 
   const InCSetState state = _g1->in_cset_state(obj);
-  if (state.is_in_cset()) { // 如果当前对象在回收集合中
+  if (state.is_in_cset()) { // 如果当前对象在回收集合中，这是需要移动的对象
     oop forwardee;
     markOop m = obj->mark(); // 读取对象的_mark标记，判断对象是否已经被标记
     if (m->is_marked()) { // 对象已经被标记
@@ -4866,7 +4891,10 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
     }
     assert(forwardee != NULL, "forwardee should not be NULL");
     oopDesc::encode_store_heap_oop(p, forwardee); // 将对象新的wide 地址进行编码，写入到对象原来的地址处
-    // 如果 do_mark_object 是 G1MarkFromRoot 或者 G1MarkPromotedFromRoot, 那么，我们需要在转移了对象以后对对象进行标记
+    /**
+     * 如果 do_mark_object 是 G1MarkFromRoot 或者 G1MarkPromotedFromRoot,
+     * 那么，我们需要在转移了对象以后对对象进行标记,即这次STW的转移操作需要借道进行初始标记
+     */
     if (do_mark_object != G1MarkNone && forwardee != obj) { // 这里不处理自转发对象
       // If the object is self-forwarded we don't need to explicitly
       // mark it, the evacuation failure protocol will do so.
@@ -4876,10 +4904,15 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
      * 为当前正在scan的klass设置一个标记位，标记_modified_oops==1，这样，这个klass就是dirty的，
      *     那么在G1KlassScanClosure中就需要被处理。而没有被标记为dirty的，G1KlassScanClosure就会跳过这个klass
      */
-    if (barrier == G1BarrierKlass) { //
-      do_klass_barrier(p, forwardee); // 调用父类的实现，搜索 G1ParCopyHelper::do_klass_barrier
+    if (barrier == G1BarrierKlass) {
+        /**
+         *  调用父类的实现，搜索 G1ParCopyHelper::do_klass_barrier
+         *  从实现可以看到，只有当forwardee是young(eden + survivor)的时候，会将当前的对象所对应的klass的 _modified_oops 置位
+         *  即，当前对象虽然在heap中，但是klass却不在，因此，如果当前的对象移动了，需要在这个对象的klass上设置一个标记，相当于将这个klass的对象标记为脏对象，后面会针对脏对象进行处理
+         */
+      do_klass_barrier(p, forwardee);
     }
-  } else { // 对象不在回收集合中，因此对象不需要转移
+  } else { // 对象不在回收集合中，因此对象不需要转移，但是如果当前是在初始标记状态，那么虽然不需要转移，但是需要标记
     if (state.is_humongous()) {
       _g1->set_humongous_is_live(obj);
     }
@@ -4889,11 +4922,13 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
      * 为了区别一般的YGC和混合GC的初始标记阶段，
         使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone， 当发现开启了并发标记则设置为G1MarkFromRoot
      */
-    if (do_mark_object == G1MarkFromRoot) { // 需要进行标记
+    if (do_mark_object == G1MarkFromRoot) { // 需要进行标记，这里对对象进行了标记
       mark_object(obj); //  对当前对象进行标记
     }
   }
-
+  /**
+   * 在对象发生了移动以后，需要更新引用关系
+   */
   if (barrier == G1BarrierEvac) {
     _par_scan_state->update_rs(_from, p, _worker_id);
   }
@@ -4948,26 +4983,31 @@ void G1ParEvacuateFollowersClosure::do_void() {
  */
 class G1KlassScanClosure : public KlassClosure {
  G1ParCopyHelper* _closure; // 一个G1ParCopyHeaper的指针，可能是一个指向G1ParCopyClosure，搜索_klass_in_cld_closure可以看到，这里的这个G1ParCopyClosure会拦截klass
- bool             _process_only_dirty; // 对应了only_young
+ bool             _process_only_dirty; // 对应了 only_young，当调用这个evacuation的时候是一个young gc的过程，那么_process_only_dirty是true，否则是false
  int              _count;
  /**
   * 构造方法的调用查看 class G1CLDClosure : public CLDClosure
+  *
+  * G1KlassScanClosure本质上还是封装了一个G1ParCopyClosure，但是会拦截klass
   */
  public:
   G1KlassScanClosure(G1ParCopyHelper* closure, bool process_only_dirty)
       : _process_only_dirty(process_only_dirty), _closure(closure), _count(0) {}
     /**
+     * 这是 G1KlassScanClosure::do_klass
      * 调用者是 void ClassLoaderData::oops_do
      */
   void do_klass(Klass* klass) { // 对每一个类进行处理(一个Klass对应了一个类)
     // If the klass has not been dirtied we know that there's
-    // no references into  the young gen and we can skip it.
+    // no references into the young gen and we can skip it.
     /**
-     * 这个klass对应的对象的oop已经被修改过，即这个klass是dirty的，比如，这个klass对应的对象已经被移动过
+     * 如果 _process_only_dirty = false，那么不管这个klass是否有修改，一定会对这个klass 去apply对应的封装好的G1ParCopyHelper* closure
+     * 如果这个_process_only_dirty = true，即当前是一个young gc的阶段，那么只有这个klass对应的对象的oop已经被修改过（即这个klass有指向young generation的引用）
+     * ，即这个klass是dirty的，才会处理这个klass
      */
    if (!_process_only_dirty || klass->has_modified_oops()) {
       // Clean the klass since we're going to scavenge all the metadata.
-      klass->clear_modified_oops(); // 重置类的oop被修改的标记位
+      klass->clear_modified_oops(); // 重置类的oop被修改的标记位。我们从
 
       // Tell the closure that this klass is the Klass to scavenge
       // and is the one to dirty if oops are left pointing into the young gen.
@@ -4976,6 +5016,10 @@ class G1KlassScanClosure : public KlassClosure {
       /*
        * 搜索 void Klass::oops_do(OopClosure* cl)查看方法的具体实现
        * 在这个klass上去apply封装好的G1ParCopyHelper* closure， 其实就是将klass对应的mirror的oop上apply对应的G1ParCopyClosure
+       * 搜搜 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
+       * 这里，如果对象发生了移动，那么依然可能会重新将_modified_oops 置位为1
+       * 搜 void Klass::oops_do(OopClosure* cl) 可以看到，这里最终传递给closure处理的是klass 的 mirror对象，
+       * 这个对象可能是分配在堆中的，而klass本身不在堆中。因此，当这个mirror因为evacuation发生了移动，那么这个class就变成了dirty的了。
        */
       klass->oops_do(_closure);
 
@@ -5046,10 +5090,14 @@ public:
   template <G1Mark do_mark_object>
   class G1CLDClosure : public CLDClosure {
       /**
-       * // oop_in_klass_closure与_oop_closure都是G1ParCopyClosure，但是拦截器不同，一个是G1BarrierNone， 一个是G1BarrierKlass
+       * oop_in_klass_closure与_oop_closure都是G1ParCopyClosure，但是拦截器不同，一个是G1BarrierNone， 一个是G1BarrierKlass
+       * 构造函数参数中传入的G1ParCopyClosure, 拦截器是G1BarrierNone
        */
-    G1ParCopyClosure<G1BarrierNone,  do_mark_object>* _oop_closure; // 构造函数参数中传入的G1ParCopyClosure, 拦截器是G1BarrierNone
-    G1ParCopyClosure<G1BarrierKlass, do_mark_object>  _oop_in_klass_closure; // 拦截器是G1BarrierKlass, 需要拦截Klass
+    G1ParCopyClosure<G1BarrierNone,  do_mark_object>* _oop_closure; //
+    /**
+     * 基于当前传入的_oop_closure，顺道处理对应的klass，拦截器是G1BarrierKlass, 需要拦截Klass
+     */
+    G1ParCopyClosure<G1BarrierKlass, do_mark_object>  _oop_in_klass_closure; //
     G1KlassScanClosure                                _klass_in_cld_closure;// 封装了_oop_in_klass_closure,对应构造函数中的_process_only_dirty
     bool                                              _claim;
 
@@ -5081,8 +5129,10 @@ public:
   };
 
   /**
-   * G1ParTask::work() 方法，这个G1ParTask是通过 FlexibleWorkGang来执行的
-   *    用来进行收集阶段的并行任务
+   * 在执行这个方法以前，已经进行了 并发标记中的 根扫描子阶段
+   * G1ParTask::work() 方法，
+   * 这个G1ParTask是通过 FlexibleWorkGang来执行的
+   *    用来进行收集阶段的STW状态下并行执行收集任务
    * 搜索 G1CollectedHeap::evacuate_collection_set 查看构造G1ParTask的过程
    * worker_id 是执行当前的G1ParTask的GangWorker的线程id
    * @param worker_id
@@ -5106,8 +5156,14 @@ public:
 
       pss.set_evac_failure_closure(&evac_failure_cl);
 
-      bool only_young = _g1h->g1_policy()->gcs_are_young();
+      bool only_young = _g1h->g1_policy()->gcs_are_young(); // 当前的回收暂停是否是一次young gc出发的回收暂停
 
+      /**
+       * 可以看到，下面创建了两种cld，G1ParCopyClosure用来进行根扫描，G1CLDClosure用来进行cld相关的处理，但是其实也是交给G1ParCopyClosure最终处理
+       * 根据条件不同，处理有两种情况需要考虑：
+         - 是否需要进行mark，这是由于当前的evacuation可能是借道一次初始标记
+         - 如果的确需要进行一次初始标记，那么需要根据ClassUnloadingWithConcurrentMark的配置，决定是否在初始标记的时候进行类卸载相关的处理
+       */
       /**
        * 对于非初始标记阶段的年轻代gc，不进行标记
        *    scan_only_root_cl：仅扫描根对象，不执行标记操作。
@@ -5130,7 +5186,7 @@ public:
        */
       G1ParCopyClosure<G1BarrierNone, G1MarkFromRoot>         scan_mark_root_cl(_g1h, &pss, rp);
       G1CLDClosure<G1MarkFromRoot>                            scan_mark_cld_cl(&scan_mark_root_cl,
-                                                                               false, // Process all klasses.
+                                                                               false, // 如果需要标记，那么肯定不止处理 dirty的klass,而应该处理所有的klass
                                                                                true); // Need to claim CLDs.
 
 
@@ -5145,10 +5201,11 @@ public:
               可以看到 G1MarkFromRoot和G1MarkPromotedFromRoot的区别
          对于强引用的根和类加载器数据，需要使用更为保守的标记策略（从根对象开始标记），
          而对于弱引用的根和类加载器数据，则可以使用更为宽松的标记策略（只标记已经晋升的对象）。
+
       */
       G1ParCopyClosure<G1BarrierNone, G1MarkPromotedFromRoot> scan_mark_weak_root_cl(_g1h, &pss, rp);
       G1CLDClosure<G1MarkPromotedFromRoot>                    scan_mark_weak_cld_cl(&scan_mark_weak_root_cl,
-                                                                                    false, // Process all klasses. 处理所有的klass
+                                                                                    false, // 处理所有的klass
                                                                                     true); // Need to claim CLDs.
 
       OopClosure* strong_root_cl; // 处理强根的Closure
@@ -5192,7 +5249,7 @@ public:
         if (ClassUnloadingWithConcurrentMark) { // 如果用户配置了ClassUnloadingWithConcurrentMark，即在并发标记阶段卸载类
           weak_root_cl = &scan_mark_weak_root_cl; // do_mark_object此时为G1MarkPromotedFromRoot
           weak_cld_cl  = &scan_mark_weak_cld_cl; // do_mark_object此时为G1MarkPromotedFromRoot
-          trace_metadata = true; // 只有当trace_metadata = true， weak_cld_cl和 strong_cld_cl才会使用，否则为null
+          trace_metadata = true; // 只有当trace_metadata = true， weak_cld_cl和 strong_cld_cl 才会使用，否则为null
         } else { // ClassUnloadingWithConcurrentMark 为false
           weak_root_cl = &scan_mark_root_cl; // do_mark_object此时为G1MarkFromRoot
           weak_cld_cl  = &scan_mark_cld_cl; // do_mark_object此时为G1MarkFromRoot
@@ -5222,6 +5279,7 @@ public:
        * 一次性将各种闭包应用于系统中的强可达根和弱可达根。 使用worker_i记录并报告子阶段的计时测量
        *
        * 查看 G1RootProcessor::evacuate_roots 和 G1RootProcessor::process_java_roots
+       * 在这个方法里面调用了 G1RootProcessor::process_java_roots 和 G1RootProcessor::process_vm_roots
        */
       _root_processor->evacuate_roots(strong_root_cl,
                                       weak_root_cl, // non_heap_weak_root
@@ -5230,6 +5288,14 @@ public:
                                       trace_metadata,  // 如果设置了ClassUnloadingWithConcurrentMark，那么trace_metadata=true
                                       worker_id // 当前的gc线程的id);
 
+      /**
+       * 这个方法是类G1ParScanThreadState的成员方法
+       * 搜索 G1ParPushHeapRSClosure::do_oop_nv 方法 可以看到基于cset进行转移的时候，使用这个closure往pss的_ref队列中添加引用的过程
+       *    比如 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)就将G1ParScanThreadState作为自己的成员
+       *
+       * 搜索 G1ParScanClosure::do_oop_nv(T* p) 方法，可以看到在 转移暂停的 copy_to_survivor 的过程中往这个pss的_ref中添加元素的过程，
+       *    即当我们完成了一个obj的拷贝，那么这个obj的所有的reference都需要递归进行处理
+       */
       G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
       /**
        * 搜索 void G1RootProcessor::scan_remembered_sets 查看具体实现
@@ -5244,8 +5310,9 @@ public:
       {
         double start = os::elapsedTime();
         /**
-         * 开始进行转移处理，G1ParEvacuateFollowersClosure传入了G1ParScanThreadState 对象 pss，
+         *  开始进行转移处理，G1ParEvacuateFollowersClosure传入了G1ParScanThreadState 对象 pss，
          *  因为pss中存放了根可达并且目标在回收集合中的对象
+         *  工作方法 搜索 G1ParEvacuateFollowersClosure::do_void
          */
         G1ParEvacuateFollowersClosure evac(_g1h, &pss, _queues, &_terminator);
         evac.do_void();
@@ -5696,6 +5763,9 @@ class G1RedirtyLoggedCardsTask : public AbstractGangTask {
   }
 };
 
+/**
+ * 重新的redity操作，
+ */
 void G1CollectedHeap::redirty_logged_cards() {
   double redirty_logged_cards_start = os::elapsedTime();
 
@@ -6227,7 +6297,7 @@ void G1CollectedHeap::enqueue_discovered_references(uint no_of_gc_workers) {
 
 /**
  * young/mix gc
- * 这个方法是在 G1CollectedHeap::do_collection_pause_at_safepoint调用的，执行的环境已经是STW了，因此是young/mix gc才会调用的
+ * 这个方法是在 G1CollectedHeap::do_collection_pause_at_safepoint 调用的，执行的环境已经是STW了，因此是young/mix gc才会调用的
  * @param evacuation_info
  */
 void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
@@ -6334,7 +6404,10 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
   }
 
   _allocator->release_gc_alloc_regions(n_workers, evacuation_info);
-  g1_rem_set()->cleanup_after_oops_into_collection_set_do();
+  /**
+   * void G1RemSet::cleanup_after_oops_into_collection_set_do()
+   */
+  g1_rem_set()->cleanup_after_oops_into_collection_set_do(); // 进行已经释放的region的rset的清理
 
   // Reset and re-enable the hot card cache.
   // Note the counts for the cards in the regions in the
@@ -6368,7 +6441,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
   // cards). We need these updates logged to update any
   // RSets.
   enqueue_discovered_references(n_workers);
-
+  // 垃圾收集结束了，进行redirty操作，即取出在收集期间的dcqs中的item，进行refine操作
   redirty_logged_cards();
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
@@ -6451,7 +6524,10 @@ public:
                      G1CollectedHeap* g1h) :
     AbstractGangTask("G1 Par Cleanup CT Task"),
     _ct_bs(ct_bs), _g1h(g1h) { }
-
+  /**
+   * G1ParCleanupCTTask::work()
+   * 调用者是 void G1CollectedHeap::cleanUpCardTable()
+   */
   void work(uint worker_id) {
     HeapRegion* r;
     while (r = _g1h->pop_dirty_cards_region()) {
@@ -6664,12 +6740,19 @@ bool G1CollectedHeap::check_cset_fast_test() {
 }
 #endif // PRODUCT
 
+/**
+ * 调用者是 G1RemSet::cleanup_after_oops_into_collection_set_do
+ */
 void G1CollectedHeap::cleanUpCardTable() {
   G1SATBCardTableModRefBS* ct_bs = g1_barrier_set();
   double start = os::elapsedTime();
 
   {
     // Iterate over the dirty cards region list.
+    /**
+     * 具体实现，搜索 G1ParCleanupCTTask::work()
+     * 这个方法的调用发生在已经完成了evacuation pause以后
+     */
     G1ParCleanupCTTask cleanup_task(ct_bs, this);
 
     if (G1CollectedHeap::use_parallel_gc_threads()) {

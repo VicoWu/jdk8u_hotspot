@@ -124,12 +124,13 @@ G1RootProcessor::G1RootProcessor(G1CollectedHeap* g1h) :
 
 /**
  * 搜 _root_processor->evacuate_roots 查看调用位置
- * @param scan_non_heap_roots
- * @param scan_non_heap_weak_roots
- * @param scan_strong_clds
- * @param scan_weak_clds
- * @param trace_metadata
- * @param worker_i
+ *
+ *       _root_processor->evacuate_roots(strong_root_cl,
+                                      weak_root_cl, // non_heap_weak_root
+                                      strong_cld_cl,
+                                      weak_cld_cl, // heap_weak_root
+                                      trace_metadata,  // 如果设置了ClassUnloadingWithConcurrentMark，那么trace_metadata=true
+                                      worker_id // 当前的gc线程的id);
  */
 void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
                                      OopClosure* scan_non_heap_weak_roots,
@@ -142,7 +143,8 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   G1GCPhaseTimes* phase_times = _g1h->g1_policy()->phase_times();
 
   /**
-   * BufferingOopClosure closure只是对其他closure的一种封装，用来通过batch的方式加速迭代，将迭代和处理两件事情在时间上分开
+   * BufferingOopClosure closure只是对其他closure的一种封装，
+   * 用来通过batch的方式加速迭代，将迭代和处理两件事情在时间上分开
    */
   BufferingOopClosure buf_scan_non_heap_roots(scan_non_heap_roots);
   BufferingOopClosure buf_scan_non_heap_weak_roots(scan_non_heap_weak_roots);
@@ -153,14 +155,31 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   // CodeBlobClosures are not interoperable with BufferingOopClosures
   G1CodeBlobClosure root_code_blobs(scan_non_heap_roots);
 
+  /**
+   * ·Java根：主要指类加载器和线程栈。
+        ·类加载器主要是遍历这个类加载器中所有存活的Klass并复制（copy）到Survivor或者晋升到老生代。
+        ·线程栈既会处理普通的Java线程栈分配的局部变量，也会处理本地方法栈访问的堆对象，
+            在介绍线程栈的时候已经介绍了如何把栈对象和堆对象进行关联。
+     ·JVM根：通常是全局对象，比如Universe、JNIHandles、
+            ObjectSynchronizer、FlatProfiler、Management、JvmtiExport、
+            SystemDictionary、StringTable
+   */
   // 处理Java 根
   /**
    * 搜索 G1RootProcessor::process_java_roots 查看具体实现
    * 只有当trace_metadata = true， weak_cld_cl和 strong_cld_cl才会使用，否则为null
    */
   process_java_roots(strong_roots,
-                     trace_metadata ? scan_strong_clds : NULL, // 如果需要跟踪metadata，那么用来处理线程栈的cld的闭包就是scan_strong_clds，否则是null
+                      /**
+                       *  如果需要跟踪metadata（发生在需要进行标记（当前正在初始标记，并且需要卸载class）），
+                       *  那么用来处理线程栈的cld的闭包就是scan_strong_clds，否则是null
+                       */
+                     trace_metadata ? scan_strong_clds : NULL,
                      scan_strong_clds,
+                        /**
+                        *  如果需要跟踪metadata（发生在需要进行标记（当前正在初始标记，并且需要卸载class）），
+                        *  那么用来处理线程栈的cld的闭包就是scan_strong_clds，否则是null
+                        */
                      trace_metadata ? NULL : scan_weak_clds,
                      &root_code_blobs,
                      phase_times,
@@ -171,7 +190,7 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   if (trace_metadata) {
     worker_has_discovered_all_strong_classes();
   }
-  // 处理 VM的根
+  // 处理 VM的根, 传入进来的参数是strong_roots和weak_roots, 和CLD无关
   process_vm_roots(strong_roots, weak_roots, phase_times, worker_i);
   // 处理string table 根
   process_string_table_roots(weak_roots, phase_times, worker_i);
@@ -279,7 +298,7 @@ void G1RootProcessor::process_all_roots_no_string_table(OopClosure* oops,
  *   worker_i：一个工作线程的标识符。
  */
 void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用于处理强根的 OopClosure。
-                                         CLDClosure* thread_stack_clds, // 一个用于处理线程栈上的类加载器数据（CLD）根的 CLDClosure。
+                                         CLDClosure* thread_stack_clds, // 一个用于处理线程栈上的类加载器数据（CLD）根的 CLDClosure，如果需要trace metadata(即处于初始标记阶段并且用户配置了在标记阶段进行类卸载), 那么这个cld就是 scan_strong_clds
                                          CLDClosure* strong_clds, // 一个用于处理强 CLD 的 CLDClosure， 如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
                                          CLDClosure* weak_clds, // 一个用于处理弱 CLD 的 CLDClosure
                                          CodeBlobClosure* strong_code, // 一个用于处理强代码块的 CodeBlobClosure
@@ -290,6 +309,9 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
   // first process the strong CLDs and nmethods and then, after a barrier,
   // let the thread process the weak CLDs and nmethods.
   {
+      /**
+       * 这里处理类加载数据图上面的类加载器数据
+       */
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::CLDGRoots, worker_i);
     if (!_process_strong_tasks.is_task_claimed(G1RP_PS_ClassLoaderDataGraph_oops_do)) {
         /**
@@ -297,6 +319,7 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
          * 在整个CLDG上的每一个ClassLoaderData上apply G1CLDClosure，其实是针对每一个CLD调用void do_cld(ClassLoaderData* cld)
          * 搜索 ClassLoaderDataGraph::roots_cld_do 查看方法的具体实现
          * 查看静态方法的具体实现，可以看到，如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
+         * 我们从 调用者的构造方法可以看到，strong_clds和 weak_clds的区别是他们的参数中的 G1ParCopyClosure _oop_closure 是对应的strong还是weak
          */
       ClassLoaderDataGraph::roots_cld_do(strong_clds, weak_clds);
     }
@@ -312,6 +335,17 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
   }
 }
 
+/**
+ * 处理虚拟机root，比如全局的Universe、JNIHandles、
+    ObjectSynchronizer、FlatProfiler、Management、JvmtiExport、
+    SystemDictionary、StringTable
+    strong_roots和weak_roots根据参数不同，都会进行标记或者不进行标记
+    其中只有 SystemDictionary需要同时传入 strong_roots 和 weak_roots
+ * @param strong_roots
+ * @param weak_roots
+ * @param phase_times
+ * @param worker_i
+ */
 void G1RootProcessor::process_vm_roots(OopClosure* strong_roots,
                                        OopClosure* weak_roots,
                                        G1GCPhaseTimes* phase_times,
@@ -359,9 +393,20 @@ void G1RootProcessor::process_vm_roots(OopClosure* strong_roots,
   }
 
   {
+      /**
+       * 在JVM（Java虚拟机）中，系统字典（System Dictionary）是一个重要的数据结构，用于管理Java类的加载、解析和链接。它的作用包括：
+        类加载器委派：系统字典负责实现类加载器的委派模型。当需要加载一个类时，系统字典会按照委派规则，逐级查询类加载器，
+            直到找到需要加载的类或者确定该类不存在。这种委派模型可以保证类加载的顺序和一致性，确保类的唯一性和正确性。
+        类的解析和链接：系统字典负责解析类的名称、定位类文件、加载类字节码并进行链接（验证、准备、解析）。
+            在解析阶段，系统字典会将类与其他类及其成员进行关联，建立符号引用与实际引用之间的映射关系，以便在运行时能够正确地访问类及其成员。
+        类的存储和管理：系统字典维护了已加载的类的信息，包括类的元数据、类的静态变量和常量池等。
+            它提供了对类的存储和管理功能，例如查找类、添加类、移除类、更新类等。
+        类的查找和访问：系统字典提供了各种方法来查找和访问已加载的类，包括根据类名、类加载器、类路径等条件进行类的查找和定位。这
+            使得Java程序能够在运行时动态地加载和访问类，实现了Java的灵活性和动态性。
+       */
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::SystemDictionaryRoots, worker_i);
     if (!_process_strong_tasks.is_task_claimed(G1RP_PS_SystemDictionary_oops_do)) {
-      SystemDictionary::roots_oops_do(strong_roots, weak_roots);
+      SystemDictionary::roots_oops_do(strong_roots, weak_roots); // 搜索 void SystemDictionary::roots_oops_do
     }
   }
 }

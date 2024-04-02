@@ -144,7 +144,8 @@ inline void ConcurrentMark::count_object(oop obj,
 // Attempts to mark the given object and, if successful, counts
 // the object in the given task/worker counting structures.
 /**
- * 这是ConcurrentMark的实例方法
+ * 这是ConcurrentMark的实例方法，这个方法仅仅是将对象在标记位图上进行标记，不会通过将对象入栈的方式递归扫描对象的field，
+ *   将对象入栈以递归扫描是在它的调用者 make_reference_grey 上负责的
  * 尝试标记给定对象，如果成功，则在给定任务/工作人员计数结构中对对象进行计数
  * 如果置位成功，返回true，如果发现其他线程已经对这个位图的这个位置进行了置位，返回false
  * @param obj
@@ -210,17 +211,20 @@ inline bool CMBitMapRO::iterate(BitMapClosure* cl, MemRegion mr) {
 
   if (end_addr > start_addr) {
     // Right-open interval [start-offset, end-offset).
-    BitMap::idx_t start_offset = heapWordToOffset(start_addr);
-    BitMap::idx_t end_offset = heapWordToOffset(end_addr);
+    BitMap::idx_t start_offset = heapWordToOffset(start_addr); // 将内存地址转换成 位图 偏移量
+    BitMap::idx_t end_offset = heapWordToOffset(end_addr);// 将内存地址转换成 位图 偏移量
 
     start_offset = _bm.get_next_one_offset(start_offset, end_offset);
     while (start_offset < end_offset) {
-      if (!cl->do_bit(start_offset)) { // 搜索  class CMBitMapClosure : public BitMapClosure
+        /**
+         * 这里调用 cl->do_bit, 说明 start_offset的这个位置已经标记过了
+         */
+      if (!cl->do_bit(start_offset)) { //
         return false;
       }
-      HeapWord* next_addr = MIN2(nextObject(offsetToHeapWord(start_offset)), end_addr);
+      HeapWord* next_addr = MIN2(nextObject(offsetToHeapWord(start_offset)), end_addr); // 下一个对象的地址
       BitMap::idx_t next_offset = heapWordToOffset(next_addr);
-      start_offset = _bm.get_next_one_offset(next_offset, end_offset);
+      start_offset = _bm.get_next_one_offset(next_offset, end_offset); // 更新start_offset，不断往前进
     }
   }
   return true;

@@ -61,6 +61,10 @@ inline void FilterOutOfRegionClosure::do_oop_nv(T* p) {
 }
 
 // This closure is applied to the fields of the objects that have just been copied.
+/**
+ * 调用者是 oop G1ParScanThreadState::copy_to_survivor_space
+ * 一个obj刚刚从一个区域拷贝到了survivor区域，那么需要用这个方法处理这个对象的所有的field
+ */
 template <class T>
 inline void G1ParScanClosure::do_oop_nv(T* p) {
   T heap_oop = oopDesc::load_heap_oop(p);
@@ -68,7 +72,7 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
   if (!oopDesc::is_null(heap_oop)) {
     oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
     const InCSetState state = _g1->in_cset_state(obj);
-    if (state.is_in_cset()) {
+    if (state.is_in_cset()) { // 这个field在回收集合中，那么就放到_par_scan_state的集合中，等待递归进行复制到目标区域
       // We're not going to even bother checking whether the object is
       // already forwarded or not, as this usually causes an immediate
       // stall. We'll try to prefetch the object (for write, given that
@@ -86,10 +90,11 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
              "p should still be pointing to obj or to its forwardee");
 
       _par_scan_state->push_on_queue(p);
-    } else {
+    } else { // 不在目标集合中
       if (state.is_humongous()) {
         _g1->set_humongous_is_live(obj);
       }
+      // 仅仅需要更新RS,用来更新引用关系
       _par_scan_state->update_rs(_from, p, _worker_id);
     }
   }
@@ -149,7 +154,7 @@ inline void G1CMOopClosure::do_oop_nv(T* p) {
 
 
 /**
- * 这个方法的调用发生在初始标记阶段，因此当前的状态是stw的.
+ * 这个方法的调用发生在并发标记阶段，因此当前的状态不是STW的
  * 可以看到，这个do_oop_nv并没有任何递归的操作，仅仅是传入什么对象就扫描什么对象
  * 这个Closure的构造发生在方法 void ConcurrentMark::scanRootRegion 中
  * @tparam T
@@ -158,14 +163,18 @@ inline void G1CMOopClosure::do_oop_nv(T* p) {
 template <class T>
 inline void G1RootRegionScanClosure::do_oop_nv(T* p) {
   T heap_oop = oopDesc::load_heap_oop(p); // 获取oop* 指针指向的oop对象
-  if (!oopDesc::is_null(heap_oop)) { //调用oopDesc类的静态方法，判断对象是否为null
+  if (!oopDesc::is_null(heap_oop)) { // 调用oopDesc类的静态方法，判断对象是否为null
     /**
      * 如果不是narrowoop，那么直接返回，如果是narrow oop，需要进行相应的解码工作
      * 实现类搜索 inline oop oopDesc::decode_heap_oop_not_null
      */
     oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
     HeapRegion* hr = _g1h->heap_region_containing((HeapWord*) obj);
-    // 标记对象，将标记结果存放在_cm对象的_nextMarkBitMap中
+    /**
+     * 标记对象，将标记结果存放在_cm对象的_nextMarkBitMap中
+     * 这里没有进行相应的递归操作，只是对root region进行了扫描和标记
+     */
+
     _cm->grayRoot(obj, obj->size(), _worker_id, hr);
   }
 }

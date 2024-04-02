@@ -41,6 +41,10 @@ G1ParScanThreadState::G1ParScanThreadState(G1CollectedHeap* g1h, uint queue_num,
     _tenuring_threshold(g1h->g1_policy()->tenuring_threshold()),
     _age_table(false), _scanner(g1h, rp),
     _strong_roots_time(0), _term_time(0) {
+    /**
+     * 这个scanner用于在完成了一个对象的evacuation以后，对对象进行一个递归的扫描
+     * 搜索 obj->oop_iterate_backwards(&_scanner);
+     */
   _scanner.set_par_scan_thread_state(this);
   // we allocate G1YoungSurvRateNumRegions plus one entries, since
   // we "sacrifice" entry 0 to keep track of surviving bytes for
@@ -143,7 +147,6 @@ bool G1ParScanThreadState::verify_task(StarTask ref) const {
 
 /**
  * 调用方法为 G1ParEvacuateFollowersClosure::do_void()
- * 从_refs中取出元素并处理，会对
  * 查看 G1ParPushHeapRSClosure::do_oop_nv 可以看到往_refs中插入元素的过程
  * _refs中的元素是在根扫描的时候插入进来的
  */
@@ -153,8 +156,8 @@ void G1ParScanThreadState::trim_queue() {
   StarTask ref;
   do { // 不断循环，直到_refs中的ref被全部处理完
     // Drain the overflow stack first, so other threads can steal.
-    while (_refs->pop_overflow(ref)) { //取出队列中的每一个对象引用
-      if (!_refs->try_push_to_taskqueue(ref)) {
+    while (_refs->pop_overflow(ref)) { //不断取出队列中的每一个对象引用，放入到ref中，直到_ref为空
+      if (!_refs->try_push_to_taskqueue(ref)) { // 把ref 给 push到这个_ref对应的taskqueue中
         dispatch_reference(ref); // 对这个对象引用进行处理，会对ref对应的对象进行转移操作
       }
     }
@@ -267,7 +270,7 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
   assert(obj_ptr != NULL, "when we get here, allocation should have succeeded");
 #ifndef PRODUCT
   // Should this evacuation fail?
-  if (_g1h->evacuation_should_fail()) { // 这里返回true，说明
+  if (_g1h->evacuation_should_fail()) { // 这里返回true，说明evacuation失败了
     // Doing this after all the allocation attempts also tests the
     // undo_allocation() method too.
     _g1_par_allocator->undo_allocation(dest_state, obj_ptr, word_sz, context);
@@ -277,7 +280,7 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
     return _g1h->handle_evacuation_failure_par(this, old);
   }
 #endif // !PRODUCT
-
+  // 在这里，说明evacuation成功了
   // We're going to allocate linearly, so might as well prefetch ahead.
   Prefetch::write(obj_ptr, PrefetchCopyIntervalInBytes);
 
@@ -329,8 +332,15 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
       oop* old_p = set_partial_array_mask(old);
       push_on_queue(old_p);
     } else {
+        // 获取对象移动到的目标region
       HeapRegion* const to_region = _g1h->heap_region_containing_raw(obj_ptr);
-      _scanner.set_region(to_region);
+      _scanner.set_region(to_region);  // 设置这个目标region到scanner中
+      /**
+       * 搜索 inline int oopDesc::oop_iterate_backwards(OopClosureType* blk)  -> InstanceKlass::oop_oop_iterate_backwards##nv_suffix
+       *  查看这个宏定义的调用栈
+       * 把obj的每一个Field对象都通过scanner，如果对象的field也在cset中，那么就需要放入任务栈中递归扫描
+       * 搜索 G1ParScanClosure::do_oop_nv
+       */
       obj->oop_iterate_backwards(&_scanner);
     }
     return obj;

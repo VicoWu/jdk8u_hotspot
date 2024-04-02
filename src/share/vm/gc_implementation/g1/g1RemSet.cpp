@@ -378,7 +378,7 @@ public:
 /**
  * 调用方是 G1RemSet::oops_into_collection_set_do
  *
- * 查看最终的RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，
+ * 查看最终的 RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，
  *      把当前DCQS中的所有的void **buf中指向回收集合的条目添加到into_cset_dcq中去
  * @param into_cset_dcq 这个dcq不是Java
  * @param worker_i
@@ -424,11 +424,11 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
   // failure the cards/buffers in this queue set are passed to the
   // DirtyCardQueueSet that is used to manage RSet updates
   /**
-   * DirtyCardQueue 用于保存包含指向集合集的引用的卡片。 此 DCQ 与特殊的 DirtyCardQueueSet 关联（请参阅 g1CollectedHeap.hpp）。
+   * DirtyCardQueue 用于保存包含指向回收集合的引用的卡片。 此 DCQ 与特殊的 DirtyCardQueueSet 关联（请参阅 g1CollectedHeap.hpp）。
    * 在正常情况下（即暂停成功完成），这些卡将被丢弃（无需更新收集集中区域的 RSets - 暂停后，这些区域完全“释放”活动对象。
    *    在这种情况下) ..   当疏散失败时，此队列集中的卡/缓冲区将被传递到用于管理 RSet 更新的 DirtyCardQueueSet
    * 在正常情况下，也就是垃圾收集暂停成功完成的情况下，这些卡片会被丢弃。
-   *     这是因为在暂停之后，集合集中的区域已经不再包含任何活动对象，因此不需要更新这些区域的 RSet（Remembered Set）。
+   *     这是因为在暂停之后，回收集合中的区域已经不再包含任何活动对象，因此不需要更新这些区域的 RSet（Remembered Set）。
       然而，在发生疏散失败（evacuation failure）时，这些卡片将被传递给管理 RSet 更新的 DirtyCardQueueSet。
         疏散失败是指在将对象从一个区域移动到另一个区域时遇到的问题，导致无法成功完成垃圾收集暂停，我们可以搜索 G1RemSet::cleanup_after_oops_into_collection_set_do 查看搜索失败的时候使用
         这个into_cset_dirty_card_queue_set 来恢复对应的RSet的过程
@@ -470,6 +470,10 @@ void G1RemSet::cleanup_after_oops_into_collection_set_do() {
   // Cleanup after copy
   _g1->set_refine_cte_cl_concurrency(true);
   // Set all cards back to clean.
+  /**
+   * 搜索 G1CollectedHeap::cleanUpCardTable -> G1ParCleanupCTTask::work()
+   * 清空所有的dirty cards region
+   */
   _g1->cleanUpCardTable();
 
   DirtyCardQueueSet& into_cset_dcqs = _g1->into_cset_dirty_card_queue_set();
@@ -485,7 +489,7 @@ void G1RemSet::cleanup_after_oops_into_collection_set_do() {
     _g1->dirty_card_queue_set().merge_bufferlists(&into_cset_dcqs);
     _g1->g1_policy()->phase_times()->record_evac_fail_restore_remsets((os::elapsedTime() - restore_remembered_set_start) * 1000.0);
   }
-
+  // 如果回收成功了，意味着回收集合已经清空了，那么没必要保存指向回收集合的RSet了
   // Free any completed buffers in the DirtyCardQueueSet used to hold cards
   // which contain references that point into the collection.
   _g1->into_cset_dirty_card_queue_set().clear();

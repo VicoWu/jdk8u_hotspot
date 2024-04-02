@@ -36,7 +36,7 @@ ConcurrentG1RefineThread(ConcurrentG1Refine* cg1r, ConcurrentG1RefineThread *nex
                          CardTableEntryClosure* refine_closure,
                          uint worker_id_offset, uint worker_id) :
   ConcurrentGCThread(),
-  _refine_closure(refine_closure),
+  _refine_closure(refine_closure), // RefineCardTableEntryClosure
   _worker_id_offset(worker_id_offset),
   _worker_id(worker_id),
   _active(false),
@@ -234,6 +234,9 @@ void ConcurrentG1RefineThread::run() {
         if (_next != NULL && !_next->is_active() && curr_buffer_num > _next->_threshold) {
           _next->activate();// 向_next现成发送通知，_next现成收到通知以后，就会在wait_for_completed_buffers()中解除阻塞
         }
+        /**
+         *  这里的closure是 RefineCardTableEntryClosure ，搜索 _refine_cte_cl = new RefineCardTableEntryClosure();
+         */
       } while (dcqs.apply_closure_to_completed_buffer(_refine_closure, _worker_id + _worker_id_offset, cg1r()->green_zone()));
 
       // We can exit the loop above while being active if there was a yield request.

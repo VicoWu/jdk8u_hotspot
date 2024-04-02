@@ -33,7 +33,7 @@ class ConcurrentG1Refine;
 
 // The G1 Concurrent Refinement Thread (could be several in the future).
 /**
- *  这个类在ConcurrentG1Refine::ConcurrentG1Refine中被构造
+ *  这个类在 ConcurrentG1Refine::ConcurrentG1Refine 中被构造
  */
 
 class ConcurrentG1RefineThread: public ConcurrentGCThread {

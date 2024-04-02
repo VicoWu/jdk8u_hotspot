@@ -148,8 +148,9 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
     _result = g1h->attempt_allocation_at_safepoint(_word_size, allocation_context(),
                                      false /* expect_null_cur_alloc_region */);
     if (_result != NULL) {
-      // If we can successfully allocate before we actually do the
-      // pause then we will consider this pause successful.
+      /**
+       * 如果在回收以前就成功进行了分配，那么我们还是认为这个pause是成功的
+       */
       _pause_succeeded = true;
       return; // 如果是由于分配导致的gc，那么在尝试分配成功以后，直接返回，不再进行gc
     }
@@ -225,7 +226,7 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
   _pause_succeeded =
     g1h->do_collection_pause_at_safepoint(_target_pause_time_ms);
   /**
-   * 如果成功地进行了一次回收，并且当前正在申请分配空间，那么，立刻进行一次分配
+   * 如果成功地进行了一次回收暂停，并且当前正在申请分配空间，那么，立刻进行一次分配
    * 如果回收本身是失败的 ，那么根本不会再尝试进行分配
    */
   if (_pause_succeeded && _word_size > 0) { //

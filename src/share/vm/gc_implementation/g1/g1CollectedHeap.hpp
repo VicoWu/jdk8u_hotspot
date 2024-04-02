@@ -848,6 +848,9 @@ protected:
 
   // A set of cards that cover the objects for which the Rsets should be updated
   // concurrently after the collection.
+  /**
+   * 这里存放了所有的dcqs，是在gc以后需要并发进行更新的dcqs
+   */
   DirtyCardQueueSet _dirty_card_queue_set;
 
   // The closure used to refine a single card.
@@ -1683,6 +1686,9 @@ public:
   void parallel_cleaning(BoolObjectClosure* is_alive, bool process_strings, bool process_symbols, bool class_unloading_occurred);
 
   // Redirty logged cards in the refinement queue.
+  /**
+   * 对处在refinement队列中的卡片进行重新的redirty
+   */
   void redirty_logged_cards();
   // Verification
 

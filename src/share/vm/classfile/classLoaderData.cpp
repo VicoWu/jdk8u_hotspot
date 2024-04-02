@@ -171,6 +171,7 @@ void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool m
   }
   /**
    * f是G1ParCopyClosure, 对这个CLD对应的classLoader对象去apply 没有拦截的G1ParCopyClosure
+   * 查看 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
    */
   f->do_oop(&_class_loader);
   /**
@@ -178,13 +179,14 @@ void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool m
    */
   _dependencies.oops_do(f);
   /**
-   * 对这个常量池数组apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
+   * 对这个常量池数组 apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
    */
   _handles.oops_do(f);
   if (klass_closure != NULL) {
       /**
        * 对对这个CLD以_klass为链表头指针链接起来的所有klass挨个去apply G1KlassScanClosure
-       * 搜索 void ClassLoaderData::classes_do
+       *
+       * 方法实现搜索 搜索 void ClassLoaderData::classes_do
        */
     classes_do(klass_closure);
   }
@@ -201,14 +203,22 @@ void ClassLoaderData::Dependencies::oops_do(OopClosure* f) {
  */
 void ClassLoaderData::classes_do(KlassClosure* klass_closure) {
   for (Klass* k = _klasses; k != NULL; k = k->next_link()) { // 对这个ClassLoaderData中以_klasses链接起来的所有的klass去apply klass_closure
-    klass_closure->do_klass(k); // 调用 G1KlassScanClosure的do_klass()方法, 可以搜索 class G1KlassScanClosure : public KlassClosure 查看对应的do_klass方法
+    klass_closure->do_klass(k); //  class G1KlassScanClosure : public KlassClosure 查看对应的do_klass方法，调用 G1KlassScanClosure的do_klass()方法, 可以搜索
     assert(k != k->next_link(), "no loops!");
   }
 }
 
+/**
+ * 对对这个CLD以_klass为链表头指针链接起来的所有klass挨个去apply G1KlassScanClosure
+ * 其中 G1KlassScanClosure本质上还是封装了一个G1ParCopyClosure
+ * 搜索 G1CLDClosure(G1ParCopyClosure<G1BarrierNone, do_mark_object>* oop_closure
+ *
+ *
+ * @param f
+ */
 void ClassLoaderData::classes_do(void f(Klass * const)) {
   for (Klass* k = _klasses; k != NULL; k = k->next_link()) {
-    f(k);
+    f(k); // 搜索 G1KlassScanClosure::do_klass
   }
 }
 
@@ -693,7 +703,12 @@ void ClassLoaderDataGraph::cld_do(CLDClosure* cl) {
  */
 void ClassLoaderDataGraph::roots_cld_do(CLDClosure* strong, CLDClosure* weak) {
   for (ClassLoaderData* cld = _head;  cld != NULL; cld = cld->_next) {
-    CLDClosure* closure = cld->keep_alive() ? strong : weak; // 遍历当前所有的ClassLoaderData，如果是keep_alive的，那么就使用 strong，如果不是keep_alive的，就使用strong
+  /**
+   * 遍历当前所有的ClassLoaderData，
+   *    如果是keep_alive的，那么就使用 strong，
+   *    如果不是keep_alive的，就使用strong
+   */
+    CLDClosure* closure = cld->keep_alive() ? strong : weak; //
     if (closure != NULL) {
       closure->do_cld(cld); // 搜索 class G1CLDClosure : public CLDClosure,查看方法do_cld
     }

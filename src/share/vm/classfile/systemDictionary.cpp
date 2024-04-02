@@ -1737,7 +1737,7 @@ void SystemDictionary::roots_oops_do(OopClosure* strong, OopClosure* weak) {
   CDS_ONLY(SystemDictionaryShared::roots_oops_do(strong);)
 
   // Adjust dictionary
-  dictionary()->roots_oops_do(strong, weak);
+  dictionary()->roots_oops_do(strong, weak); // 搜索 Dictionary::roots_oops_do
 
   // Visit extra methods
   invoke_method_table()->oops_do(strong);

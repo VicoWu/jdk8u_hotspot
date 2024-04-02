@@ -976,11 +976,11 @@ class JavaThread: public Thread {
   static SATBMarkQueueSet _satb_mark_queue_set; // 全局静态的SATB标记队列集合
 
   /**
-   * 线程本地的脏卡片队列。需要与线程本地的SATB标记队列相区别
+   * Java线程本地的脏卡片队列。需要与线程本地的SATB标记队列相区别
    */
   DirtyCardQueue _dirty_card_queue;      // Thread-local log for dirty cards.
   // Set of all such queues.
-  static DirtyCardQueueSet _dirty_card_queue_set; // 全局静态的脏卡片队列集合
+  static DirtyCardQueueSet _dirty_card_queue_set; // Java全局静态的脏卡片队列集合
 
   void flush_barrier_queues();
 #endif // INCLUDE_ALL_GCS
@@ -1707,7 +1707,7 @@ public:
 
   // Dirty card queue support
   /**
-   * 用来存放JavaThread线程本地的转移专用记忆集合DCQ
+   * 用来存放JavaThread线程本地的转移专用记忆集合DCQ,或者 GC回收线程(因为回收过程也会转移对象)本地的DCQ
    * 查看方法 G1SATBCardTableLoggingModRefBS::write_ref_field_work ,写屏障向线程本地的DCQ中插入元素
    */
   DirtyCardQueue& dirty_card_queue() { return _dirty_card_queue; }

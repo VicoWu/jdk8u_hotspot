@@ -166,7 +166,7 @@ class CardTableModRefBS: public ModRefBarrierSet {
            err_msg("Attempt to access p = " PTR_FORMAT " out of bounds of "
                    " card marking array's _whole_heap = [" PTR_FORMAT "," PTR_FORMAT ")",
                    p2i(p), p2i(_whole_heap.start()), p2i(_whole_heap.end())));
-    jbyte* result = &byte_map_base[uintptr_t(p) >> card_shift];
+    jbyte* result = &byte_map_base[uintptr_t(p) >> card_shift]; // 右移9位然后取地址，因为一个卡片对应了512字节，所以这里result就对应了这个卡片对应的512的首地址
     assert(result >= _byte_map && result < _byte_map + _byte_map_size,
            "out of bounds accessor for card marking array");
     return result;

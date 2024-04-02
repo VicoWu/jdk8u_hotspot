@@ -945,7 +945,7 @@ void G1CollectorPolicy::record_concurrent_mark_cleanup_start() {
 }
 
 void G1CollectorPolicy::record_concurrent_mark_cleanup_completed() {
-    // 之所以在并发清理结束以后将_last_young_gc设置为true，因为一般并发清理结束以后，就希望进行一轮mixed gc
+    // 之所以在并发清理结束以后将_last_young_gc设置为true，因为一般并发标记结束以后，就希望进行一轮mixed gc
   _last_young_gc = true; // 并发标记清理结束,这是唯一可以将_last_young_gc设置为true的地方
   _in_marking_window = false;
 }
@@ -2057,7 +2057,12 @@ uint G1CollectorPolicy::calc_max_old_cset_length() {
   return (uint) result;
 }
 
-
+/**
+ * 选择一个新的回收集合。 将所选区域标记为“in_collection_set”，并将它们链接在一起。
+ * 集合组的头和编号可通过相应的access 方法获得
+ * @param target_pause_time_ms
+ * @param evacuation_info
+ */
 void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInfo& evacuation_info) {
   double young_start_time_sec = os::elapsedTime();
 

@@ -303,9 +303,17 @@ protected:
 
   // The Klasses are not placed in the Heap, so the Card Table or
   // the Mod Union Table can't be used to mark when klasses have modified oops.
-  // The CT and MUT bits saves this information for the individual Klasses.
+  // The c and MUT bits saves this information for the individual Klasses.
+  /**
+   * Klasses 不放置在堆中，因此 Card Table 或 Mod Union Table
+   * 不能用于标记 klasses 何时修改了 oops。 CT 和 MUT 位保存各个类别的此信息。
+   */
   void record_modified_oops()            { _modified_oops = 1; }
   void clear_modified_oops()             { _modified_oops = 0; }
+  /**
+   * 标记这个klass对应的class对象是否有被修改过，比如，因为gc的发生从eden移动到了survivor
+   * @return
+   */
   bool has_modified_oops()               { return _modified_oops == 1; }
 
   void accumulate_modified_oops()        { if (has_modified_oops()) _accumulated_modified_oops = 1; }

@@ -1148,6 +1148,9 @@ private:
   ConcurrentMark*       _cm;
   ConcurrentMarkThread* _cmt;
 
+  /**
+   * 这个方法是 CMConcurrentMarkingTask::work()
+   */
 public:
   void work(uint worker_id) {
     assert(Thread::current()->is_ConcurrentGC_thread(),
@@ -1279,7 +1282,8 @@ void ConcurrentMark::scanRootRegion(HeapRegion* hr, uint worker_id) {
     Prefetch::read(curr, interval);
     oop obj = oop(curr); // 将 curr 转换为 oopDesc* 类型，并将结果赋值给 obj
     /**
-     * 调用oopDesc的成员方法 oopDesc::oop_iterate，搜索 G1RootRegionScanClosure::do_oop_nv，返回这个obj 的大小
+     * 调用oopDesc的成员方法 oopDesc::oop_iterate，
+     * 搜索 G1RootRegionScanClosure::do_oop_nv，返回这个obj 的大小
      */
     int size = obj->oop_iterate(&cl); //
     assert(size == obj->size(), "sanity");
@@ -1301,7 +1305,9 @@ public:
     AbstractGangTask("Root Region Scan"), _cm(cm) { }
 
     /**
-     * 并发标记(不是并行标记)的工作方法，调用者为 ConcurrentMark::scanRootRegion
+     * CMRootRegionScanTask::work 方法
+     * 并发标记(不是并行标记)的工作方法，对root region进行最初的扫描
+     * 调用者为 ConcurrentMark::scanRootRegions
      * @param worker_id
      */
   void work(uint worker_id) {
@@ -1364,6 +1370,7 @@ void ConcurrentMark::scanRootRegions() {
 
 /**
  * 进入并发标记子阶段
+ * 区别_cm->scanRootRegions();这个 scanRootRegions 是对root region进行标记
  */
 void ConcurrentMark::markFromRoots() {
   // we might be tempted to assert that:
@@ -1386,7 +1393,7 @@ void ConcurrentMark::markFromRoots() {
   // Parallel task terminator is set in "set_concurrency_and_phase()"
   set_concurrency_and_phase(active_workers, true /* concurrent */);
   /**
-   * 执行并发标记的task，执行过程在方法 CMConcurrentMarkingTask::work中
+   * 执行并发标记的task，执行过程在方法 CMConcurrentMarkingTask::work() 中
    */
   CMConcurrentMarkingTask markingTask(this, cmThread());
   if (use_parallel_marking_threads()) { // 是否concurrently执行
@@ -3747,17 +3754,24 @@ private:
 public:
   CMBitMapClosure(CMTask *task, ConcurrentMark* cm, CMBitMap* nextMarkBitMap) :
     _task(task), _cm(cm), _nextMarkBitMap(nextMarkBitMap) { }
-
+  /**
+   * 参数是在标记位图中的偏移量
+   * @param offset
+   * @return
+   */
   bool do_bit(size_t offset) {
-    HeapWord* addr = _nextMarkBitMap->offsetToHeapWord(offset);  // 通过offset转换成这个bit对应的内存字地址 ，搜索 HeapWord* offsetToHeapWord(size_t offset)
+      /**
+       * 通过offset转换成这个bit对应的内存字地址 ，搜索 HeapWord* offsetToHeapWord(size_t offset)
+       */
+    HeapWord* addr = _nextMarkBitMap->offsetToHeapWord(offset);  //
     assert(_nextMarkBitMap->isMarked(addr), "invariant");
-    assert( addr < _cm->finger(), "invariant");
+    assert( addr < _cm->finger(), "invariant"); // addr在全局finger的下面
 
     statsOnly( _task->increase_objs_found_on_bitmap() );
-    assert(addr >= _task->finger(), "invariant");
+    assert(addr >= _task->finger(), "invariant"); // addr在当前的task的局部finger的上面
 
     // We move that task's local finger along.
-    _task->move_finger_to(addr); // 移动当前的CMTask的local finger到这个位置
+    _task->move_finger_to(addr); // 移动当前的CMTask的local finger到当前的这个地址
 
     _task->scan_object(oop(addr)); // 对这个对象进行扫描，从scan_object调用到process_grey_object的时候，scan=true
     // we only partially drain the local queue and global stack
@@ -4496,6 +4510,7 @@ void CMTask::print_stats() {
 
 
  * 搜 ->do_marking_step  查看 该方法的调用的四个地方
+ * 搜搜 CMConcurrentMarkingTask::work 查看CMTask的调度过程
  * 一个 CMTask代表了并发标记阶段的一个线程
  * 当do_termination = false，那么肯定不会进行steal操作
  * @param time_target_ms
@@ -4657,6 +4672,9 @@ void CMTask::do_marking_step(double time_target_ms,
         giveup_current_region();
         regular_clock_call();
       } else if (_curr_region->isHumongous() && mr.start() == _curr_region->bottom()) {
+          /**
+           * 如果这个region刚好是一个大对象的开始位置
+           */
         if (_nextMarkBitMap->isMarked(mr.start())) { // 这个对象已经被标记，那么就apply对应的bit closure CMBitMapClosure
           // The object is marked - apply the closure
           BitMap::idx_t offset = _nextMarkBitMap->heapWordToOffset(mr.start());
@@ -4670,9 +4688,9 @@ void CMTask::do_marking_step(double time_target_ms,
          * 搜索 class CMBitMapClosure : public BitMapClosure 查看具体实现，
          *          它会在指定的区域(mr限定)扫描位图，同时在扫描的时候不断更新本地的_finger
          * 虽然_nextMarkBitMap是全局的，但是通过mr(Memory Region)限制了遍历的区域
-         * CMBitMap是CMBitMapRO 的子类，搜索 inline bool CMBitMapRO::iterate查看iterate方法的具体实现
-         * 返回true，说明成功地apply了对应的closure
-         * 返回false，说明收到了abort 的信号(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
+         * CMBitMap是CMBitMapRO 的子类，搜索 inline bool CMBitMapRO::iterate 查看iterate方法的具体实现
+         *  返回true，说明成功地apply了对应的closure
+         *  返回false，说明收到了abort 的信号(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
          */
       } else if (_nextMarkBitMap->iterate(&bitmap_closure, mr)) { //
         giveup_current_region();
@@ -4695,7 +4713,7 @@ void CMTask::do_marking_step(double time_target_ms,
         // bitmap knows by how much we need to move it as it knows its
         // granularity).
         /**
-         * 中止位图迭代的唯一方法是从 do_bit() 方法返回 false(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
+         * 中止 位图迭代 的唯一方法是从 do_bit() 方法返回 false(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
          * 然而，在 do_bit() 方法中，我们会移动 _finger 以指向当前正在扫描的对象，
          * 所以，如果我们中途abort，我们需要将 _finger 设置为非空值。
          * 在当前迭代过程被终止的时候，现在_finger正指向我们上次扫描的对象的地址。
@@ -4763,13 +4781,17 @@ void CMTask::do_marking_step(double time_target_ms,
       // method once round the loop to make sure it's called
       // frequently enough.
       regular_clock_call();
+      // 内层while循环，直到当前的CMTask成功claim到了一个region，存入到_curr_region
     }
 
     if (!has_aborted() && _curr_region == NULL) {
       assert(_cm->out_of_regions(),
              "at this point we should be out of regions");
     }
-    // 外层循环，只要_curr_region不为空，就意味着claim了一个新的region，因此继续循环
+    /**
+     * 外层while循环，
+     * 只要_curr_region不为空，就意味着claim了一个新的region，因此继续循环
+     */
   } while ( _curr_region != NULL && !has_aborted());
   // 退出while循环的时候，说明成功claim了一个region
   /**
