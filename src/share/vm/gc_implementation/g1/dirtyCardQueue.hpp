@@ -42,6 +42,11 @@ public:
 // A ptrQueue whose elements are "oops", pointers to object heads.
 class DirtyCardQueue: public PtrQueue {
 public:
+    /**
+     * 指向一个DirtyCardQueueSet
+     * @param qset_
+     * @param perm
+     */
   DirtyCardQueue(PtrQueueSet* qset_, bool perm = false) :
     // Dirty card queues are always active, so we create them with their
     // active field set to true.
@@ -49,6 +54,9 @@ public:
 
   // Flush before destroying; queue may be used to capture pending work while
   // doing something else, with auto-flush on completion.
+  /**
+   * 销毁前进行flush； 队列用于在执行其他操作时捕获待处理的工作，并在完成时自动刷新。
+   */
   ~DirtyCardQueue() { if (!is_permanent()) flush(); }
 
   // Process queue entries and release resources.

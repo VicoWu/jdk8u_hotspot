@@ -2226,11 +2226,17 @@ jint G1CollectedHeap::initialize() {
   // Perform any initialization actions delegated to the policy.
   g1_policy()->init();
 
+  /**
+   * 初始化全局的JavaThread的SATB Mark Queue Set
+   */
   JavaThread::satb_mark_queue_set().initialize(SATB_Q_CBL_mon,
                                                SATB_Q_FL_lock,
                                                G1SATBProcessCompletedThreshold,
                                                Shared_SATB_Q_lock);
 
+  /**
+   * 初始化全局的JavaThread的DCQS
+   */
   JavaThread::dirty_card_queue_set().initialize(_refine_cte_cl,
                                                 DirtyCardQ_CBL_mon,
                                                 DirtyCardQ_FL_lock,
@@ -2238,6 +2244,10 @@ jint G1CollectedHeap::initialize() {
                                                 concurrent_g1_refine()->red_zone(),
                                                 Shared_DirtyCardQ_lock);
 
+  /**
+   *  搜索 void DirtyCardQueueSet::initialize 查看初始化的过程
+   *  在构造方法 G1CollectedHeap::G1CollectedHeap 中调用
+   */
   dirty_card_queue_set().initialize(NULL, // Should never be called by the Java code
                                     DirtyCardQ_CBL_mon,
                                     DirtyCardQ_FL_lock,
@@ -2248,6 +2258,10 @@ jint G1CollectedHeap::initialize() {
 
   // Initialize the card queue set used to hold cards containing
   // references into the collection set.
+  /**
+   *  搜索 void DirtyCardQueueSet::initialize 查看初始化的过程
+   *  在构造方法 G1CollectedHeap::G1CollectedHeap 中调用
+   */
   _into_cset_dirty_card_queue_set.initialize(NULL, // Should never be called by the Java code
                                              DirtyCardQ_CBL_mon,
                                              DirtyCardQ_FL_lock,
@@ -3062,7 +3076,8 @@ void G1CollectedHeap::collection_set_iterate(HeapRegionClosure* cl) {
 }
 
 /**
- * 调用者是 void G1RemSet::scanRS
+ * 调用者是    void G1RemSet::scanRS
+ *       或者 G1ParRemoveSelfForwardPtrsTask::work()
  * cl是HeapRegionClosure的具体实现ScanRSClosure
  */
 void G1CollectedHeap::collection_set_iterate_from(HeapRegion* r,
@@ -4677,7 +4692,9 @@ void G1CollectedHeap::remove_self_forwarding_pointers() {
   double remove_self_forwards_start = os::elapsedTime();
 
   G1ParRemoveSelfForwardPtrsTask rsfp_task(this);
-
+  /**
+   *  这一轮的Evacuation失败了，因此并发地使用G1ParRemoveSelfForwardPtrsTask来进行
+   */
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     set_par_threads();
     workers()->run_task(&rsfp_task);
@@ -4707,6 +4724,10 @@ void G1CollectedHeap::remove_self_forwarding_pointers() {
   g1_policy()->phase_times()->record_evac_fail_remove_self_forwards((os::elapsedTime() - remove_self_forwards_start) * 1000.0);
 }
 
+/**
+ * 将刚刚copy_to_survivor失败的对象obj放入到_evac_failure_scan_stack堆栈中，随后处理
+ * @param obj
+ */
 void G1CollectedHeap::push_on_evac_failure_scan_stack(oop obj) {
   _evac_failure_scan_stack->push(obj);
 }
@@ -4716,13 +4737,22 @@ void G1CollectedHeap::drain_evac_failure_scan_stack() {
 
   while (_evac_failure_scan_stack->length() > 0) {
      oop obj = _evac_failure_scan_stack->pop();
+     /**
+      * 这个closure是 G1ParScanHeapEvacFailureClosure，
+      * 其实是一个typedef G1ParCopyClosure<G1BarrierEvac, G1MarkNone> G1ParScanHeapEvacFailureClosure;
+      * 参考 G1CollectedHeap::handle_evacuation_failure_par
+      */
      _evac_failure_closure->set_region(heap_region_containing(obj));
+     /**
+      * 反向遍历这个对象的所有field，apply对应的_evac_failure_closure，即 G1ParScanHeapEvacFailureClosure
+      * 搜索 void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
+      */
      obj->oop_iterate_backwards(_evac_failure_closure);
   }
 }
 
 /**
- * _par_scan_state 是当前的pss，记住，一个pss是和一个Task对应起来的
+ * _par_scan_state 是当前的pss，记住，一个pss是和一个Task即一个thread对应起来的
  * old是在将这个对象进行evacuate以前对象的oopDesc*
  * @param _par_scan_state
  * @param old
@@ -4734,12 +4764,21 @@ G1CollectedHeap::handle_evacuation_failure_par(G1ParScanThreadState* _par_scan_s
   assert(obj_in_cs(old),
          err_msg("obj: " PTR_FORMAT " should still be in the CSet",
                  (HeapWord*) old));
-  markOop m = old->mark();
+  markOop m = old->mark(); // markOopDesc*
   oop forward_ptr = old->forward_to_atomic(old);
   if (forward_ptr == NULL) {
+      // 自引用指针设置成功
     // Forward-to-self succeeded.
     assert(_par_scan_state != NULL, "par scan state");
+    /**
+     * 取出当前线程在copy_to_survivor调用之前设置的 evacuation failure survivor
+     * G1ParScanHeapEvacFailureClosure evac_failure_cl(_g1h, &pss, rp);
+     */
     OopsInHeapRegionClosure* cl = _par_scan_state->evac_failure_closure();
+    /**
+     * 搜索 G1ParTask::work()
+     * 这个queue_num其实就是当前构造pss时候的线程id
+     */
     uint queue_num = _par_scan_state->queue_num();
 
     _evacuation_failed = true;
@@ -4750,7 +4789,7 @@ G1CollectedHeap::handle_evacuation_failure_par(G1ParScanThreadState* _par_scan_s
              "Should only be true while someone holds the lock.");
       // Set the global evac-failure closure to the current thread's.
       assert(_evac_failure_closure == NULL, "Or locking has failed.");
-      set_evac_failure_closure(cl);
+      set_evac_failure_closure(cl); // 设置全局的负责待处理evacuation failure的 closure
       // Now do the common part.
       handle_evacuation_failure_common(old, m);
       // Reset to NULL.
@@ -4784,6 +4823,9 @@ void G1CollectedHeap::handle_evacuation_failure_common(oop old, markOop m) {
 
   push_on_evac_failure_scan_stack(old);
 
+  /**
+   * 如果当前没有处在清空状态（因为其他task可能也遇到了同样的情况，因此同时只能有一个task进入这个if 代码块）
+   */
   if (!_drain_in_progress) {
     // prevent recursion in copy_to_survivor_space()
     _drain_in_progress = true;
@@ -4928,6 +4970,8 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
   }
   /**
    * 在对象发生了移动以后，需要更新引用关系
+   * 只有转移失败的时候才会有 G1BarrierEvac
+   * 搜索 template <class T> void update_rs(HeapRegion* from, T* p, int tid) {
    */
   if (barrier == G1BarrierEvac) {
     _par_scan_state->update_rs(_from, p, _worker_id);
@@ -6425,6 +6469,9 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
   finalize_for_evac_failure();
   // 如果回收失败
   if (evacuation_failed()) {
+      /**
+       * 删除自引用指针
+       */
     remove_self_forwarding_pointers();
 
     // Reset the G1EvacuationFailureALot counters and flags
@@ -7368,6 +7415,7 @@ HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
 /**
  * 卸载一个gc alloc region，这里卸载的是gc_alloc_region，因此只有可能是survivor和old region,
  *                  而young region的卸载是retire_mutator_alloc_region
+ *                  所以这两个方法的调用只会来自 SurvivorGCAllocRegion::retire_region 和 OldGCAllocRegion::retire_region
  *
  * @param alloc_region 当前需要卸载的region
  * @param allocated_bytes

@@ -77,7 +77,7 @@ private:
   // When true, indicates that allocate calls should do BOT updates.
   /**
    * 从几个G1AllocRegion的实现可以看到，只有OldGCAllocRegion的_bot_updates是true，
-   * 而SurvivorGCAllocRegion 和 MutatorGCAllocRegion
+   * 而SurvivorGCAllocRegion 和 MutatorGCAllocRegion，因为Young区是不需要bot update的
    * 的_bot_updates都是false
    */
   const bool _bot_updates;
@@ -116,6 +116,11 @@ private:
   // Retire the active allocating region. If fill_up is true then make
   // sure that the region is full before we retire it so that no one
   // else can allocate out of it.
+  /**
+   * 这是 G1AllocRegion::retire 方法
+   * 卸载当前正在活跃分配的Region。
+   * 如果 fill_up 为 true，那么在我们收回该区域之前确保该区域已满，以便其他人无法分配该区域。
+   */
   void retire(bool fill_up);
 
   // After a region is allocated by alloc_new_region, this

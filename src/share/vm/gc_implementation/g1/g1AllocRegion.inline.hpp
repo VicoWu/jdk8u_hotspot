@@ -131,9 +131,11 @@ inline HeapWord* G1AllocRegion::attempt_allocation_locked(size_t word_size,
     return result;
   }
   // 不上锁分配内存失败，清空当前的region
-  /**
-   * 这里调用的是 G1AllocRegion::retire，代表的含义是卸载掉当前这个区域的对应的active region，因为将会分配一个新的region
-   */
+     /**
+      * 这里调用的是 G1AllocRegion::retire，代表的含义是卸载掉当前这个区域的对应的active region，因为将会分配一个新的region
+      * 搜索  G1AllocRegion::retire 查看具体实现
+     *      需要跟 G1ParGCAllocBuffer::retire 查看具体实现， G1ParGCAllocBuffer::retire 将当前的这个G1ParGCAllocBuffer从G1ParGCAllocator中卸载掉
+     */
   retire(true /* fill_up */);
   /**
    * 对应了G1AllocRegion::new_alloc_region_and_allocate

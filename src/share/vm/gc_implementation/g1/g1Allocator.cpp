@@ -137,14 +137,20 @@ HeapWord* G1ParGCAllocator::allocate_direct_or_new_plab(InCSetState dest,
        */
   if (word_sz * 100 < gclab_word_size * ParallelGCBufferWastePct) {
       /**
-       * 如果需要分配的空间足够小
+       * 如果需要分配的空间足够小，那么我们不需要在heap中直接分配，还是希望通过plab进行分配
+       * 获取 G1ParGCAllocator 维护的这个dest对应的 G1ParGCAllocBuffer 对象
+       * 具体实现 搜索 virtual G1ParGCAllocBuffer* alloc_buffer
        */
-    G1ParGCAllocBuffer* alloc_buf = alloc_buffer(dest, context); // 获取 G1ParGCAllocator维护的这个dest对应的G1ParGCAllocBuffer对象
+    G1ParGCAllocBuffer* alloc_buf = alloc_buffer(dest, context); //
     /**
      *  由于需要创建一个新的plab，因此将当前plab的剩余空间(即浪费掉的空间)加入到G1ParGCAllocator的_alloc_buffer_waste的统计值中
      */
     add_to_alloc_buffer_waste(alloc_buf->words_remaining());
-    // 将当前的这个G1ParGCAllocBuffer从G1ParGCAllocator中卸载掉
+    /**
+     * 将当前的这个 G1ParGCAllocBuffer从G1ParGCAllocator中卸载掉
+     * 搜索 G1ParGCAllocBuffer::retire 查看具体实现
+     * 需要跟 G1AllocRegion::retire 进行区分
+     */
     alloc_buf->retire(false /* end_of_gc */, false /* retain */);
     /**
      * 在堆内存中直接分配一个plab，这个plab的大小是gclab_word_size
@@ -157,7 +163,12 @@ HeapWord* G1ParGCAllocator::allocate_direct_or_new_plab(InCSetState dest,
     // Otherwise.
     alloc_buf->set_word_size(gclab_word_size);
     alloc_buf->set_buf(buf);
-    // 在新分配的G1ParGCAllocBuffer中分配word_sz个字的空间
+    /**
+     * 在新分配的 G1ParGCAllocBuffer 中分配word_sz个字的空间
+     * G1ParGCAllocBuffer没有重载父类ParGCAllocBuffer中的该方法
+     * 具体实现搜索 ParGCAllocBuffer::allocate
+     * 从当前的buffer中取出大小为word_sz大小的buffer
+     */
     HeapWord* const obj = alloc_buf->allocate(word_sz);
     assert(obj != NULL, "buffer was definitely big enough...");
     return obj;

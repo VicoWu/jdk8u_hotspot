@@ -84,7 +84,10 @@ public:
    */
   HeapWord* allocate(size_t word_sz) {
     HeapWord* res = _top;
-    if (pointer_delta(_end, _top) >= word_sz) { // 当前ParGCAllocBuffer所剩余的空间能够直接分配word_sz，则直接分配，_top就是新的分配地址
+    /**
+     * 当前ParGCAllocBuffer所剩余的空间能够直接分配word_sz，则直接分配，_top就是新的分配地址
+     */
+    if (pointer_delta(_end, _top) >= word_sz) { //
       _top = _top + word_sz;
       return res;
     } else {
@@ -170,6 +173,14 @@ public:
   // Fills in the unallocated portion of the buffer with a garbage object.
   // If "end_of_gc" is TRUE, is after the last use in the GC.  IF "retain"
   // is true, attempt to re-use the unused portion in the next GC.
+  /**
+   * 用垃圾对象填充缓冲区的未分配部分。
+   *    如果“end_of_gc”为 TRUE，则在 GC 中最后一次使用之后。
+   *    如果“retain”为 true，意味着在下次GC 中重新使用未使用的部分。
+   * 调用链为 G1ParGCAllocBuffer::retire -> ParGCAllocBuffer::retire
+   * @param end_of_gc
+   * @param retain
+   */
   virtual void retire(bool end_of_gc, bool retain);
 
   void print() PRODUCT_RETURN;

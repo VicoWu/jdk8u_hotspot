@@ -45,7 +45,7 @@ class PtrQueue VALUE_OBJ_CLASS_SPEC {
 
 protected:
   // The ptr queue set to which this queue belongs.
-  PtrQueueSet* _qset;
+  PtrQueueSet* _qset; // 这个DirtyCardQueue(PtrQueue)所属于的DirtyCardQueueSet（PtrQueueSet）
 
   // Whether updates should be logged.
   bool _active;
@@ -91,6 +91,7 @@ public:
   }
 
   /**
+   * 这是 PtrQueue::enqueue
    * 调用类查看 G1SATBCardTableLoggingModRefBS::write_ref_field_work
    */
   // Enqueues the given "obj".
@@ -106,6 +107,11 @@ public:
   // entries were cleared from it so that it can be re-used. It should
   // not return false if the buffer is still full (otherwise we can
   // get into an infinite loop).
+  /**
+   * 当我们进行零索引处理时会调用此方法，并为队列提供它们可能想要在缓冲区上执行的任何预排队处理的机会。
+   * 如果缓冲区应排队，则应返回 true；如果从中清除了足够的条目以便可以重新使用，则应返回 false。
+   * 如果缓冲区仍然满的话，它不应该返回 false（否则我们可能会进入无限循环）。
+   */
   virtual bool should_enqueue_buffer() { return true; }
   void handle_zero_index();
   void locking_enqueue_completed_buffer(void** buf);

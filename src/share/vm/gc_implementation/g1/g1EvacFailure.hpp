@@ -49,13 +49,29 @@ public:
 
   virtual void do_oop(narrowOop* p) { do_oop_work(p); }
   virtual void do_oop(      oop* p) { do_oop_work(p); }
+  /**
+   * 这是 UpdateRSetDeferred::do_oop_work()  方法
+   * @tparam T
+   * @param p
+   */
   template <class T> void do_oop_work(T* p) {
+      /**
+       *  p 是某一个field，很显然，这个field所在的region肯定是在_from中的，
+       *  而p指向的对象oopDesc::load_decode_heap_oop(p) 不在_from中，并且_from不是survivor，那么，我们就需要将
+       */
     assert(_from->is_in_reserved(p), "paranoia");
     if (!_from->is_in_reserved(oopDesc::load_decode_heap_oop(p)) &&
         !_from->is_survivor()) {
+        /**
+         * 关于 index_for，搜索 inline size_t G1BlockOffsetSharedArray::index_for
+         */
       size_t card_index = _ct_bs->index_for(p);
+      /**
+       * 设置这个对象的卡表信息，把卡表设置为deferred
+       * 关于_dcq，搜索 RemoveSelfForwardPtrHRClosure(G1CollectedHeap* g1h, 可以看到，是G1CollectedHeap的全局的queue
+       */
       if (_ct_bs->mark_card_deferred(card_index)) {
-        _dcq->enqueue((jbyte*)_ct_bs->byte_for_index(card_index));
+        _dcq->enqueue((jbyte*)_ct_bs->byte_for_index(card_index)); // 把 field所在的卡片的索引放入到_dcq中
       }
     }
   }
@@ -75,6 +91,9 @@ private:
   HeapWord* _last_gap_threshold;
   HeapWord* _last_obj_threshold;
 
+  /**
+   * 搜索 RemoveSelfForwardPtrObjClosure rspc 查看构造方法
+   */
 public:
   RemoveSelfForwardPtrObjClosure(G1CollectedHeap* g1, ConcurrentMark* cm,
                                  HeapRegion* hr,
@@ -109,6 +128,10 @@ public:
   // region and refine its entries for every object we come across. So
   // the above comment is not really relevant and we should be able
   // to coalesce dead objects if we want to.
+  /**
+   * RemoveSelfForwardPtrObjClosure::do_object 方法
+   * 调用者是 RemoveSelfForwardPtrHRClosure::doHeapRegion
+   */
   void do_object(oop obj) {
     HeapWord* obj_addr = (HeapWord*) obj;
     assert(_hr->is_in(obj_addr), "sanity");
@@ -119,7 +142,10 @@ public:
       // there was a gap before obj_addr
       _last_gap_threshold = _hr->cross_threshold(_end_of_last_gap, obj_addr);
     }
-
+    /**
+     * 判断对象是否是一个自转发对象
+     * 一个自转发对象意味着这个对象在copy_to_survivor的时候失败了
+     */
     if (obj->is_forwarded() && obj->forwardee() == obj) {
       // The object failed to move.
 
@@ -127,7 +153,7 @@ public:
       // live. What we'll do is that we'll update the prev marking
       // info so that they are all under PTAMS and explicitly marked.
       if (!_cm->isPrevMarked(obj)) {
-        _cm->markPrev(obj);
+        _cm->markPrev(obj); // 在_prevMarkBitMap 也标记这个对象
       }
       if (_during_initial_mark) {
         // For the next marking info we'll only mark the
@@ -140,6 +166,13 @@ public:
         // explicitly and all objects in the CSet are considered
         // (implicitly) live. So, we won't mark them explicitly and
         // we'll leave them over NTAMS.
+        /**
+         * 对于next marking 信息，如果我们在初始标记期间，我们将仅显式标记自转发的对象（因为，通常，如果我们成功复制它们，我们仅标记根指向的对象）。
+         * 通过标记所有自转发的对象，我们确保标记任何仍然被根指向的对象。
+         * 在并发标记期间的初始标记之后，我们不需要显式标记任何对象，因为这些对象肯定可以从初始标记过程中被间接的访问到并被标记
+         * 并且 CSet 中的所有对象都被视为（隐式）活动的。
+         * 因此，我们不会明确标记它们，而是将它们留给 N TAMS。
+         */
         _cm->grayRoot(obj, obj_size, _worker_id, _hr);
       }
       _marked_bytes += (obj_size * HeapWordSize);
@@ -157,14 +190,23 @@ public:
       // The problem is that, if evacuation fails, we might have
       // remembered set entries missing given that we skipped cards on
       // the collection set. So, we'll recreate such entries now.
+      /**
+       * 搜索 _update_rset_cl(g1h, &_dcq)
+       * 其实就是 UpdateRSetDeferred::do_oop_work，这里到了UpdateRSetDeferred::do_oop_work就是处理的是objd对象的每一个field
+       */
       obj->oop_iterate(_update_rset_cl);
     } else {
-
+        /**
+         * 这个对象的转发地址不是指向自己的，因此这个对象或者已经被evacuated，或者是死的
+         */
       // The object has been either evacuated or is dead. Fill it with a
       // dummy object.
       MemRegion mr(obj_addr, obj_size);
       CollectedHeap::fill_with_object(mr);
 
+      /**
+       * 把这个对象在prev bit map中的标记位清除，这样的话这个对象就可以被清除了
+       */
       // must nuke all dead objects which we skipped when iterating over the region
       _cm->clearRangePrevBitmap(MemRegion(_end_of_last_gap, obj_end));
     }
@@ -181,6 +223,10 @@ class RemoveSelfForwardPtrHRClosure: public HeapRegionClosure {
   DirtyCardQueue _dcq;
   UpdateRSetDeferred _update_rset_cl;
 
+  /**
+   * 搜索 RemoveSelfForwardPtrHRClosure rsfp_cl 查看对象的构造过程
+   * 可以看到，每一个worker会构造一个 RemoveSelfForwardPtrHRClosure rsfp_cl，因此一个worker会有一个_dcq，他们都属于全局g1h的dcqs
+   */
 public:
   RemoveSelfForwardPtrHRClosure(G1CollectedHeap* g1h,
                                 uint worker_id) :
@@ -188,15 +234,24 @@ public:
     _worker_id(worker_id), _cm(_g1h->concurrent_mark()) {
     }
 
+    /**
+     * RemoveSelfForwardPtrHRClosure::doHeapRegion
+     * 这个closure会在回收失败以后，被多个worker id并发调用，遍历整个CSet中的所有的 HeapRegion
+     * 下层会调用RemoveSelfForwardPtrObjClosure 来遍历当前的HeapRegion
+     */
   bool doHeapRegion(HeapRegion *hr) {
     bool during_initial_mark = _g1h->g1_policy()->during_initial_mark_pause();
     bool during_conc_mark = _g1h->mark_in_progress();
 
     assert(!hr->isHumongous(), "sanity");
     assert(hr->in_collection_set(), "bad CS");
-
     if (hr->claimHeapRegion(HeapRegion::ParEvacFailureClaimValue)) {
-      if (hr->evacuation_failed()) {
+        /**
+         * 这个HeapRegion的确有失败的evacuation
+         * 这里的意思是，这个HeapRegion中至少存在一个obj在evacuate的失败了（因为在copy_to_survivor方法中，
+         *    如果在处理某一个obj的时候失败了，经过简单的针对这个obj的失败处理，就继续处理下一个object，而不会失败掉）
+         */
+      if (hr->evacuation_failed()) { // 这是一个存在evacuation failure 的 heap region
         RemoveSelfForwardPtrObjClosure rspc(_g1h, _cm, hr, &_update_rset_cl,
                                             during_initial_mark,
                                             during_conc_mark,
@@ -217,6 +272,10 @@ public:
         hr->rem_set()->reset_for_par_iteration();
         hr->reset_bot();
         _update_rset_cl.set_region(hr);
+        /**
+         * 遍历这个HeapRegion的所有obj，在每个obj上apply对应的RemoveSelfForwardPtrObjClosure
+         * 具体调用 搜索  RemoveSelfForwardPtrObjClosure::do_object
+         */
         hr->object_iterate(&rspc);
 
         hr->rem_set()->clean_strong_code_roots(hr);
@@ -238,10 +297,16 @@ public:
   G1ParRemoveSelfForwardPtrsTask(G1CollectedHeap* g1h) :
     AbstractGangTask("G1 Remove Self-forwarding Pointers"),
     _g1h(g1h) { }
-
+  /**
+   * G1ParRemoveSelfForwardPtrsTask::work() 方法
+   * 在一轮evacuation 结束以后，处理evacuation failure
+   */
   void work(uint worker_id) {
     RemoveSelfForwardPtrHRClosure rsfp_cl(_g1h, worker_id);
-
+    /**
+     *  搜索 HeapRegion* G1CollectedHeap::start_cset_region_for_worker
+     *  查找一个worker id负责的collecti set中的region
+     */
     HeapRegion* hr = _g1h->start_cset_region_for_worker(worker_id);
     _g1h->collection_set_iterate_from(hr, &rsfp_cl);
   }

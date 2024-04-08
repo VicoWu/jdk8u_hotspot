@@ -459,6 +459,7 @@ inline void ConcurrentMark::markPrev(oop p) {
 
 /**
  * 标记根对象
+ * 这个方法不是递归的
  * @param obj 对象的地址
  * @param word_size 对象的大小
  * @param worker_id 当前线程的id

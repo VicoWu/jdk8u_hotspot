@@ -51,6 +51,14 @@ size_t ParGCAllocBuffer::FillerHeaderSize;
 // sure we have enough space for a filler int array object.
 size_t ParGCAllocBuffer::AlignmentReserve;
 
+/**
+ * 方法 ParGCAllocBuffer::retire 的具体实现
+ *    * 用垃圾对象填充缓冲区的未分配部分。
+   *    如果“end_of_gc”为 TRUE，则在 GC 中最后一次使用之后。
+   *    如果“retain”为 true，意味着在下次GC 中重新使用未使用的部分。
+ * @param end_of_gc
+ * @param retain
+ */
 void ParGCAllocBuffer::retire(bool end_of_gc, bool retain) {
   assert(!retain || end_of_gc, "Can only retain at GC end.");
   if (_retained) {

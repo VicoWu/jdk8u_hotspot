@@ -790,6 +790,7 @@ ALL_OOP_OOP_ITERATE_CLOSURES_2(OOP_ITERATE_DEFN)
                                                                            \
 inline int oopDesc::oop_iterate_backwards(OopClosureType* blk) {           \
   SpecializationStats::record_call();                                      \
+  // 搜索 int InstanceKlass::oop_oop_iterate_backwards##nv_suffix       \
   return klass()->oop_oop_iterate_backwards##nv_suffix(this, blk);     \
 }
 

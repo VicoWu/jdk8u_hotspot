@@ -30,6 +30,13 @@
 #include "runtime/mutexLocker.hpp"
 #include "runtime/thread.inline.hpp"
 
+
+/**
+ * PtrQueue是ObjPtrQueue和DirtyCardQueue的父类
+ * @param qset
+ * @param perm
+ * @param active
+ */
 PtrQueue::PtrQueue(PtrQueueSet* qset, bool perm, bool active) :
   _qset(qset), _buf(NULL), _index(0), _sz(0), _active(active),
   _perm(perm), _lock(NULL)
@@ -161,7 +168,7 @@ void PtrQueueSet::reduce_free_list() {
 /**
  * 查看调用方： PtrQueue::enqueue_known_active
  * 这个方法的调用发生在DCQ满了的的情况，这时候就将DCQ放到DCQS中去，并申请新的DCQ
- * 这个PtrQueue可能是普通的DCQ，也有可能是 DCQS中的Shared Dirty Card Queue
+ * 这个PtrQueue可能是普通的DCQ，也有可能是 DCQS中的 Shared Dirty Card Queue
  */
 void PtrQueue::handle_zero_index() {
   assert(_index == 0, "Precondition.");

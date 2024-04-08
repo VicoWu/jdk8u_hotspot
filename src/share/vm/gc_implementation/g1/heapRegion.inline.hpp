@@ -231,7 +231,7 @@ inline void HeapRegion::note_end_of_marking() {
 
 /**
  通知该区域它将在 GC 期间用作目标空间，并且我们即将开始将对象复制到其中。
- * 在方法 G1CollectedHeap::retire_gc_alloc_region和 G1Allocator::reuse_retained_old_region 中调用，
+ * 在方法 G1CollectedHeap::retire_gc_alloc_region 和 G1Allocator::reuse_retained_old_region 中调用，
  * 因此只用于survivor 和 old region开始进行拷贝时候的调用
  * 当这个region刚刚被分配出来，准备用来存放数据的时候调用
  * @param during_initial_mark

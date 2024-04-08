@@ -171,10 +171,18 @@ public:
     _retired = false;
   }
 
+  /**
+   * 这是方法 G1ParGCAllocBuffer::retire
+   * 调用者是 G1ParGCAllocator::allocate_direct_or_new_plab
+   */
   virtual void retire(bool end_of_gc, bool retain) {
     if (_retired) {
       return;
     }
+    /**
+     * 调用父类的 void ParGCAllocBuffer::retire 方法
+     * 由于是父类的方法，虽然写着ParGCAllocBuffer::retire，其实是调用的实例方法
+     */
     ParGCAllocBuffer::retire(end_of_gc, retain);
     _retired = true;
   }
@@ -246,6 +254,7 @@ public:
   // Allocate word_sz words in the PLAB of dest.  Returns the address of the
   // allocated memory, NULL if not successful.
   /**
+   *  这个方法的全称是 G1ParGCAllocator::plab_allocate
    * TLAB（Thread Local Allocation Buffer）：
         TLAB 是针对单个线程的，每个线程都有自己的 TLAB。
         TLAB 是在 Java 虚拟机堆内存中为每个线程分配的一块小空间，用于线程本地的对象分配。
@@ -255,7 +264,6 @@ public:
         PLAB 是针对并行垃圾回收算法的，在并行垃圾回收中，每个线程都有自己的 PLAB。
         PLAB 也是用于线程本地的对象分配，但是与 TLAB 不同的是，PLAB 是为并行垃圾回收中的线程分配的。
         PLAB 的作用类似于 TLAB，都是为了减少线程之间的竞争，提高对象分配的效率。
-     这个方法的全称是 G1ParGCAllocator::plab_allocate
    * @param dest
    * @param word_sz
    * @param context
@@ -280,7 +288,7 @@ public:
   }
 
   /**
-   * 调用者是 G1ParScanThreadState::allocate_in_next_plab
+   * 调用者是 G1ParGCAllocator::allocate_in_next_plab
    * @param dest
    * @param word_sz
    * @param context
@@ -324,6 +332,7 @@ public:
   G1DefaultParGCAllocator(G1CollectedHeap* g1h);
 
   /**
+   * 这是 成员方法 G1DefaultParGCAllocator::alloc_buffer
    * G1DefaultParGCAllocator维护了一个存放G1ParGCAllocBuffer*指针的数组_alloc_buffers，
    * 数组的每一个元素是一个G1ParGCAllocBuffer指针，对应了某一个InCSetState状态的G1ParGCAllocBuffer对象
    */

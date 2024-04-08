@@ -2236,12 +2236,14 @@ template <class T> void assert_nothing(T *p) {}
 }
 
 #define InstanceKlass_OOP_MAP_REVERSE_ITERATE(obj, do_oop, assert_fn)    \
-{                                                                        \
+{                                                                        \\
+  // 反向迭代的终止位置                                                                        \
   OopMapBlock* const start_map = start_of_nonstatic_oop_maps();          \
+  // 反向迭代的起始位置
   OopMapBlock* map             = start_map + nonstatic_oop_map_count();  \
-  if (UseCompressedOops) {                                               \
+  if (UseCompressedOops) {  // 如果使用了       UseCompressedOops                                         \
     while (start_map < map) {                                            \
-      --map;                                                             \
+      --map;   // 进行反向迭代                                                          \
       InstanceKlass_SPECIALIZED_OOP_REVERSE_ITERATE(narrowOop,           \
         obj->obj_field_addr<narrowOop>(map->offset()), map->count(),     \
         do_oop, assert_fn)                                               \

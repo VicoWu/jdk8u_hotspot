@@ -97,7 +97,10 @@ inline bool requires_marking(const void* entry, G1CollectedHeap* heap) {
 // useful to the concurrent marking threads.  Entries are retained if
 // they require marking and are not already marked. Retained entries
 // are compacted toward the top of the buffer.
-
+/**
+ * 此方法从 SATB 缓冲区中删除对并发标记线程无用的条目。
+ * 如果条目需要标记且尚未标记，则条目将被保留。 保留的条目被压缩到缓冲区的顶部。
+ */
 void ObjPtrQueue::filter() {
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
   void** buf = _buf;

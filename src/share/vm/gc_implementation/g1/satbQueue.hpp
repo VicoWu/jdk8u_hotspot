@@ -43,7 +43,7 @@ public:
 
 // A ptrQueue whose elements are "oops", pointers to object heads.
 /**
- * 一个指向对象头不的ordinary object pointers，即指向对象头部的普通对象头部指针
+ * 一个指向对象头部的ordinary object pointers，即指向对象头部的普通对象头部指针
  * PtrQueue有两个子类，ObjPtrQueue和DirtyCardQueue，分别负责SATB和转移专用写屏障的写操作的线程本地队列，
  * 他们都有对应的全局Queue Set， 分别叫做 SATBMarkQueueSet 和 DirtyCardQueueSet，这些QueueSet里面都有对应的一个全局的PtrQueue的对象
  *     并且都有对应的QueueSet来负责全局的队列
@@ -62,6 +62,9 @@ public:
     // created during a cycle and its SATB queue needs to be activated
     // before the thread starts running, we'll need to set its active
     // field to true. This is done in JavaThread::initialize_queues().
+    /**
+     * SATB 队列仅在标记周期期间处于活动状态。 我们创建它们时将其活动字段设置为 false。 如果一个线程是在一个周期中创建的，并且它的 SATB 队列需要在线程开始运行之前激活，我们需要将其 active 字段设置为 true。 这是在 JavaThread::initialize_queues() 中完成的。
+     */
     PtrQueue(qset, perm, false /* active */) { }
 
   // Process queue entries and free resources.

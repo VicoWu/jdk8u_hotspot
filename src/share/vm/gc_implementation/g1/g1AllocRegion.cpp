@@ -100,7 +100,7 @@ void G1AllocRegion::retire(bool fill_up) {
 
   trace("retiring");
   /**
-   *  一个G1AllocRegion的具体实现类的对象中都有一个当前的active region，叫做_alloc_region
+   *  一个G1AllocRegion的具体实现类的对象中都有一个当前的active region，叫做 _alloc_region
    */
   HeapRegion* alloc_region = _alloc_region;
   if (alloc_region != _dummy_region) {
@@ -299,7 +299,8 @@ HeapRegion* SurvivorGCAllocRegion::allocate_new_region(size_t word_size,
 }
 
 /**
- * 在 void G1AllocRegion::retire中调用
+ * 在 void G1AllocRegion::retire 中调用
+ * 比较  SurvivorGCAllocRegion::retire_region 和 OldGCAllocRegion::retire_region
  * @param alloc_region
  * @param allocated_bytes
  */
@@ -315,6 +316,12 @@ HeapRegion* OldGCAllocRegion::allocate_new_region(size_t word_size,
   return _g1h->new_gc_alloc_region(word_size, count(), InCSetState::Old);
 }
 
+/**
+ * 在 void G1AllocRegion::retire 中调用
+ * 比较  SurvivorGCAllocRegion::retire_region 和 OldGCAllocRegion::retire_region
+ * @param alloc_region
+ * @param allocated_bytes
+ */
 void OldGCAllocRegion::retire_region(HeapRegion* alloc_region,
                                      size_t allocated_bytes) {
   _g1h->retire_gc_alloc_region(alloc_region, allocated_bytes, InCSetState::Old);

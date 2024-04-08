@@ -81,9 +81,9 @@ HeapWord* G1CollectedHeap::par_allocate_during_gc(InCSetState dest,
                                                   size_t word_size,
                                                   AllocationContext_t context) {
   switch (dest.value()) {
-    case InCSetState::Young:
+    case InCSetState::Young: // Young状态，那么一定是在survivor区域进行分配
       return survivor_attempt_allocation(word_size, context);
-    case InCSetState::Old:
+    case InCSetState::Old: // Old状态，那么一定是尝试在老年代进行分配
       return old_attempt_allocation(word_size, context);
     default:
       ShouldNotReachHere();
