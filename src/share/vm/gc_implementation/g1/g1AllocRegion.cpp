@@ -114,7 +114,7 @@ void G1AllocRegion::retire(bool fill_up) {
         /**
          *
          *  从几个G1AllocRegion的实现可以看到，只有OldGCAllocRegion的_bot_updates是true
-         *  而SurvivorGCAllocRegion 和 MutatorGCAllocRegion的_bot_updates都是false
+         *  而 SurvivorGCAllocRegion 和 MutatorGCAllocRegion的_bot_updates都是false
          */
       fill_up_remaining_space(alloc_region, _bot_updates);
     }
@@ -123,7 +123,7 @@ void G1AllocRegion::retire(bool fill_up) {
            ar_ext_msg(this, "invariant"));
     size_t allocated_bytes = alloc_region->used() - _used_bytes_before;
     /**
-     * 会调用子类的retire_region方法，比如MutatorAllocRegion,
+     * 会调用子类的retire_region方法，比如 MutatorAllocRegion,
      * SurvivorGCAllocRegion, OldGCAllocRegion的 retire_region方法
      */
     retire_region(alloc_region, allocated_bytes);
@@ -148,7 +148,10 @@ HeapWord* G1AllocRegion::new_alloc_region_and_allocate(size_t word_size,
     new_alloc_region->reset_pre_dummy_top();
     // Need to do this before the allocation
     _used_bytes_before = new_alloc_region->used();
-    HeapWord* result = allocate(new_alloc_region, word_size, _bot_updates); // 在新的region中分配对象，这个对象一定应该是分配成功的，因为region是新的
+    /**
+     * 在新的region中分配对象，这个对象一定应该是分配成功的，因为region是新的
+     */
+    HeapWord* result = allocate(new_alloc_region, word_size, _bot_updates); //
     assert(result != NULL, ar_ext_msg(this, "the allocation should succeeded"));
 
     OrderAccess::storestore();
@@ -156,7 +159,7 @@ HeapWord* G1AllocRegion::new_alloc_region_and_allocate(size_t word_size,
     // region in _alloc_region. This is the reason why an active region
     // can never be empty.
     /**
-     * 将这个新的Region设置为当前的active region
+     * 将这个新的Region设置为当前的active region，即G1AllocRegion设置当前这个新的region为正在分配的region，而上一个Region已经卸载了
      */
     update_alloc_region(new_alloc_region);
     trace("region allocation successful");

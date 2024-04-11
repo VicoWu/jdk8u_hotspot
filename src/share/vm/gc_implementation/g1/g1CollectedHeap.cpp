@@ -333,6 +333,9 @@ YoungList::reset_auxilary_lists() {
     // The region is a non-empty survivor so let's add it to
     // the incremental collection set for the next evacuation
     // pause.
+    /**
+     * 这个region是一个非空的region，因此将这个region添加到增量回收集合中，这样在下次回收暂停的时候进行回收
+     */
     _g1h->g1_policy()->add_region_to_incremental_cset_rhs(curr);
     young_index_in_cset += 1;
   }
@@ -2857,10 +2860,11 @@ void G1CollectedHeap::space_iterate(SpaceClosure* cl) {
 
 /**
  * 调用者之一是 G1CollectedHeap::reset_heap_region_claim_values，用来遍历所有的HeapRegion
+ *
  * @param cl
  */
 void G1CollectedHeap::heap_region_iterate(HeapRegionClosure* cl) const {
-  _hrm.iterate(cl);
+  _hrm.iterate(cl);  //查看 void HeapRegionManager::iterate
 }
 
 void
@@ -4875,6 +4879,9 @@ void G1ParCopyHelper::mark_forwarded_object(oop from_obj, oop to_obj) {
   // worker so we cannot trust that its to-space image is
   // well-formed. So we have to read its size from its from-space
   // image which we know should not be changing.
+  /**
+   * 搜索 ConcurrentMark::grayRoot 查看具体实现
+   */
   _cm->grayRoot(to_obj, (size_t) from_obj->size(), _worker_id);
 }
 
@@ -4905,7 +4912,7 @@ template <class T>
  * @param p 当前正在进行迭代的对象的对象指针
  */
 void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p); // 加载对象的头部信息
+  T heap_oop = oopDesc::load_heap_oop(p); // 加载指针p所指向的内存对象，这个对象的值是一个指向堆中的内存的指针
 
   if (oopDesc::is_null(heap_oop)) {
     return;
@@ -4914,7 +4921,7 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
    * 一个inline方法  搜索 oop oopDesc::decode_heap_oop_not_null
    * 如果是heap_oop是一个narrow oop，那么对其进行decode为一个正常的wide oop
    */
-  oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);// 获取对象的原始地址
+  oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);// 获取对象的原始地址，如果对象本身是宽地址，那么参数和返回值是相同的
 
   assert(_worker_id == _par_scan_state->queue_num(), "sanity");
 
@@ -4922,20 +4929,25 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
   if (state.is_in_cset()) { // 如果当前对象在回收集合中，这是需要移动的对象
     oop forwardee;
     markOop m = obj->mark(); // 读取对象的_mark标记，判断对象是否已经被标记
-    if (m->is_marked()) { // 对象已经被标记
+    if (m->is_marked()) { // 对象已经被标记，这里的被标记就是被转移，并不是并发标记的标记过程
         /**
          *  取出在前面遍历的时候已经存入的转发地址(可能是当前线程之前已经通过其他引用完成了对这个对象的转移，
          *      或者其他gc thread已经完成了对这个对象的转移)
          */
       forwardee = (oop) m->decode_pointer();
-    } else { // 第一次遍历到对象，才会将对象拷贝到survivor space，并返回对象的wide地址
+    } else {
+        /**
+         *  第一次遍历到对象，才会将对象拷贝到survivor space，并返回对象的wide地址
+         *  转移到survivor，确定转发地址，这里可能会继续往 pss的_ref中添加新的引用
+         *  搜索 G1ParScanThreadState::copy_to_survivor_space 查看具体实现
+         */
       forwardee = _par_scan_state->copy_to_survivor_space(state, obj, m); // 将对象移动到survivor区域
     }
     assert(forwardee != NULL, "forwardee should not be NULL");
     oopDesc::encode_store_heap_oop(p, forwardee); // 将对象新的wide 地址进行编码，写入到对象原来的地址处
     /**
      * 如果 do_mark_object 是 G1MarkFromRoot 或者 G1MarkPromotedFromRoot,
-     * 那么，我们需要在转移了对象以后对对象进行标记,即这次STW的转移操作需要借道进行初始标记
+     * 那么，我们需要在转移了对象以后(对象晋升了以后)对对象进行标记,即这次STW的转移操作需要借道进行初始标记
      */
     if (do_mark_object != G1MarkNone && forwardee != obj) { // 这里不处理自转发对象
       // If the object is self-forwarded we don't need to explicitly
@@ -4962,7 +4974,8 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
     // closure during an initial mark pause then attempt to mark the object.
     /**
      * 为了区别一般的YGC和混合GC的初始标记阶段，
-        使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone， 当发现开启了并发标记则设置为G1MarkFromRoot
+        使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone， 当发现开启了并发标记则设置为G1MarkFromRoot，
+        当需要进行类卸载的时候，我们设置 G1MarkPromotedFromRoot，显然这时候这个方法就不会执行
      */
     if (do_mark_object == G1MarkFromRoot) { // 需要进行标记，这里对对象进行了标记
       mark_object(obj); //  对当前对象进行标记
@@ -5058,7 +5071,7 @@ class G1KlassScanClosure : public KlassClosure {
       _closure->set_scanned_klass(klass); // 设置当前的klass为当前的_closure正在处理的类
 
       /*
-       * 搜索 void Klass::oops_do(OopClosure* cl)查看方法的具体实现
+       * 搜索 void Klass::oops_do(OopClosure* cl) 查看方法的具体实现
        * 在这个klass上去apply封装好的G1ParCopyHelper* closure， 其实就是将klass对应的mirror的oop上apply对应的G1ParCopyClosure
        * 搜搜 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
        * 这里，如果对象发生了移动，那么依然可能会重新将_modified_oops 置位为1
@@ -5234,6 +5247,12 @@ public:
                                                                                true); // Need to claim CLDs.
 
 
+      /**
+       * strong_cl， weak_cl， strong_cld_cl, weak_cld_cl只负责具体的处理逻辑的不同，不关心自己到底扫描的是什么(但是cld只处理ClassLoaderData)
+       * 具体处理的是什么类型的根(Java 根中的线程根还是CLD根，还是各种VM根(在VM根中SystemDictionray是存在weak root的，其他的VM根不存在weak root))和这个cl没有关系，
+       * 但是根的类型不同，对于弱根和强根的判断标准不同，强根交给strong_cl处理，弱根交给weak_cl处理。
+       * 同样的，CLD的强根和弱根的区分是is_weak()，强根交给strong_cld_cl处理，弱根交给weak_cld_cl处理
+       */
      /**
         * IM young GC.
         * Weak roots closures.
@@ -5289,13 +5308,14 @@ public:
          */
          /**
           * 为什么只有在并发标记暂停的时候，才需要判断ClassUnloadingWithConcurrentMark？？
+          * 因为类的卸载发生在并发标记的并发清理阶段，当metadata区的分配失败，会设置_initiate_conc_mark_if_possible以促成一次带有初始标记的回收暂停
           */
-        if (ClassUnloadingWithConcurrentMark) { // 如果用户配置了ClassUnloadingWithConcurrentMark，即在并发标记阶段卸载类
+        if (ClassUnloadingWithConcurrentMark) { // 如果用户配置了ClassUnloadingWithConcurrentMark，即在并发标记的清理阶段卸载类
           weak_root_cl = &scan_mark_weak_root_cl; // do_mark_object此时为G1MarkPromotedFromRoot
           weak_cld_cl  = &scan_mark_weak_cld_cl; // do_mark_object此时为G1MarkPromotedFromRoot
           trace_metadata = true; // 只有当trace_metadata = true， weak_cld_cl和 strong_cld_cl 才会使用，否则为null
         } else { // ClassUnloadingWithConcurrentMark 为false
-          weak_root_cl = &scan_mark_root_cl; // do_mark_object此时为G1MarkFromRoot
+          weak_root_cl = &scan_mark_root_cl; // do_mark_object此时为G1MarkFromRoot，这时候无论对象是否在回收集合中并被转移，对象都会被标记
           weak_cld_cl  = &scan_mark_cld_cl; // do_mark_object此时为G1MarkFromRoot
         }
       } else { // 非IM GC， 即不是处于初始标记暂停阶段，在进行evacuate的时候，我们不需要标记
@@ -5333,7 +5353,7 @@ public:
                                       worker_id // 当前的gc线程的id);
 
       /**
-       * 这个方法是类G1ParScanThreadState的成员方法
+       * 这个方法是类 G1ParScanThreadState 的成员方法
        * 搜索 G1ParPushHeapRSClosure::do_oop_nv 方法 可以看到基于cset进行转移的时候，使用这个closure往pss的_ref队列中添加引用的过程
        *    比如 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss)就将G1ParScanThreadState作为自己的成员
        *
@@ -5344,7 +5364,7 @@ public:
       /**
        * 搜索 void G1RootProcessor::scan_remembered_sets 查看具体实现
        * 处理DCQS中剩下的DCQ，同时，以 RSet为根进行遍历处理
-       * 将 push_heap_rs_cl 闭包应用于回收集合中的所有Region的Rset的并集中的所有位置（已完成“set_region”以指示根所在的区域)
+       * 将 push_heap_rs_cl 闭包应用于 Collection Set中的所有Region的Rset的并集中的所有位置（已完成“set_region”以指示根所在的区域)
        */
       _root_processor->scan_remembered_sets(&push_heap_rs_cl,
                                             weak_root_cl,
@@ -5357,6 +5377,7 @@ public:
          *  开始进行转移处理，G1ParEvacuateFollowersClosure传入了G1ParScanThreadState 对象 pss，
          *  因为pss中存放了根可达并且目标在回收集合中的对象
          *  工作方法 搜索 G1ParEvacuateFollowersClosure::do_void
+         *  通过  G1ParScanThreadState::trim_queue() ，不断从pss中取出对象，进行递归扫描
          */
         G1ParEvacuateFollowersClosure evac(_g1h, &pss, _queues, &_terminator);
         evac.do_void();
@@ -7317,6 +7338,12 @@ bool G1CollectedHeap::is_in_closed_subset(const void* p) const {
 }
 
 // Methods for the mutator alloc region
+/**
+ * 区别 new_gc_alloc_region
+ * @param word_size
+ * @param force
+ * @return
+ */
 
 HeapRegion* G1CollectedHeap::new_mutator_alloc_region(size_t word_size,
                                                       bool force) {
@@ -7349,7 +7376,10 @@ void G1CollectedHeap::retire_mutator_alloc_region(HeapRegion* alloc_region,
                                                   size_t allocated_bytes) {
   assert_heap_locked_or_at_safepoint(true /* should_be_vm_thread */);
   assert(alloc_region->is_eden(), "all mutator alloc regions should be eden");
-
+  /**
+   * 将这个eden region添加到回收集合cset中,这里的添加方式是将alloc_region添加到回收集合链表的左侧
+   * 同时，计算这个region的一些RSet的一些统计信息，这些信息将用来为了进行回收时间的预测
+   */
   g1_policy()->add_region_to_incremental_cset_lhs(alloc_region);
   _allocator->increase_used(allocated_bytes);
   _hr_printer.retire(alloc_region);
@@ -7379,6 +7409,7 @@ void G1CollectedHeap::set_par_threads() {
 /**
  *  gc进行的region的分配，因此调用方是
  *  SurvivorGCAllocRegion::allocate_new_region 和 OldGCAllocRegion::allocate_new_region
+ *  区别，如果是用户线程进行的分配，那么就是 new_mutator_alloc_region
  */
 HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
                                                  uint count,
@@ -7405,6 +7436,9 @@ HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
         check_bitmaps("Old Region Allocation", new_alloc_region);
       }
       bool during_im = g1_policy()->during_initial_mark_pause();
+      /**
+       * 搜索方法 inline void HeapRegion::note_start_of_copying 查看具体实现
+       */
       new_alloc_region->note_start_of_copying(during_im);
       return new_alloc_region;
     }
@@ -7426,6 +7460,13 @@ void G1CollectedHeap::retire_gc_alloc_region(HeapRegion* alloc_region,
                                              size_t allocated_bytes,
                                              InCSetState dest) {
   bool during_im = g1_policy()->during_initial_mark_pause();
+  /**
+   * 如果这个暂停是初始标记，那么在数据拷贝完成以后，需要设置old region的ntams
+   * 对于survivor region，ntams的值在整个生命周期中始终等于当前HeapRegion的bottom
+   *
+   * 将survivor region添加到回收集合是在整个evacuation pause结束以后统一从survivor list中添加进去的
+   * 搜索 reset_auxilary_lists 查看将survivor region添加到增量回收集合中的过程
+   */
   alloc_region->note_end_of_copying(during_im);
   g1_policy()->record_bytes_copied_during_gc(allocated_bytes);
   if (dest.is_young()) { //  当前卸载的是young region，即survivor region

@@ -46,6 +46,14 @@ size_t HeapRegion::GrainBytes        = 0;
 size_t HeapRegion::GrainWords        = 0;
 size_t HeapRegion::CardsPerRegion    = 0;
 
+/**
+ * 搜搜 HeapRegionDCTOC cl
+ * 在 方法 ScanRSClosure::scanCard 中构造
+ * @param g1
+ * @param hr
+ * @param cl
+ * @param precision
+ */
 HeapRegionDCTOC::HeapRegionDCTOC(G1CollectedHeap* g1,
                                  HeapRegion* hr,
                                  G1ParPushHeapRSClosure* cl,
@@ -57,6 +65,13 @@ FilterOutOfRegionClosure::FilterOutOfRegionClosure(HeapRegion* r,
                                                    OopClosure* oc) :
   _r_bottom(r->bottom()), _r_end(r->end()), _oc(oc) { }
 
+  /**
+   * class HeapRegionDCTOC : public DirtyCardToOopClosure
+   * 这个方法根据上一轮并发标记的结果，在遍历对象的时候进行了过滤
+   * @param mr
+   * @param bottom
+   * @param top
+   */
 void HeapRegionDCTOC::walk_mem_region(MemRegion mr,
                                       HeapWord* bottom,
                                       HeapWord* top) {
@@ -68,24 +83,42 @@ void HeapRegionDCTOC::walk_mem_region(MemRegion mr,
   // not considered dead, either because it is marked (in the mark bitmap)
   // or it was allocated after marking finished, then we add it. Otherwise
   // we can safely ignore the object.
+  /**
+   * 开始过滤我们添加到RSet中的内容。
+   * 如果该对象不被视为死亡，无论是
+   *    因为它已被标记（在标记位图中）
+   *      还是
+   *    因为在标记完成后被分配，
+   * 如果对象未被标记为死亡，则调用 oop_iterate() 方法使用 G1ParPushHeapRSClosure 遍历对象，并将其添加到 RSet 中；否则，直接跳过该对象。
+   */
   if (!g1h->is_obj_dead(oop(cur), _hr)) {
+      /**
+       * typedef class oopDesc*                            oop;
+       * 搜索 inline int oopDesc::oop_iterate
+       */
     oop_size = oop(cur)->oop_iterate(_rs_scan, mr);
   } else {
     oop_size = _hr->block_size(cur);
   }
 
-  cur += oop_size;
-
+  cur += oop_size; // 更新当前指针
+  // 检查是否还有更多的对象需要遍历
   if (cur < top) {
-    oop cur_oop = oop(cur);
-    oop_size = _hr->block_size(cur);
-    HeapWord* next_obj = cur + oop_size;
-    while (next_obj < top) {
+    oop cur_oop = oop(cur);// 将当前地址转换为对象指针。
+    oop_size = _hr->block_size(cur);// 获取当前对象的大小
+    HeapWord* next_obj = cur + oop_size; // 下一个对象的位置
+    while (next_obj < top) { // 水平遍历这个MemRegion中的所有对象，但是在处理每一个对象的时候，又是递归的
       // Keep filtering the remembered set.
       if (!g1h->is_obj_dead(cur_oop, _hr)) {
         // Bottom lies entirely below top, so we can call the
         // non-memRegion version of oop_iterate below.
-        cur_oop->oop_iterate(_rs_scan);
+        /**
+         * typedef class oopDesc*                            oop;
+         * 搜索 inline int oopDesc::oop_iterate，会在这个对象的每一个field上apply对应的_rs_scan
+         * 由于oop_iterate是一个递归的过程，所以这里看起来是一个递归遍历
+         * _rs_scan 是 G1ParPushHeapRSClosure
+         */
+        cur_oop->oop_iterate(_rs_scan); // 循环遍历剩余的对象
       }
       cur = next_obj;
       cur_oop = oop(cur);

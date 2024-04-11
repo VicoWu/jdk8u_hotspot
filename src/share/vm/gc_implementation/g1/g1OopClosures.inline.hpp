@@ -108,7 +108,7 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
  */
 template <class T>
 inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p); // 从指针 p 所指向的内存位置加载一个堆对象指针
+  T heap_oop = oopDesc::load_heap_oop(p); // 从指针 p 所指向的内存位置加载一个堆对象指针，即指针p指向的位置存放了一个指针q，q指向了堆内存
 
   if (!oopDesc::is_null(heap_oop)) { // 如果指针不为空，表示指针指向了一个有效的堆对象
       /**

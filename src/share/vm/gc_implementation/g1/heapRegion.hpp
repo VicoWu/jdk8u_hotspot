@@ -647,6 +647,9 @@ class HeapRegion: public G1OffsetTableContigSpace {
 
   // Returns "false" iff no object in the region was allocated when the
   // last mark phase ended.
+  /**
+   * 如果在上一次标记到现在没有新的对象被分配，那么，这个方法返回false
+   */
   bool is_marked() { return _prev_top_at_mark_start != bottom(); }
 
   void reset_during_compaction() {

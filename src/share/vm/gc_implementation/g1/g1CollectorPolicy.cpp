@@ -1877,7 +1877,7 @@ void G1CollectorPolicy::update_incremental_cset_info(HeapRegion* hr,
  * @param hr
  */
 void G1CollectorPolicy::add_region_to_incremental_cset_common(HeapRegion* hr) {
-  assert(hr->is_young(), "invariant");
+  assert(hr->is_young(), "invariant"); // 必须是Eden 或者 Survivor region
   assert(hr->young_index_in_cset() > -1, "should have already been set");
   assert(_inc_cset_build_state == Active, "Precondition");
 
@@ -1888,7 +1888,11 @@ void G1CollectorPolicy::add_region_to_incremental_cset_common(HeapRegion* hr) {
   // and cached in the heap region here (initially) and (subsequently)
   // by the Young List sampling code.
 
-  size_t rs_length = hr->rem_set()->occupied(); // 获取这个HeapRegion的CSet的已占用长度
+  /**
+   * 搜索 HeapRegionRemSet* rem_set() const 查看具体实现
+   * occupied()方法 搜索 HeapRegionRemSet::occupied()
+   */
+  size_t rs_length = hr->rem_set()->occupied(); // 获取这个HeapRegion的RSet的已占用长度
   add_to_incremental_cset_info(hr, rs_length); //  将这个HeapRegion的长度信息增加到Policy的全局统计信息中去，并添加到这个HeapRegion的相应统计信息中去
 
   HeapWord* hr_end = hr->end();
@@ -1926,9 +1930,10 @@ void G1CollectorPolicy::add_region_to_incremental_cset_rhs(HeapRegion* hr) {
 }
 
 /**
- * add_region_to_incremental_cset_lhs(HeapRegion* hr) 方法用于将区域添加到增量式并发标记阶段的左侧（LHS）。左侧通常用于添加伊甸区域（Eden）区域。在方法中：
+ * add_region_to_incremental_cset_lhs(HeapRegion* hr) 方法用于将区域添加到增量式并发标记阶段的左侧（LHS）。
+ * 左侧通常用于添加伊甸区域（Eden）区域。在方法中：
 
-    首先，检查要添加的区域是否是伊甸区域。
+    首先，检查要添加的区域是否是 Eden Region。
     然后，调用 add_region_to_incremental_cset_common(hr) 方法执行通用的添加区域操作。
     最后，将区域添加到并发集的左侧，并更新 _inc_cset_head 指针。
  */
@@ -1941,10 +1946,10 @@ void G1CollectorPolicy::add_region_to_incremental_cset_lhs(HeapRegion* hr) {
   add_region_to_incremental_cset_common(hr);
 
   // Add the region at the left hand side
-  hr->set_next_in_collection_set(_inc_cset_head); // 添加到左侧
+  hr->set_next_in_collection_set(_inc_cset_head); // 将当前的_inc_cset_head添加到当前的region的右侧，即将当前的region添加到左侧
   if (_inc_cset_head == NULL) {
     assert(_inc_cset_tail == NULL, "Invariant");
-    _inc_cset_tail = hr;
+    _inc_cset_tail = hr; // 更新头部信息
   }
   _inc_cset_head = hr;
 }

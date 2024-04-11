@@ -1241,7 +1241,7 @@ public:
 
   // It scans an object and visits its children.
   /**
-   * 这里调用process_grey_object的时候，scan=true，因此会在对应的obj上apply G1CMOopClosure
+   * 这里调用 process_grey_object 的时候，scan=true，因此会在对应的obj上apply G1CMOopClosure
    */
   void scan_object(oop obj) {
       process_grey_object<true>(obj);

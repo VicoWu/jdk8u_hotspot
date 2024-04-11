@@ -188,10 +188,10 @@ HeapRegion::block_size(const HeapWord *addr) const {
  * 这个方法必须是用来在年轻代进行对象分配(比如用户的mutator线程发起的分配)，因此才可以允许不更新bot
  */
 inline HeapWord* HeapRegion::par_allocate_no_bot_updates(size_t word_size) {
-  // 只有在young区可以跳过bot update
+  // 只有在young区（eden 或者 survivor）可以跳过bot update
   assert(is_young(), "we can only skip BOT updates on young regions");
   /**
-   * HeapRegion是 G1OffsetTableContigSpace的子类，这里其实调用的是G1OffsetTableContigSpace::par_allocate_impl
+   * HeapRegion是 G1OffsetTableContigSpace的子类，这里其实调用的是 G1OffsetTableContigSpace::par_allocate_impl
    */
 
   return par_allocate_impl(word_size, end()); // 进行无锁内存分配
@@ -208,7 +208,7 @@ inline HeapWord* HeapRegion::allocate_no_bot_updates(size_t word_size) {
 
 /**
  *
- * 在NoteStartOfMarkHRClosure中被调用，发生在初始标记开始的时候，
+ * 在 NoteStartOfMarkHRClosure 中被调用，发生在初始标记开始的时候，
  *      设置_next_top_at_mark_start的地址为当前的分配位置,随后，top就一直往前移动，但是_next_top_at_mark_start保持不变
  */
 inline void HeapRegion::note_start_of_marking() {
@@ -231,7 +231,7 @@ inline void HeapRegion::note_end_of_marking() {
 
 /**
  通知该区域它将在 GC 期间用作目标空间，并且我们即将开始将对象复制到其中。
- * 在方法 G1CollectedHeap::retire_gc_alloc_region 和 G1Allocator::reuse_retained_old_region 中调用，
+ * 在方法 G1CollectedHeap::new_gc_alloc_region 和 G1Allocator::reuse_retained_old_region 中调用，即刚刚分配一个region的时候
  * 因此只用于survivor 和 old region开始进行拷贝时候的调用
  * 当这个region刚刚被分配出来，准备用来存放数据的时候调用
  * @param during_initial_mark

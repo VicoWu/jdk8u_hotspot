@@ -59,14 +59,17 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
     oop forwardee;
     markOop m = obj->mark();
     /**
-     * 对象在回收集合中，并且已经被mark。我们从G1ParScanThreadState::copy_to_survivor_space方法中可以看到，
-     *      对象已经移动到survivor区域以后，会设置为marked
+     * 对象在回收集合中，并且已经被mark。我们从G1ParScanThreadState::copy_to_survivor_space 方法中可以看到，
+     *      对象已经移动到survivor区域以后，会设置对象的头部信息 marked
      */
     if (m->is_marked()) {
       forwardee = (oop) m->decode_pointer();
     } else {
         // 搜索 G1ParScanThreadState::copy_to_survivor_space
-      forwardee = copy_to_survivor_space(in_cset_state, obj, m); // 转移到survivor，确定转发地址，这里可能会继续往 pss的_ref中添加新的引用
+        /**
+         * 转移到survivor，确定转发地址，这里可能会继续往 pss的_ref中添加新的引用
+         */
+      forwardee = copy_to_survivor_space(in_cset_state, obj, m); //
     }
     oopDesc::encode_store_heap_oop(p, forwardee);// 使用转发以后的地址更新引用者所引用该对象的地址
   } else if (in_cset_state.is_humongous()) { // 是大对象
@@ -141,6 +144,9 @@ template <class T> inline void G1ParScanThreadState::deal_with_reference(T* ref_
     // "obj_to_scan" is definitely in the heap, and is not in a
     // humongous region.
     HeapRegion* r = _g1h->heap_region_containing_raw(ref_to_scan);
+    /**
+     * 搜索 G1ParScanThreadState::do_oop_evac
+     */
     do_oop_evac(ref_to_scan, r);
   } else {
     do_oop_partial_array((oop*)ref_to_scan);

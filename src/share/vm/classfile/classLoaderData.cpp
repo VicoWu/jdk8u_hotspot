@@ -87,7 +87,7 @@ ClassLoaderData::ClassLoaderData(Handle h_class_loader, bool is_anonymous, Depen
    * 空类加载器是一个特殊的类加载器，代表了一种无需加载的情况，通常用于系统类和基本类的加载。
      保持空类加载器活跃（即不被回收）可以确保在解析匿名类期间，相关的匿名类加载器数据不会被意外回收。
    */
-  _keep_alive(is_anonymous || h_class_loader.is_null()), //
+  _keep_alive(is_anonymous || h_class_loader.is_null()),
   _metaspace(NULL), _unloading(false), _klasses(NULL),
   _claimed(0), _jmethod_ids(NULL), _handles(), _deallocate_list(NULL),
   _next(NULL), _dependencies(dependencies),
@@ -423,13 +423,17 @@ bool ClassLoaderData::is_alive(BoolObjectClosure* is_alive_closure) const {
 
 ClassLoaderData::~ClassLoaderData() {
   // Release C heap structures for all the classes.
+  /**
+   * 遍历了所有在这个类加载器中加载的类，并对每个类调用 InstanceKlass::release_C_heap_structures
+   * 方法释放它们在 C 堆上的结构
+   */
   classes_do(InstanceKlass::release_C_heap_structures);
 
   Metaspace *m = _metaspace;
   if (m != NULL) {
     _metaspace = NULL;
     // release the metaspace
-    delete m;
+    delete m; // 搜索 Metaspace::~Metaspace()
   }
 
   // Clear all the JNI handles for methods
@@ -439,7 +443,11 @@ ClassLoaderData::~ClassLoaderData() {
   // they're "invalid" but existing programs likely rely on their being
   // NULL after class unloading.
   if (_jmethod_ids != NULL) {
-    Method::clear_jmethod_ids(this);
+      /**
+       * 清除与这个类加载器相关联的所有 JNI 方法句柄。这样做是为了避免 JNI 方法句柄泄漏，
+       * 即使这些句柄实际上无法完全释放，因为不能确定在哪个时刻原生代码将停止使用它们。
+       */
+    Method::clear_jmethod_ids(this); //
   }
   // Delete lock
   delete _metaspace_lock;
@@ -869,14 +877,20 @@ void ClassLoaderDataGraph::clean_metaspaces() {
 
 void ClassLoaderDataGraph::purge() {
   assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint!");
-  ClassLoaderData* list = _unloading;
+  ClassLoaderData* list = _unloading; // 需要进行卸载的CLD
   _unloading = NULL;
   ClassLoaderData* next = list;
   while (next != NULL) {
     ClassLoaderData* purge_me = next;
     next = purge_me->next();
-    delete purge_me;
+    /**
+     * 直接调用ClassLoaderData的析构函数，搜索 ClassLoaderData::~ClassLoaderData()
+     */
+    delete purge_me; //
   }
+  /**
+   * 卸载元数据空间
+   */
   Metaspace::purge();
 }
 

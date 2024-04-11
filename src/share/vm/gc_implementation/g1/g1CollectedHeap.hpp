@@ -1598,7 +1598,7 @@ public:
    */
   bool isMarkedPrev(oop obj) const;
   /**
-   * 具体实现参考 G1CollectedHeap::isMarkedPrev
+   * 具体实现参考 G1CollectedHeap::isMarkedNext
    * @param obj
    * @return
    */

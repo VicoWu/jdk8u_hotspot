@@ -935,6 +935,11 @@ void frame::oops_interpreted_do(OopClosure* f, CLDClosure* cld_f,
     // the mirror or the class loader of the klass are installed as a GC root.
     // To minimze the overhead of doing that here, we ask the GC to pass down a
     // closure that knows how to keep klasses alive given a ClassLoaderData.
+    /**
+     * frame中的方法指针可能是到达方法的klass的唯一路径，并且这个klass在执行时需要保持活动状态。
+     * GC 不会通过方法指针进行跟踪，因此通常在类似情况下，klass 的mirror或classloader会安装为 GC 根。
+     * 为了最大限度地减少此处执行此操作的开销，我们要求 GC 传递一个closure，该闭包知道如何在给定 ClassLoaderData 的情况下使 klasses 保持活动状态。
+     */
     cld_f->do_cld(m->method_holder()->class_loader_data());
   }
 
@@ -1138,6 +1143,7 @@ void frame::oops_entry_do(OopClosure* f, const RegisterMap* map) {
   // Traverse the Handle Block saved in the entry frame
   entry_frame_call_wrapper()->oops_do(f);
 }
+
 
 
 void frame::oops_do_internal(OopClosure* f, CLDClosure* cld_f, CodeBlobClosure* cf, RegisterMap* map, bool use_interpreter_oop_map_cache) {

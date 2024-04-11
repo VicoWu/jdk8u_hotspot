@@ -269,8 +269,14 @@ bool VM_CollectForMetadataAllocation::initiate_concurrent_GC() {
     return true;
   }
 
+  /**
+   *  在 metadata分配失败的时候，如果当前的G1GC enable了类卸载，那么，我们需要请求一次带有初始标记的回收暂停，以及在并发标记的清理阶段进行无效类的卸载操作
+   */
   if (UseG1GC && ClassUnloadingWithConcurrentMark) {
     G1CollectedHeap* g1h = G1CollectedHeap::heap();
+    /**
+     * 设置初始标记请求
+     */
     g1h->g1_policy()->set_initiate_conc_mark_if_possible();
 
     GCCauseSetter x(g1h, _gc_cause);
@@ -281,6 +287,9 @@ bool VM_CollectForMetadataAllocation::initiate_concurrent_GC() {
 
     if (should_start) {
       double pause_target = g1h->g1_policy()->max_pause_time_ms();
+      /**
+       * 调用 do_collection_pause_at_safepoint，触发一次带有初始标记的回收暂停
+       */
       g1h->do_collection_pause_at_safepoint(pause_target);
     }
     return true;

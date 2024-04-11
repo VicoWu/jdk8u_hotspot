@@ -107,6 +107,9 @@ protected:
 
   HeapRegion* _retained_old_gc_alloc_region;
 public:
+    /**
+     * 构造G1DefaultAllocator的时候，没有做别的事情，仅仅是调用父类的G1Allocator构造方法
+     */
   G1DefaultAllocator(G1CollectedHeap* heap) : G1Allocator(heap), _retained_old_gc_alloc_region(NULL) { } // 在构造G1DefaultAllocator的时候，传入了G1CollectedHeap对内存实现
 
   virtual void init_mutator_alloc_region(); // 见g1Allocator.cpp中方法的实现

@@ -238,6 +238,13 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   bool claim();
 
   void unload();
+  /**
+   * ClassLoaderData::keep_alive() 方法
+   * if this CLD is kept alive without a keep_alive_object().
+   * 默认是true，搜索 set_keep_alive() 方法 查看其设置为false的情况
+   * 搜索 ClassLoaderData::ClassLoaderData 查看其初始化的过程
+   * @return
+   */
   bool keep_alive() const       { return _keep_alive; }
   void classes_do(void f(Klass*));
   void loaded_classes_do(KlassClosure* klass_closure);
@@ -286,7 +293,11 @@ class ClassLoaderData : public CHeapObj<mtClass> {
 
   oop class_loader() const      { return _class_loader; }
 
-  // The object the GC is using to keep this ClassLoaderData alive.
+  /**
+   * The object the GC is using to keep this ClassLoaderData alive.
+   * 搜索 ClassLoaderData::keep_alive_object
+   */
+
   oop keep_alive_object() const;
 
   // Returns true if this class loader data is for a loader going away.

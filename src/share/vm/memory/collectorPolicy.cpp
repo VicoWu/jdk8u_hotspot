@@ -911,6 +911,9 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
     }
 
     // Generate a VM operation
+    /**
+     * 创建一个 VM_CollectForMetadataAllocation，以便触发一次回收暂停
+     */
     VM_CollectForMetadataAllocation op(loader_data,
                                        word_size,
                                        mdtype,

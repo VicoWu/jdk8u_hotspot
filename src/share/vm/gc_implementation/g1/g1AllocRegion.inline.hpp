@@ -41,8 +41,15 @@ inline HeapWord* G1AllocRegion::allocate(HeapRegion* alloc_region,
   assert(alloc_region != NULL, err_msg("pre-condition"));
 
   if (!bot_updates) {
+      /**
+       * 搜索 HeapWord* HeapRegion::allocate_no_bot_updates
+       */
     return alloc_region->allocate_no_bot_updates(word_size);
   } else {
+      /**
+       * HeapRegion是G1OffsetTableContigSpace的子类，
+       * 这里实际调用的是 G1OffsetTableContigSpace::allocate
+       */
     return alloc_region->allocate(word_size);
   }
 }
@@ -62,12 +69,12 @@ inline HeapWord* G1AllocRegion::par_allocate(HeapRegion* alloc_region,
   assert(alloc_region != NULL, err_msg("pre-condition"));
   assert(!alloc_region->is_empty(), err_msg("pre-condition"));
   // 对于不需要bot_updates，不需要对内存加Heap_lock锁，而如果需要进行bot_updates，需要对内存加Heap_lock锁
-  if (!bot_updates) { // 调用HeapRegion::par_allocate_no_bot_updates(),在heapRegion.inline.hpp中
+  if (!bot_updates) { // 调用 HeapRegion::par_allocate_no_bot_updates(),在heapRegion.inline.hpp中
     return alloc_region->par_allocate_no_bot_updates(word_size); // 进行无锁的内存分配
   } else {
       /**
        * HeapRegion是G1OffsetTableContigSpace的子类，
-       * 这里实际调用的是G1OffsetTableContigSpace::par_allocate
+       * 这里实际调用的是 G1OffsetTableContigSpace::par_allocate
        */
     return alloc_region->par_allocate(word_size); // 进行有锁的内存分配，即先对Heap_lock加锁
   }
@@ -93,7 +100,11 @@ inline HeapWord* G1AllocRegion::attempt_allocation(size_t word_size,
   HeapRegion* alloc_region = _alloc_region; // 当前正在使用中的region
   assert(alloc_region != NULL, ar_ext_msg(this, "not initialized properly"));
 
-  // 查看 G1AllocRegion::par_allocate,通过线程安全的方式进行分配，不会进行任何GC
+  /**
+   * 查看 G1AllocRegion::par_allocate,通过线程安全的方式进行分配，不会进行任何GC
+   * 可以看到，这是尝试在这个Region内部分配一个大小为word_size的区域，这个word_size可能是一个object，可能是一个plab
+   */
+
   HeapWord* result = par_allocate(alloc_region, word_size, bot_updates);
   if (result != NULL) {
     trace("alloc", word_size, result);

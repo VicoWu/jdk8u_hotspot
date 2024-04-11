@@ -2130,7 +2130,8 @@ public:
 };
 
 /**
- * 执行并发清理
+ * 执行并发标记的清理阶段
+ * 注意，这里的清理并不是对象的回收
  */
 void ConcurrentMark::cleanup() {
   // world is stopped at this checkpoint
@@ -2309,6 +2310,12 @@ void ConcurrentMark::cleanup() {
   g1h->increment_total_collections();
 
   // Clean out dead classes and update Metaspace sizes.
+  /**
+   * 如果用户打开了类卸载，那么在初始标记的时候，会进行特殊处理
+   * 同时在并发标记的清理阶段，将对无效的类进行清理
+   * 每一个CLDG是一系列的CLD的集合，每一个CLD是一系列klass的集合，GC通过每一个klass的mirror管理引用和可达性
+   *
+   */
   if (ClassUnloadingWithConcurrentMark) {
     ClassLoaderDataGraph::purge();
   }
@@ -2744,7 +2751,9 @@ void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
   // Unload Klasses, String, Symbols, Code Cache, etc.
   {
     G1RemarkGCTraceTime trace("Unloading", G1Log::finer());
-
+      /**
+       * 用户打开了类卸载功能
+       */
     if (ClassUnloadingWithConcurrentMark) {
       // Cleaning of klasses depends on correct information from MetadataMarkOnStack. The CodeCache::mark_on_stack
       // part is too slow to be done serially, so it is handled during the weakRefsWorkParallelPart phase.
@@ -3730,6 +3739,7 @@ inline void CMTask::process_grey_object(oop obj) {
        *  迭代方法搜索 G1CMOopClosure::do_oop_nv(T* p)
        *  typedef class oopDesc*                            oop;
        *  在obj的每一个子对象(field) apply对应的 G1CMOopClosure
+       *  这个递归的scan需要跟我们在转移暂停的时候转移对象并将对象的相关field放入到PSS的队列中的递归的时候的递归的scan区别开，是两件事情
        */
     obj->oop_iterate(_cm_oop_closure);
   }

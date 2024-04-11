@@ -2218,9 +2218,15 @@ template <class T> void assert_nothing(T *p) {}
  *
  */
   OopMapBlock* const end_map = map + nonstatic_oop_map_count();          \
+  /**
+    * 根据是否启用了压缩指针技术，选择使用不同的专用宏。
+   */
   if (UseCompressedOops) {                                               \
     while (map < end_map) {                                              \
-      InstanceKlass_SPECIALIZED_OOP_ITERATE(narrowOop,                   \
+      InstanceKlass_SPECIALIZED_OOP_ITERATE(narrowOop,
+       /**
+        * 这个obj的每一个field的地址
+        */
         obj->obj_field_addr<narrowOop>(map->offset()), map->count(),     \
         do_oop, assert_fn)                                               \
       ++map;                                                             \

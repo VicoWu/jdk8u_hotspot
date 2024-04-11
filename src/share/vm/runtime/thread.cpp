@@ -2768,6 +2768,10 @@ void JavaThread::oops_do(OopClosure* f, CLDClosure* cld_f, CodeBlobClosure* cf) 
     }
 
     // Traverse the execution stack
+    /**
+     * 遍历这个线程的所有的栈帧
+     * 搜索 frame::oops_do_internal -> frame::oops_interpreted_do
+     */
     for(StackFrameStream fst(this); !fst.is_done(); fst.next()) {
       fst.current()->oops_do(f, cld_f, cf, fst.register_map());
     }
@@ -4181,6 +4185,12 @@ void Threads::oops_do(OopClosure* f, CLDClosure* cld_f, CodeBlobClosure* cf) {
   VMThread::vm_thread()->oops_do(f, cld_f, cf);
 }
 
+/**
+ * 调用者是 G1RootProcessor::process_java_roots
+ * @param f
+ * @param cld_f
+ * @param cf
+ */
 void Threads::possibly_parallel_oops_do(OopClosure* f, CLDClosure* cld_f, CodeBlobClosure* cf) {
   // Introduce a mechanism allowing parallel threads to claim threads as
   // root groups.  Overhead should be small enough to use all the time,
@@ -4196,14 +4206,19 @@ void Threads::possibly_parallel_oops_do(OopClosure* f, CLDClosure* cld_f, CodeBl
          (SharedHeap::heap()->n_par_threads() ==
           SharedHeap::heap()->workers()->active_workers()), "Mismatch");
   int cp = SharedHeap::heap()->strong_roots_parity();
-  ALL_JAVA_THREADS(p) {
+  ALL_JAVA_THREADS(p) { // 遍历所有的java 线程
     if (p->claim_oops_do(is_par, cp)) {
-      p->oops_do(f, cld_f, cf);
+        /**
+         * JavaThread::oops_do -> frame::oops_do_internal -> frame::oops_interpreted_do
+         * 通过遍历每一个线程堆栈的每一个栈帧，在这个栈帧上找到对应方法的类的cld,然后对这个cld去apply对应的cld_f
+         *  cld_f->do_cld(m->method_holder()->class_loader_data());
+         */
+      p->oops_do(f, cld_f, cf); // 搜索 JavaThread::oops_do
     }
   }
   VMThread* vmt = VMThread::vm_thread();
   if (vmt->claim_oops_do(is_par, cp)) {
-    vmt->oops_do(f, cld_f, cf);
+    vmt->oops_do(f, cld_f, cf);// 从调用者 G1RootProcessor::process_java_roots 来看，只有当trace_metadata=true，cld_f才会有值
   }
 }
 

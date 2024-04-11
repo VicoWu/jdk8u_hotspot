@@ -89,13 +89,23 @@ public:
 };
 
 
+/**
+ * 只有当我们enable了类卸载的时候UC爱会调用这个方法
+ */
 void G1RootProcessor::worker_has_discovered_all_strong_classes() {
   uint n_workers = _g1h->n_par_threads();
   assert(ClassUnloadingWithConcurrentMark, "Currently only needed when doing G1 Class Unloading");
-
+  /**
+   * 有并发线程正在运行，那么有必要进行通知
+   */
   if (n_workers > 0) {
+      /**
+       * 使用原子操作 Atomic::add(1, &_n_workers_discovered_strong_classes) 将 _n_workers_discovered_strong_classes 的值增加 1，
+       * 并将结果存储在 new_value 中。这个变量用于记录已经发现强引用类的工作线程数量。
+       */
     uint new_value = (uint)Atomic::add(1, &_n_workers_discovered_strong_classes);
-    if (new_value == n_workers) {
+    if (new_value == n_workers) { // 每一个worker都会执行上面的原子交换，但是只有最后一个线程的new_value
+                // 会等于总的worker数量，因此通知其他线程，在wait_until_all_strong_classes_discovered 方法出unblock
       // This thread is last. Notify the others.
       MonitorLockerEx ml(&_lock, Mutex::_no_safepoint_check_flag);
       _lock.notify_all();
@@ -178,7 +188,7 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
                      scan_strong_clds,
                         /**
                         *  如果需要跟踪metadata（发生在需要进行标记（当前正在初始标记，并且需要卸载class）），
-                        *  那么用来处理线程栈的cld的闭包就是scan_strong_clds，否则是null
+                        *  那么用来处理线程栈的cld的闭包就是scan_weak_clds，否则是null
                         */
                      trace_metadata ? NULL : scan_weak_clds,
                      &root_code_blobs,
@@ -188,9 +198,15 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
   // This is the point where this worker thread will not find more strong CLDs/nmethods.
   // Report this so G1 can synchronize the strong and weak CLDs/nmethods processing.
   if (trace_metadata) {
+      /**
+       * 调用这个方法，代表自己这个worker已经处理完了所有的强根
+       */
     worker_has_discovered_all_strong_classes();
   }
-  // 处理 VM的根, 传入进来的参数是strong_roots和weak_roots, 和CLD无关
+  /**
+   * 处理 VM的根, 传入进来的参数是strong_roots和weak_roots, 和CLD无关
+   * 搜索 G1RootProcessor::process_vm_roots
+   */
   process_vm_roots(strong_roots, weak_roots, phase_times, worker_i);
   // 处理string table 根
   process_string_table_roots(weak_roots, phase_times, worker_i);
@@ -211,12 +227,19 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
       G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::WaitForStrongCLD, worker_i);
       // Barrier to make sure all workers passed
       // the strong CLD and strong nmethods phases.
+      /**
+       * 如果启动了类卸载，那么在并发多worker的情况下，必须等待所有的强class被发现(即所有其他worker线程执行完成)，才能继续往下进行弱根的扫描
+       * 参考 worker_has_discovered_all_strong_classes
+       */
       wait_until_all_strong_classes_discovered();
     }
 
     // Now take the complement of the strong CLDs.
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::WeakCLDRoots, worker_i);
-    ClassLoaderDataGraph::roots_cld_do(NULL, scan_weak_clds);
+      /**
+       * 所有的强根的处理(注意当前方法只是根扫描，因此不包括对那些根 所 指向的对象的间接扫描)开始进行弱根的扫描
+       */
+    ClassLoaderDataGraph::roots_cld_do(NULL, scan_weak_clds); // 不再处理强应用，只处理弱引用，只处理is_weak=true的那些cld
   } else {
     phase_times->record_time_secs(G1GCPhaseTimes::WaitForStrongCLD, worker_i, 0.0);
     phase_times->record_time_secs(G1GCPhaseTimes::WeakCLDRoots, worker_i, 0.0);
@@ -298,8 +321,16 @@ void G1RootProcessor::process_all_roots_no_string_table(OopClosure* oops,
  *   worker_i：一个工作线程的标识符。
  */
 void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用于处理强根的 OopClosure。
+                                         /**
+                                          * trace_metadata ? scan_strong_clds : NULL,
+                                          * 即如果需要trace_metadata，那么我们需要扫描thread_stack_clds, 而如果不进行trace_metadata，那么我们不需要扫描thread_stack_clds
+                                          */
                                          CLDClosure* thread_stack_clds, // 一个用于处理线程栈上的类加载器数据（CLD）根的 CLDClosure，如果需要trace metadata(即处于初始标记阶段并且用户配置了在标记阶段进行类卸载), 那么这个cld就是 scan_strong_clds
                                          CLDClosure* strong_clds, // 一个用于处理强 CLD 的 CLDClosure， 如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
+                                         /**
+                                          * trace_metadata ? NULL : scan_weak_clds
+                                          * 即如果需要trace_metadata，那么我们在这里不扫描和处理弱的cld(cld.is_weak() = true)，在所有线程完成了对强cld的扫描以后，我们再处理弱的cld
+                                          */
                                          CLDClosure* weak_clds, // 一个用于处理弱 CLD 的 CLDClosure
                                          CodeBlobClosure* strong_code, // 一个用于处理强代码块的 CodeBlobClosure
                                          G1GCPhaseTimes* phase_times,
@@ -308,6 +339,10 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
   // Iterating over the CLDG and the Threads are done early to allow us to
   // first process the strong CLDs and nmethods and then, after a barrier,
   // let the thread process the weak CLDs and nmethods.
+  /**
+   * 我们先通过下面的两个方法首先处理强的CLD和nmethods，然后，在一个栅栏 （ wait_until_all_strong_classes_discovered(); ）以后，
+   * 这个线程就可以处理弱的CLD和nmethods
+   */
   {
       /**
        * 这里处理类加载数据图上面的类加载器数据
@@ -321,7 +356,7 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
          * 查看静态方法的具体实现，可以看到，如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
          * 我们从 调用者的构造方法可以看到，strong_clds和 weak_clds的区别是他们的参数中的 G1ParCopyClosure _oop_closure 是对应的strong还是weak
          */
-      ClassLoaderDataGraph::roots_cld_do(strong_clds, weak_clds);
+      ClassLoaderDataGraph::roots_cld_do(strong_clds, weak_clds); // 如果trace metadata，那么weak_clds = null
     }
   }
 
@@ -330,6 +365,11 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
     /**
      * 处理线程根：在此阶段，函数处理在线程栈上发现的根。它利用 Threads::possibly_parallel_oops_do 方法，
      * 可能并行处理强根（strong_roots）、CLD（thread_stack_clds）和代码块（strong_code）。
+     * 如果 trace_metadata = true，那么thread_stack_clds就是strong_roots_cld，否则为null
+     *
+     * 搜索 void Threads::possibly_parallel_oops_do 查看具体实现
+     *
+     * void Threads::possibly_parallel_oops_do -> JavaThread::oops_do -> frame::oops_do_internal -> frame::oops_interpreted_do
      */
     Threads::possibly_parallel_oops_do(strong_roots, thread_stack_clds, strong_code);
   }
@@ -441,7 +481,9 @@ void G1RootProcessor::scan_remembered_sets(G1ParPushHeapRSClosure* scan_rs,
 
   // Now scan the complement of the collection set.
   G1CodeBlobClosure scavenge_cs_nmethods(scan_non_heap_weak_roots);
-  // 搜 G1RemSet::oops_into_collection_set_do 查看方法实现
+  /**
+   * 搜 G1RemSet::oops_into_collection_set_do 查看方法实现
+   */
   _g1h->g1_rem_set()->oops_into_collection_set_do(scan_rs, &scavenge_cs_nmethods, worker_i);
 }
 

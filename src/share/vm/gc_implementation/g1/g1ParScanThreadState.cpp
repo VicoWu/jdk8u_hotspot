@@ -158,7 +158,11 @@ void G1ParScanThreadState::trim_queue() {
     // Drain the overflow stack first, so other threads can steal.
     while (_refs->pop_overflow(ref)) { //不断取出队列中的每一个对象引用，放入到ref中，直到_ref为空
       if (!_refs->try_push_to_taskqueue(ref)) { // 把ref 给 push到这个_ref对应的taskqueue中
-        dispatch_reference(ref); // 对这个对象引用进行处理，会对ref对应的对象进行转移操作
+          /**
+           * 对这个对象引用进行处理，会对ref对应的对象进行转移操作，
+           * 搜索 G1ParScanThreadState::dispatch_reference -> G1ParScanThreadState::deal_with_reference
+           */
+        dispatch_reference(ref); //
       }
     }
 
@@ -305,9 +309,15 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
       }
       age_table()->add(age, word_sz);
     } else {
+        /**
+         * 如果不是年轻代对象，对对象进行标记
+         * 这个标记位是设置在对象的header中的，而不是并发标记中的标记位图标记
+         */
       obj->set_mark(old_mark);
     }
-
+    /**
+     * 字符串去重操作
+     */
     if (G1StringDedup::is_enabled()) {
       const bool is_from_young = state.is_young();
       const bool is_to_young = dest_state.is_young();

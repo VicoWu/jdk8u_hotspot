@@ -297,6 +297,9 @@ public:
     return (strong_code_roots_list_length() == 0) && _other_regions.occupancy_less_or_equal_than(occ);
   }
 
+  /**
+   * 这个方法是 HeapRegionRemSet::occupied() 方法
+   */
   size_t occupied() {
     MutexLockerEx x(&_m, Mutex::_no_safepoint_check_flag);
     return occupied_locked();

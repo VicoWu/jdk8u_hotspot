@@ -141,12 +141,18 @@ public:
   void set_try_claimed() { _try_claimed = true; }
 
   /**
+   * 方法 ScanRSClosure::scanCard
    * 在ScanRSClosure::doHeapRegion 方法中被调用,index是卡片索引，r是这个卡片所在的region
+   * 这个方法会通过 HeapRegionDCTOC  这个 closure 对MemRegion中的每一个obj进行递归扫描，扫描过程中根据上一轮的mark bit map进行对象的过滤，只扫描已经被标记的对象
    * @param index
    * @param r
    */
   void scanCard(size_t index, HeapRegion *r) {
     // Stack allocate the DirtyCardToOopClosure instance
+    /**
+     * 在这个对象的 HeapRegionDCTOC::walk_mem_region 方法中会根据prev mark bit map来判断对象在上一轮中是否已经被标记
+     * _oc  是 G1ParPushHeapRSClosure
+     */
     HeapRegionDCTOC cl(_g1h, r, _oc,
                        CardTableModRefBS::Precise); // 在栈上分配一个HeapRegionDCTOC对象，它是DirtyCardToOopClosure的子类
 
@@ -308,7 +314,7 @@ void G1RemSet::scanRS(G1ParPushHeapRSClosure* oc,
   double rs_time_start = os::elapsedTime();
   HeapRegion *startRegion = _g1->start_cset_region_for_worker(worker_i); // 获取分配给当前worker的回收集合中的起始HeapRegion
 
-  ScanRSClosure scanRScl(oc, code_root_cl, worker_i); // 扫描RSet的闭包
+  ScanRSClosure scanRScl(oc, code_root_cl, worker_i); // 扫描RSet的闭包，通过调用 ScanRSClosure::doHeapRegion
   //  G1CollectedHeap::collection_set_iterate_from
   // 首次遍历, _try_claimed 标记为false，那么必须claim成功对应的Region才能对她的card进行scan
   _g1->collection_set_iterate_from(startRegion, &scanRScl);
@@ -438,8 +444,13 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
   DirtyCardQueue into_cset_dcq(&_g1->into_cset_dirty_card_queue_set());
 
   assert((ParallelGCThreads > 0) || worker_i == 0, "invariant");
-
+  /**
+   * 搜索 void G1RemSet::updateRS
+   */
   updateRS(&into_cset_dcq, worker_i);
+  /**
+   * 搜索 void G1RemSet::scanRS
+   */
   scanRS(oc, code_root_cl, worker_i);
 
   // We now clear the cached values of _cset_rs_update_cl for this worker

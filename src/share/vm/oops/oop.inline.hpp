@@ -757,6 +757,9 @@ inline int oopDesc::adjust_pointers() {
                                                                            \
 inline int oopDesc::oop_iterate(OopClosureType* blk) {                     \
   SpecializationStats::record_call();                                      \
+  /**
+ *  搜索 int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure)
+ */
   return klass()->oop_oop_iterate##nv_suffix(this, blk);               \
 }                                                                          \
                                                                            \
