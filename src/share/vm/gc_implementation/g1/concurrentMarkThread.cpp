@@ -49,7 +49,11 @@ ConcurrentMarkThread::ConcurrentMarkThread(ConcurrentMark* cm) :
   _vtime_mark_accum(0.0) {
   create_and_start();
 }
-
+/**
+ * remark阶段
+ * 是在stw状态下执行的，通过一个vm_operation执行
+ * 在 ConcurrentMarkThread::run 中调用
+ */
 class CMCheckpointRootsFinalClosure: public VoidClosure {
 
   ConcurrentMark* _cm;
@@ -58,6 +62,9 @@ public:
   CMCheckpointRootsFinalClosure(ConcurrentMark* cm) :
     _cm(cm) {}
 
+  /**
+   * ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void()
+   */
   void do_void(){
     _cm->checkpointRootsFinal(false); // !clear_all_soft_refs
   }
@@ -69,7 +76,9 @@ public:
 
   CMCleanUp(ConcurrentMark* cm) :
     _cm(cm) {}
-
+    /**
+     * ConcurrentMarkThread::run -> CMCleanUp::do_void()
+     */
   void do_void(){
     _cm->cleanup();
   }
@@ -167,7 +176,7 @@ void ConcurrentMarkThread::run() {
             gclog_or_tty->print_cr("[GC concurrent-mark-end, %1.7lf secs]",
                                       mark_end_sec - mark_start_sec);
           }
-          // 这是再标记操作 ，通过 VM_CGC_Operation执行，因此是STW的
+          // 这是再标记操作 ，通过 VM_CGC_Operation 执行，因此是STW的
           CMCheckpointRootsFinalClosure final_cl(_cm);
           VM_CGC_Operation op(&final_cl, "GC remark", true /* needs_pll */);
           VMThread::execute(&op);

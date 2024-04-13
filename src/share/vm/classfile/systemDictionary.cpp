@@ -1712,11 +1712,24 @@ public:
 
 // Assumes classes in the SystemDictionary are only unloaded at a safepoint
 // Note: anonymous classes are not in the SD.
+/**
+ * 静态方法
+ * 在remark阶段被调用，调用者
+ *      ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void() -> ConcurrentMark::checkpointRootsFinal -> ConcurrentMark::weakRefsWork
+ * 其中BoolObjectClosure 的实现是 G1CMIsAliveClosure g1_is_alive
+ * @param is_alive
+ * @param clean_alive
+ * @return
+ */
 bool SystemDictionary::do_unloading(BoolObjectClosure* is_alive, bool clean_alive) {
   // First, mark for unload all ClassLoaderData referencing a dead class loader.
+  /**
+   * 卸载所有的没有用的 CLD
+   * 搜索 静态方法 ClassLoaderDataGraph::do_unloading
+   */
   bool unloading_occurred = ClassLoaderDataGraph::do_unloading(is_alive, clean_alive);
   if (unloading_occurred) {
-    dictionary()->do_unloading();
+    dictionary()->do_unloading(); // 搜索 Dictionary::do_unloading()
     constraints()->purge_loader_constraints();
     resolution_errors()->purge_resolution_errors();
   }

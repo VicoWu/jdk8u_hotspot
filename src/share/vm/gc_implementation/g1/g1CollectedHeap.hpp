@@ -1610,9 +1610,9 @@ public:
   // is not marked.
   /**
    * 给定该对象以及该对象所属的区域，确定该对象是否已死亡。 一个对象已死亡，当且仅当
-   *    a) 自上次标记以来尚未分配该对象，
+   *    a) 这个对象是在prev ntams以前分配的，
    *       **并且**
-   *    b) 未对其进行标记。
+   *    b) 这个对象在上次的标记位图中没有被标记
    * @param obj
    * @param hr
    * @return
@@ -1626,6 +1626,15 @@ public:
   // This function returns true when an object has been
   // around since the previous marking and hasn't yet
   // been marked during this marking.
+  /**
+   * G1CollectedHeap::is_obj_ill()
+   * 这个方法用来判断对象是否是ill的
+   * 判断的标准是：
+   *    a) 这个对象是在next ntams以前分配的，
+   *       **并且**
+   *    b) 这个对象在这次的标记位图中没有被标记
+   *
+   */
   bool is_obj_ill(const oop obj, const HeapRegion* hr) const {
     return
       !hr->obj_allocated_since_next_marking(obj) &&

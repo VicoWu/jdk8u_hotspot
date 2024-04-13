@@ -881,6 +881,10 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
       // If that does not succeed, wait if this thread is not
       // in a critical section itself.
       result =
+              /**
+               * Metaspace* ClassLoaderData::metaspace_non_null()
+               * 搜索 MetaWord* Metaspace::expand_and_allocate
+               */
         loader_data->metaspace_non_null()->expand_and_allocate(word_size,
                                                                mdtype);
       if (result != NULL) {

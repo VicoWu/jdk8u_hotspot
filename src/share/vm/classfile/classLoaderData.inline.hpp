@@ -43,9 +43,16 @@ inline ClassLoaderData *ClassLoaderDataGraph::find_or_create(Handle loader, TRAP
   guarantee(loader() != NULL && loader()->is_oop(), "Loader must be oop");
   // Gets the class loader data out of the java/lang/ClassLoader object, if non-null
   // it's already in the loader_data, so no need to add
+  /**
+   * 首先看看当前的
+   * 搜索 ClassLoaderData* java_lang_ClassLoader::loader_data 查看实现
+   */
   ClassLoaderData* loader_data= java_lang_ClassLoader::loader_data(loader());
   if (loader_data) {
      return loader_data;
   }
+  /**
+   * 给非匿名类创建一个新的ClassLoaderData
+   */
   return ClassLoaderDataGraph::add(loader, false, THREAD);
 }

@@ -166,7 +166,6 @@ void G1MarkSweep::mark_sweep_phase1(bool& marked_for_unloading,
   assert(GenMarkSweep::_marking_stack.is_empty(), "Marking should have completed");
 
   if (ClassUnloading) {
-
      // Unload classes and purge the SystemDictionary.
      bool purged_class = SystemDictionary::do_unloading(&GenMarkSweep::is_alive);
 

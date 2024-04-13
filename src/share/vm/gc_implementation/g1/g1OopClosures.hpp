@@ -102,7 +102,7 @@ protected:
   // objects pointed to by roots that are guaranteed not to move
   // during the GC (i.e., non-CSet objects). It is MT-safe.
   /**
-   * 搜搜 G1ParCopyHelper::mark_object查看具体实现，搜索 do_mark_object == G1MarkFromRoot查看调用者
+   * 搜搜 G1ParCopyHelper::mark_object查看具体实现，搜索 do_mark_object == G1MarkFromRoot 查看调用者
    *
    * 如果尚未标记该对象，则对其进行标记。 这用于标记根所指向的对象，这些对象保证在 GC 期间不会移动（即非 CSet 对象）。 它是 MT 安全的。
    */

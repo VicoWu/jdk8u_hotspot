@@ -259,6 +259,9 @@ class BinaryTreeDictionary: public FreeBlockDictionary<Chunk_t> {
   // the tree.
   Chunk_t* get_chunk(size_t size, enum FreeBlockDictionary<Chunk_t>::Dither dither) {
     FreeBlockDictionary<Chunk_t>::verify_par_locked();
+    /**
+     * BinaryTreeDictionary<Chunk_t, FreeList_t>::get_chunk_from_tree
+     */
     Chunk_t* res = get_chunk_from_tree(size, dither);
     assert(res == NULL || res->is_free(),
            "Should be returning a free chunk");

@@ -73,6 +73,8 @@ ClassLoaderData * ClassLoaderData::_the_null_class_loader_data = NULL;
 /**
  * 我们通过方法void ClassLoaderData::add_class(Klass* k) 可以看到，
  *      一个ClassLoaderData通过_klass链接了自己所管理的各种klass对象，即各种不同的class
+ *
+ * 构造方法的调用者是 ClassLoaderData* ClassLoaderDataGraph::add
  * @param h_class_loader
  * @param is_anonymous
  * @param dependencies
@@ -170,7 +172,9 @@ void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool m
     return;
   }
   /**
-   * f是G1ParCopyClosure, 对这个CLD对应的classLoader对象去apply 没有拦截的G1ParCopyClosure
+   * f是G1ParCopyClosure, 对这个CLD对应的_classLoader对象去apply 没有拦截的G1ParCopyClosure
+   * 对于一个ClassLoaderData，如果不是构造中的匿名类或者空类加载器，那么，它的keep_alive_object就是对应的class loader
+   * 如果是一个匿名类，它的keep alive object就是对应的mirror对象
    * 查看 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
    */
   f->do_oop(&_class_loader);
@@ -408,13 +412,38 @@ void ClassLoaderData::unload() {
   }
 }
 
+/**
+ * 获取当前cld对应的class的keep_alive_object，这个object专门被G1GC用来跟踪对象的存活特性
+ * @return
+ */
 oop ClassLoaderData::keep_alive_object() const {
   assert(!keep_alive(), "Don't use with CLDs that are artificially kept alive");
+  /**
+   * 如果是匿名类，那么使用它对应的mirror class来跟踪，如果是正常类，则使用class_loader来跟踪
+   * 这里_klasses 是一个 Klass *，实际上一个CLD所管理的多个Klass具有相同的性质，比如是否是匿名的
+   */
   return is_anonymous() ? _klasses->java_mirror() : class_loader();
 }
 
+/**
+ * 在对CLD进行卸载的时候，检查这个ClassLoaderData 是否存活
+ * 调用者 SystemDictionary::do_unloading -> bool ClassLoaderDataGraph::do_unloading
+ * @param is_alive_closure
+ * @return
+ */
 bool ClassLoaderData::is_alive(BoolObjectClosure* is_alive_closure) const {
+    /**
+     *  搜索 ClassLoaderData::keep_alive()
+     *  如果是Null Class Loader加载的cld或者是一个当前还没有完全构造完成的匿名类，那么必须keep_alive()
+     *
+     *  null 类加载器被用来加载 Java 核心类库（如 java.lang 包中的类）和基本类（如原始数据类型的包装类），这些类在 JVM 启动时就已经预先加载到内存中了。
+     *  因为这些类在 JVM 启动时就已经加载到内存中，所以它们不需要经过普通的类加载器加载，也不需要在加载时指定一个特定的类加载器。因此，对于这些系统类和基本类，它们的类加载器通常被设置为 null，表示它们是由 JVM 内部直接加载的。
+     */
   bool alive = keep_alive() // null class loader and incomplete anonymous klasses.
+      /**
+       * G1CMIsAliveClosure::do_object_b
+       * 可以看到，这里传入的参数是这个CLD对应的keep_alive_obj，对于匿名类，就是这个类的mirror，对于非匿名类，对应的是这个类的class loader
+       */
       || is_alive_closure->do_object_b(keep_alive_object());
 
   return alive;
@@ -545,7 +574,7 @@ void ClassLoaderData::free_deallocate_list() {
 // These anonymous class loaders are to contain classes used for JSR292
 ClassLoaderData* ClassLoaderData::anonymous_class_loader_data(oop loader, TRAPS) {
   // Add a new class loader data to the graph.
-  return ClassLoaderDataGraph::add(loader, true, THREAD);
+  return ClassLoaderDataGraph::add(loader, true, THREAD); // 给匿名类创建一个ClassLoaderData
 }
 
 const char* ClassLoaderData::loader_name() {
@@ -628,6 +657,16 @@ bool ClassLoaderDataGraph::_should_purge = false;
 
 // Add a new class loader data node to the list.  Assign the newly created
 // ClassLoaderData into the java/lang/ClassLoader object as a hidden field
+/**
+ * 这是一个静态方法，搜索 ClassLoaderDataGraph::add 查看具体实现
+ * 调用者
+ *          ClassLoaderData* ClassLoaderData::anonymous_class_loader_data
+ *          和
+ *          ClassLoaderData *ClassLoaderDataGraph::find_or_create
+ * @param loader
+ * @param is_anonymous
+ * @return
+ */
 ClassLoaderData* ClassLoaderDataGraph::add(Handle loader, bool is_anonymous, TRAPS) {
   // We need to allocate all the oops for the ClassLoaderData before allocating the
   // actual ClassLoaderData object.
@@ -639,15 +678,27 @@ ClassLoaderData* ClassLoaderDataGraph::add(Handle loader, bool is_anonymous, TRA
 
   ClassLoaderData* cld = new ClassLoaderData(loader, is_anonymous, dependencies);
 
-
+  /**
+   *  如果不是给匿名类创建CLD
+   */
   if (!is_anonymous) {
+      /**
+       * 获取对应的ClassLoader的地址
+       * 搜索 ClassLoaderData** java_lang_ClassLoader::loader_data_addr 查看具体实现
+       */
     ClassLoaderData** cld_addr = java_lang_ClassLoader::loader_data_addr(loader());
     // First, Atomically set it
+    /**
+     * cld_addr是一个指针的指针，即cld_addr指向的位置存放了一个指针，一个指向CLD的指针
+     * 首先，比较 cld_addr 地址处存储的指针值 与 NULL 的值是否相等。
+        如果相等，则将 cld 的值存储到 cld_addr 地址处，并返回原来存储在该地址处的指针值（即原来的 ClassLoaderData 对象的地址）。
+        如果不相等，则不执行任何操作，并直接返回 cld_addr 地址处存储的指针值（即原来的 ClassLoaderData 对象的地址）。
+     */
     ClassLoaderData* old = (ClassLoaderData*) Atomic::cmpxchg_ptr(cld, cld_addr, NULL);
-    if (old != NULL) {
-      delete cld;
+    if (old != NULL) { // 如果原来这个cld_addr 存放的不是null
+      delete cld;  // 删除刚刚创建的ClassLoaderData
       // Returns the data.
-      return old;
+      return old; //依然使用旧的ClassLoaderData
     }
   }
 
@@ -715,10 +766,14 @@ void ClassLoaderDataGraph::roots_cld_do(CLDClosure* strong, CLDClosure* weak) {
    * 遍历当前所有的ClassLoaderData，
    *    如果是keep_alive的，那么就使用 strong，
    *    如果不是keep_alive的，就使用strong
+   * 一个CLD需要keep alive，意味着这个CLD对应的class loader是null class loader，或者，这个class是一个正在构造中的匿名类
    */
-    CLDClosure* closure = cld->keep_alive() ? strong : weak; //
+    CLDClosure* closure = cld->keep_alive() ? strong : weak;
     if (closure != NULL) {
-      closure->do_cld(cld); // 搜索 class G1CLDClosure : public CLDClosure,查看方法do_cld
+        /**
+         * 搜索 class G1CLDClosure : public CLDClosure,查看方法do_cld
+         */
+      closure->do_cld(cld);
     }
   }
 }
@@ -811,6 +866,13 @@ bool ClassLoaderDataGraph::contains_loader_data(ClassLoaderData* loader_data) {
 
 // Move class loader data from main list to the unloaded list for unloading
 // and deallocation later.
+/**
+ * 这是一个静态方法
+ * 在   SystemDictionary::do_unloading 中调用
+ * @param is_alive_closure
+ * @param clean_alive
+ * @return
+ */
 bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, bool clean_alive) {
   ClassLoaderData* data = _head;
   ClassLoaderData* prev = NULL;
@@ -821,6 +883,12 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, boo
   _saved_unloading = _unloading;
 
   while (data != NULL) {
+      /**
+       * 如果当前的类加载器依然存活，那么跳过当前的CLD，检查下一个cld
+       * 搜索 bool ClassLoaderData::is_alive
+       * 搜索 G1CMIsAliveClosure::do_object_b
+       * 主要是查看这个cld在刚刚完成的标记的keep_alive_data是否已经被标记存活
+       */
     if (data->is_alive(is_alive_closure)) {
       prev = data;
       data = data->next();
@@ -828,7 +896,7 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, boo
     }
     seen_dead_loader = true;
     ClassLoaderData* dead = data;
-    dead->unload();
+    dead->unload(); // 对这个CLD执行unload操作
     data = data->next();
     // Remove from loader list.
     // This class loader data will no longer be found
@@ -840,7 +908,7 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, boo
       _head = data;
     }
     dead->set_next(_unloading);
-    _unloading = dead;
+    _unloading = dead; // 将这个cld加入到_unloading这个链表中去
   }
 
   if (clean_alive) {
@@ -875,6 +943,13 @@ void ClassLoaderDataGraph::clean_metaspaces() {
   free_deallocate_lists();
 }
 
+/**
+ * 卸载所有的需要卸载的CLD（存放在_unloading链表中），同时调用Metaspace::purge()来卸载元数据空间
+ * 这个_unloading链表是在刚刚的remark阶段(当前处于clean_up阶段)通过调用
+ *      ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void()
+ *                  -> ConcurrentMark::checkpointRootsFinal -> ConcurrentMark::weakRefsWork -> SystemDictionary::do_unloading
+ * 来加进来的
+ */
 void ClassLoaderDataGraph::purge() {
   assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint!");
   ClassLoaderData* list = _unloading; // 需要进行卸载的CLD
@@ -927,6 +1002,9 @@ void ClassLoaderDataGraph::free_deallocate_lists() {
 // Global metaspaces for writing information to the shared archive.  When
 // application CDS is supported, we may need one per metaspace, so this
 // sort of looks like it.
+/**
+ *  这是两个静态变量，用来支持CDS(Class Data Sharing（类数据共享）), 忽略
+ */
 Metaspace* ClassLoaderData::_ro_metaspace = NULL;
 Metaspace* ClassLoaderData::_rw_metaspace = NULL;
 static bool _shared_metaspaces_initialized = false;

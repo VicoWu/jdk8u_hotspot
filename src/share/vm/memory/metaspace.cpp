@@ -846,6 +846,9 @@ void BlockFreelist::return_block(MetaWord* p, size_t word_size) {
 }
 
 MetaWord* BlockFreelist::get_block(size_t word_size) {
+    /**
+     * 搜索 BlockTreeDictionary* dictionary()
+     */
   if (dictionary() == NULL) {
     return NULL;
   }
@@ -855,7 +858,15 @@ MetaWord* BlockFreelist::get_block(size_t word_size) {
     return NULL;
   }
 
+  /**
+   * typedef BinaryTreeDictionary<Metablock, FreeList<Metablock> > BlockTreeDictionary
+   */
   Metablock* free_block =
+          /**
+           * BlockTreeDictionary* dictionary()
+           * 搜索 Chunk_t* get_chunk(size_t size, enum FreeBlockDictionary<Chunk_t>::Dither dither) {
+           *    -> BinaryTreeDictionary<Chunk_t, FreeList_t>::get_chunk_from_tree
+           */
     dictionary()->get_chunk(word_size, FreeBlockDictionary<Metablock>::atLeast);
   if (free_block == NULL) {
     return NULL;
@@ -1098,11 +1109,14 @@ void VirtualSpaceList::purge(ChunkManager* chunk_manager) {
   VirtualSpaceNode* purged_vsl = NULL;
   VirtualSpaceNode* prev_vsl = virtual_space_list();
   VirtualSpaceNode* next_vsl = prev_vsl;
-  while (next_vsl != NULL) {
+  while (next_vsl != NULL) { // 遍历整个Virtual Space List
     VirtualSpaceNode* vsl = next_vsl;
     next_vsl = vsl->next();
     // Don't free the current virtual space since it will likely
-    // be needed soon.
+    // be needed soon
+    /**
+     * 如果当前的VSL的container数量为0，并且当前的vsl不是正在进行分配的vsl
+     */
     if (vsl->container_count() == 0 && vsl != current_virtual_space()) {
       // Unlink it from the list
       if (prev_vsl == vsl) {
@@ -2491,8 +2505,11 @@ MetaWord* SpaceManager::allocate(size_t word_size) {
   // a reasonable policy?  Maybe an skinny dictionary is fast enough
   // for allocations.  Do some profiling.  JJJ
   if (fl->total_size() > allocation_from_dictionary_limit) {
-    p = fl->get_block(raw_word_size);
+    p = fl->get_block(raw_word_size); // MetaWord* BlockFreelist::get_block
   }
+  /**
+   * 如果从空闲块链表中找不到合适大小的内存块，则调用 allocate_work 函数来分配内存
+   */
   if (p == NULL) {
     p = allocate_work(raw_word_size);
   }
@@ -3411,6 +3428,13 @@ size_t Metaspace::align_word_size_up(size_t word_size) {
   return ReservedSpace::allocation_align_size_up(byte_size) / wordSize;
 }
 
+/**
+ * Metaspace 的 实例方法，在静态方法 MetaWord* Metaspace::allocate(ClassLoaderData* loader_data, size_t word_size,
+                              bool read_only, MetaspaceObj::Type type, TRAPS)中被调用
+ * @param word_size
+ * @param mdtype
+ * @return
+ */
 MetaWord* Metaspace::allocate(size_t word_size, MetadataType mdtype) {
   // DumpSharedSpaces doesn't use class metadata area (yet)
   // Also, don't use class_vsm() unless UseCompressedClassPointers is true.
@@ -3436,6 +3460,9 @@ MetaWord* Metaspace::expand_and_allocate(size_t word_size, MetadataType mdtype) 
   // have incremented the HWM and therefore the allocation might still succeed.
   do {
     incremented = MetaspaceGC::inc_capacity_until_GC(delta_bytes, &after, &before, &can_retry);
+    /**
+     * Metaspace::allocate
+     */
     res = allocate(word_size, mdtype);
   } while (!incremented && res == NULL && can_retry);
 
@@ -3544,7 +3571,16 @@ void Metaspace::deallocate(MetaWord* ptr, size_t word_size, bool is_class) {
   }
 }
 
-
+/**
+ * 元数据空间分配的静态方法，是根据当前的loader_data分配对应的元数据空间
+ * 由于传入了ClassLoaderData对象，其实还是将这个metaspace分配在这个cld对象的元数据空间中，并不是一个全局的metaspace
+ * 搜索 Metaspace::allocate  查看调用
+ * @param loader_data
+ * @param word_size
+ * @param read_only
+ * @param type
+ * @return
+ */
 MetaWord* Metaspace::allocate(ClassLoaderData* loader_data, size_t word_size,
                               bool read_only, MetaspaceObj::Type type, TRAPS) {
   if (HAS_PENDING_EXCEPTION) {
@@ -3558,10 +3594,13 @@ MetaWord* Metaspace::allocate(ClassLoaderData* loader_data, size_t word_size,
   // Allocate in metaspaces without taking out a lock, because it deadlocks
   // with the SymbolTable_lock.  Dumping is single threaded for now.  We'll have
   // to revisit this for application class data sharing.
+  /**
+   * 用来支持类数据共享的，忽略
+   */
   if (DumpSharedSpaces) {
     assert(type > MetaspaceObj::UnknownType && type < MetaspaceObj::_number_of_types, "sanity");
     Metaspace* space = read_only ? loader_data->ro_metaspace() : loader_data->rw_metaspace();
-    MetaWord* result = space->allocate(word_size, NonClassType);
+    MetaWord* result = space->allocate(word_size, NonClassType); // 搜索 Metaspace::allocate(size_t word_size, MetadataType mdtype)
     if (result == NULL) {
       report_out_of_shared_space(read_only ? SharedReadOnly : SharedReadWrite);
     }
@@ -3575,9 +3614,15 @@ MetaWord* Metaspace::allocate(ClassLoaderData* loader_data, size_t word_size,
     return result;
   }
 
+  /**
+   *  获取MetadataType
+   */
   MetadataType mdtype = (type == MetaspaceObj::ClassType) ? ClassType : NonClassType;
 
   // Try to allocate metadata.
+  /**
+   * 提取 CLD对象中的metaspace，在这个cld的metaspace中分配一个对象
+   */
   MetaWord* result = loader_data->metaspace_non_null()->allocate(word_size, mdtype);
 
   if (result == NULL) {
@@ -3742,9 +3787,9 @@ void Metaspace::purge(MetadataType mdtype) {
 void Metaspace::purge() {
   MutexLockerEx cl(SpaceManager::expand_lock(),
                    Mutex::_no_safepoint_check_flag);
-  purge(NonClassType);
+  purge(NonClassType); // 卸载非class 类型的元数据
   if (using_class_space()) {
-    purge(ClassType);
+    purge(ClassType); // 卸载class类型的元数据
   }
 }
 

@@ -311,7 +311,7 @@ protected:
   void record_modified_oops()            { _modified_oops = 1; }
   void clear_modified_oops()             { _modified_oops = 0; }
   /**
-   * 标记这个klass对应的class对象是否有被修改过，比如，因为gc的发生从eden移动到了survivor
+   * 标记这个klass对应的class对象（mirror）是否有被移动过，比如，因为gc的发生将这个mirror从eden移动到了survivor
    * @return
    */
   bool has_modified_oops()               { return _modified_oops == 1; }

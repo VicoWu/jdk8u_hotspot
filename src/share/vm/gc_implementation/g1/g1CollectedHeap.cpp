@@ -4895,7 +4895,7 @@ void G1ParCopyHelper::do_klass_barrier(T* p, oop new_obj) {
      *  搜索 void record_modified_oops(), 就是设置Klass的_modified_oops变量为1，代表这个对象的oop被修改过,即对象被移动过
      */
   if (_g1->heap_region_containing_raw(new_obj)->is_young()) {
-    _scanned_klass->record_modified_oops();
+    _scanned_klass->record_modified_oops(); // 记录这个对象的mirror被移动过
   }
 }
 
@@ -4962,7 +4962,8 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
         /**
          *  调用父类的实现，搜索 G1ParCopyHelper::do_klass_barrier
          *  从实现可以看到，只有当forwardee是young(eden + survivor)的时候，会将当前的对象所对应的klass的 _modified_oops 置位
-         *  即，当前对象虽然在heap中，但是klass却不在，因此，如果当前的对象移动了，需要在这个对象的klass上设置一个标记，相当于将这个klass的对象标记为脏对象，后面会针对脏对象进行处理
+         *  即，当前这个klass的mirror在heap中，但是klass却不在，因此，如果当前的mirror移动了，需要在这个对象的klass上设置一个标记，表示这个klass的mirror已经发生了移动
+         *  相当于将这个klass的对象标记为脏对象，后面会针对脏对象进行处理
          */
       do_klass_barrier(p, forwardee);
     }
@@ -5061,18 +5062,25 @@ class G1KlassScanClosure : public KlassClosure {
      * 如果 _process_only_dirty = false，那么不管这个klass是否有修改，一定会对这个klass 去apply对应的封装好的G1ParCopyHelper* closure
      * 如果这个_process_only_dirty = true，即当前是一个young gc的阶段，那么只有这个klass对应的对象的oop已经被修改过（即这个klass有指向young generation的引用）
      * ，即这个klass是dirty的，才会处理这个klass
+     * 搜索 record_modified_oops， 可以看到，它表征的是这个klass对应的mirror是否有位置的移动或者从null到非null的设置，因此，这个变化可能来自于用户代码，可能来自于gc。
+     *  void Klass::klass_update_barrier_set(oop v)
+     *
+     *  如果仅仅是不需要初始标记的young gc，那么 _process_only_dirty = true，这时候只有当has_modified_oops的时候才会执行对这个klass的扫描，扫描过程中如果挪动了klass的mirror，会再次将_midified_oop置为true
+     *  如果不是young gc，或者gc过程需要进行标记，那么_process_only_dirty = false，这时候无论是否_modified_oops=true，都会对这个klass进行扫描
+     *
      */
    if (!_process_only_dirty || klass->has_modified_oops()) {
       // Clean the klass since we're going to scavenge all the metadata.
-      klass->clear_modified_oops(); // 重置类的oop被修改的标记位。我们从
+      klass->clear_modified_oops(); // 重置类的oop被修改的标记位
 
       // Tell the closure that this klass is the Klass to scavenge
       // and is the one to dirty if oops are left pointing into the young gen.
       _closure->set_scanned_klass(klass); // 设置当前的klass为当前的_closure正在处理的类
 
-      /*
+      /**
        * 搜索 void Klass::oops_do(OopClosure* cl) 查看方法的具体实现
-       * 在这个klass上去apply封装好的G1ParCopyHelper* closure， 其实就是将klass对应的mirror的oop上apply对应的G1ParCopyClosure
+       * 在这个klass上去apply封装好的G1ParCopyHelper* closure， 其实就是将klass对应的mirror的oop上apply对应的G1ParCopyClosure，
+       * 注意这里是对这个klass的mirror进行apply G1ParCopyHelper* closure
        * 搜搜 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
        * 这里，如果对象发生了移动，那么依然可能会重新将_modified_oops 置位为1
        * 搜 void Klass::oops_do(OopClosure* cl) 可以看到，这里最终传递给closure处理的是klass 的 mirror对象，
@@ -5172,6 +5180,7 @@ public:
     }
 
     /**
+     * G1CLDClosure::do_cld()方法
      * 搜索 ClassLoaderData::oops_do 查看 cld->oops_do的具体实现
      * 搜索 ClassLoaderDataGraph::roots_cld_do 查看G1CLDClosure的do_cld方法的调用方式
      * 这个方法用来对当前的ClassLoaderData对象进行处理
@@ -5179,6 +5188,9 @@ public:
      * @param cld
      */
     void do_cld(ClassLoaderData* cld) {
+        /**
+         * ClassLoaderData::oops_do
+         */
       cld->oops_do(_oop_closure,  // 这里的_oop_closure其实就是 G1ParCopyClosure，每一个G1CLDClosure都封装了一个 G1ParCopyClosure,拦截器是G1BarrierNone
                    &_klass_in_cld_closure,  // 这是一个G1KlassScanClosure，里面包含了一个G1ParCopyClosure，这个G1ParCopyClosure的拦截器是G1BarrierKlass
                    _claim); // 是否需要主张占用这个CLD

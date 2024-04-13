@@ -142,7 +142,7 @@ public:
 
   /**
    * 方法 ScanRSClosure::scanCard
-   * 在ScanRSClosure::doHeapRegion 方法中被调用,index是卡片索引，r是这个卡片所在的region
+   * 在 ScanRSClosure::doHeapRegion 方法中被调用,index是卡片索引，r是这个卡片所在的region
    * 这个方法会通过 HeapRegionDCTOC  这个 closure 对MemRegion中的每一个obj进行递归扫描，扫描过程中根据上一轮的mark bit map进行对象的过滤，只扫描已经被标记的对象
    * @param index
    * @param r
@@ -206,6 +206,7 @@ public:
   /**
    * ScanRSClosure::doHeapRegion
    * 这里的HeapRegion一定是回收结合中的Region
+   * 调用者 G1RemSet::scanRS
    * @param r
    * @return
    */
@@ -303,7 +304,7 @@ public:
 };
 
 /**
- * 搜索 RemSet::oops_into_collection_set_do 查看调用位置
+ * 搜索 G1RemSet::oops_into_collection_set_do 查看调用位置
  * @param oc 搜索 G1ParPushHeapRSClosure push_heap_rs_cl(_g1h, &pss);
  * @param code_root_cl
  * @param worker_i

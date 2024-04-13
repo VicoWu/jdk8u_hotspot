@@ -1408,6 +1408,9 @@ void ConcurrentMark::markFromRoots() {
   print_stats();
 }
 
+/**
+ * ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void() -> ConcurrentMark::checkpointRootsFinal
+ */
 void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
   // world is stopped at this checkpoint
   assert(SafepointSynchronize::is_at_safepoint(),
@@ -1439,7 +1442,9 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
   checkpointRootsFinalWork();
 
   double mark_work_end = os::elapsedTime();
-
+  /**
+   * 搜索 void ConcurrentMark::weakRefsWork
+   */
   weakRefsWork(clear_all_soft_refs);
 
   if (has_overflown()) {
@@ -2131,6 +2136,7 @@ public:
 
 /**
  * 执行并发标记的清理阶段
+ * ConcurrentMarkThread::run -> CMCleanUp::do_void() -> void ConcurrentMark::cleanup()
  * 注意，这里的清理并不是对象的回收
  */
 void ConcurrentMark::cleanup() {
@@ -2317,7 +2323,7 @@ void ConcurrentMark::cleanup() {
    *
    */
   if (ClassUnloadingWithConcurrentMark) {
-    ClassLoaderDataGraph::purge();
+    ClassLoaderDataGraph::purge(); // cleanup阶段试图回收cld
   }
   MetaspaceGC::compute_new_size();
 
@@ -2386,10 +2392,18 @@ void ConcurrentMark::completeCleanup() {
 // Supporting Object and Oop closures for reference discovery
 // and processing in during marking
 
+/**
+ * 调用者 void ConcurrentMark::weakRefsWork
+ * 判断这个object是否是存活的，判断的依据并不是依赖 prev_tams，而是本次的next_tams，因为，
+ *      这个方法的调用是在本轮并发标记刚刚结束的时候进行，因此完全可以依赖本轮刚刚完成的标记
+ * @param obj
+ * @return
+ */
 bool G1CMIsAliveClosure::do_object_b(oop obj) {
   HeapWord* addr = (HeapWord*)obj;
   return addr != NULL &&
-         (!_g1->is_in_g1_reserved(addr) || !_g1->is_obj_ill(obj));
+         (!_g1->is_in_g1_reserved(addr) // 是否在正常的的heap区域
+         || !_g1->is_obj_ill(obj)); //  搜索 G1CollectedHeap::is_obj_ill()
 }
 
 // 'Keep Alive' oop closure used by both serial parallel reference processing.
@@ -2634,6 +2648,11 @@ class G1RemarkGCTraceTime : public GCTraceTime {
   }
 };
 
+/**
+ * 处理弱引用关系，当前处在remark阶段
+ * ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void() -> ConcurrentMark::checkpointRootsFinal -> ConcurrentMark::weakRefsWork
+ * @param clear_all_soft_refs
+ */
 void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
   if (has_overflown()) {
     // Skip processing the discovered references if we have
@@ -2764,6 +2783,10 @@ void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
 
       {
         G1RemarkGCTraceTime trace("System Dictionary Unloading", G1Log::finest());
+        /**
+         * 卸载系统字典，
+         * 搜索 SystemDictionary::do_unloading 查看具体实现
+         */
         purged_classes = SystemDictionary::do_unloading(&g1_is_alive, false /* Defer klass cleaning */);
       }
 

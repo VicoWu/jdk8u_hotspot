@@ -178,6 +178,8 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   static ClassLoaderData * _the_null_class_loader_data;
   /**
    * oop 类型的变量，用于唯一标识一个类加载器或规范的类路径。它可以用于在Java虚拟机中唯一地识别一个类加载器或类路径。
+   * 当且仅当一个class loader 被卸载，这个class loader下面的类才可以被卸载。
+   * 对于一个普通的类，G1GC将这个_class_loader作为这个CLD 的keep_alive_object ，对于一个匿名类，则将_mirror作为它的keep_alive_object
    */
   oop _class_loader;          // oop used to uniquely identify a class loader
                               // class loader or a canonical class path
@@ -241,7 +243,7 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   /**
    * ClassLoaderData::keep_alive() 方法
    * if this CLD is kept alive without a keep_alive_object().
-   * 默认是true，搜索 set_keep_alive() 方法 查看其设置为false的情况
+   * 默认是true，搜索 set_keep_alive 方法 查看其设置为false的情况
    * 搜索 ClassLoaderData::ClassLoaderData 查看其初始化的过程
    * @return
    */
@@ -291,6 +293,11 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   // method will allocate a Metaspace if needed.
   Metaspace* metaspace_non_null();
 
+    /**
+     * oop 类型的变量，用于唯一标识一个类加载器或规范的类路径。它可以用于在Java虚拟机中唯一地识别一个类加载器或类路径。
+     * 当且仅当一个class loader 被卸载，这个class loader下面的类才可以被卸载。
+     * 对于一个普通的类，G1GC将这个_class_loader作为这个CLD 的keep_alive_object ，对于一个匿名类，则将_mirror作为它的keep_alive_object
+     */
   oop class_loader() const      { return _class_loader; }
 
   /**

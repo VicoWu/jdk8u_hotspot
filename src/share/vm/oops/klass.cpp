@@ -527,9 +527,9 @@ void Klass::klass_oop_store(volatile oop* p, oop v) {
 void Klass::oops_do(OopClosure* cl) {
     /**
      * 调用对应的klass的mirror的Class对象，在这个对象上apply对应的 G1ParCopyClosure
-     *
+     * 注意，一个CLD也有对应的mirror，作为这个classloader的keep_alive_object
      */
-  cl->do_oop(&_java_mirror); //
+  cl->do_oop(&_java_mirror);
 }
 
 void Klass::remove_unshareable_info() {

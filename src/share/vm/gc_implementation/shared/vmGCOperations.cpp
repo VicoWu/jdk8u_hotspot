@@ -275,7 +275,7 @@ bool VM_CollectForMetadataAllocation::initiate_concurrent_GC() {
   if (UseG1GC && ClassUnloadingWithConcurrentMark) {
     G1CollectedHeap* g1h = G1CollectedHeap::heap();
     /**
-     * 设置初始标记请求
+     * 设置初始标记请求，这样在回收暂停的时候就会进行一次初始标记并启动一个并发标记周期
      */
     g1h->g1_policy()->set_initiate_conc_mark_if_possible();
 
@@ -324,7 +324,10 @@ void VM_CollectForMetadataAllocation::doit() {
       return;
     }
   }
-
+  /**
+   * 在这里会触发一次并发标记请求
+   * initiate_concurrent_GC返回true，说明已经通过一次stw 触发了一次回收
+   */
   if (initiate_concurrent_GC()) {
     // For CMS and G1 expand since the collection is going to be concurrent.
     _result = _loader_data->metaspace_non_null()->expand_and_allocate(_size, _mdtype);
