@@ -39,7 +39,6 @@
 #include "runtime/thread.inline.hpp"
 #include "services/heapDumper.hpp"
 
-
 #ifdef ASSERT
 int CollectedHeap::_fire_out_of_memory_count = 0;
 #endif
@@ -189,20 +188,33 @@ CollectedHeap::CollectedHeap() : _n_par_threads(0)
 // vm thread. It collects the heap assuming that the
 // heap lock is already held and that we are executing in
 // the context of the vm thread.
+/**
+ * 该接口必须是vm 线程调用的。
+ * 它对堆内存进行回收，调用者需要已经持有了堆内存的全局锁并且当前我们执行的上下文是在vm thread中
+ * @param cause
+ */
 void CollectedHeap::collect_as_vm_thread(GCCause::Cause cause) {
   assert(Thread::current()->is_VM_thread(), "Precondition#1");
   assert(Heap_lock->is_locked(), "Precondition#2");
   GCCauseSetter gcs(this, cause);
   switch (cause) {
-    case GCCause::_heap_inspection:
-    case GCCause::_heap_dump:
-    case GCCause::_metadata_GC_threshold : {
+    case GCCause::_heap_inspection: // 用户进行inspectheap命令，并且通过-live参数表示需要先进行gc清除死亡对象，然后再进行内存检查
+    case GCCause::_heap_dump: // 用户进行heap dump，并且在heap dump的时候有-live参数，表示需要先进行gc清除死亡对象，然后再进行heap dump
+    case GCCause::_metadata_GC_threshold : { // 由于metaspace占满触发的gc
       HandleMark hm;
+      /**
+       * 不清除软引用的full gc
+       * void G1CollectedHeap::do_full_collection
+       */
       do_full_collection(false);        // don't clear all soft refs
       break;
     }
-    case GCCause::_last_ditch_collection: {
+    case GCCause::_last_ditch_collection: { // 最后一搏的gc，即已经尝试了所有的gc，那么在最后会清除软引用进行full gc
       HandleMark hm;
+      /**
+       * 需要清除软引用的full gc
+       * void G1CollectedHeap::do_full_collection
+       */
       do_full_collection(true);         // do clear all soft refs
       break;
     }

@@ -847,7 +847,7 @@ HeapWord* G1CollectedHeap::allocate_new_tlab(size_t word_size) {
 }
 
 /**
- * 这个方法在CollectedHeap::common_mem_allocate_noinit()中被调用。我们在common_mem_allocate_noinit()方法中可以看到，
+ * 这个方法在 CollectedHeap::common_mem_allocate_noinit() 中被调用。我们在common_mem_allocate_noinit()方法中可以看到，
  *      在尝试过TLAB分配失败以后，会通过该方法G1CollectedHeap::mem_allocate()对象分配到普通内存中
  * @param word_size
  * @param gc_overhead_limit_was_exceeded
@@ -856,7 +856,7 @@ HeapWord* G1CollectedHeap::allocate_new_tlab(size_t word_size) {
 HeapWord*
 G1CollectedHeap::mem_allocate(size_t word_size,
                               bool*  gc_overhead_limit_was_exceeded) {
-  assert_heap_not_locked_and_not_at_safepoint(); //必须不能持有Heap_locl，必须不可以在安全点
+  assert_heap_not_locked_and_not_at_safepoint(); //必须不能持有Heap_lock，必须不可以在安全点
 
   // Loop until the allocation is satisfied, or unsatisfied after GC.
   // 不断循环，直到分配成功，或者，在GC以后依然分配不成功
@@ -1394,6 +1394,9 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
     IsGCActiveMark x;
 
     // Timing
+    /**
+     * GC的原因是GCCause::_java_lang_system_gc的时候，explicit_gc必须是true
+     */
     assert(gc_cause() != GCCause::_java_lang_system_gc || explicit_gc, "invariant");
     TraceCPUTime tcpu(G1Log::finer(), true, gclog_or_tty);
 
@@ -1668,6 +1671,10 @@ void G1CollectedHeap::do_full_collection(bool clear_all_soft_refs) {
   // do_full_collection() API to notify the caller than the collection
   // did not succeed (e.g., because it was locked out by the GC
   // locker). So, right now, we'll ignore the return value.
+  /**
+   * 搜索 G1CollectedHeap::do_collection
+   * do_collection() 将返回是否成功执行 GC
+   */
   bool dummy = do_collection(true,                /* explicit_gc */
                              clear_all_soft_refs,
                              0                    /* word_size */);
@@ -3145,6 +3152,9 @@ bool G1CollectedHeap::supports_tlab_allocation() const {
 }
 
 size_t G1CollectedHeap::tlab_capacity(Thread* ignored) const {
+    /**
+     * GrainBytes是一个Region的字节数。搜索 GrainBytes = (size_t)region_size
+     */
   return (_g1_policy->young_list_target_length() - young_list()->survivor_length()) * HeapRegion::GrainBytes;
 }
 
@@ -3881,7 +3891,7 @@ void G1CollectedHeap::gc_epilogue(bool full) {
 /**
  * 一次转移操作，需要通过VM_G1IncCollectionPause进行safepoint下的回收
  * 这个回收不进行初始标记借道操作
- * 调用者是G1CollectedHeap::attempt_allocation_humongous 进行大对象回收 和 G1CollectedHeap::attempt_allocation_slow进行普通对象回收
+ * 调用者是 G1CollectedHeap::attempt_allocation_humongous 进行大对象回收 和 G1CollectedHeap::attempt_allocation_slow 进行普通对象回收
  * 根G1CollectedHeap::collect 方法比较,
  * do_collection_pause 只是构造VM_G1IncCollectionPause，不进行并发标记
  *   collect()方法中的cause有很多，比如在 attempt_allocation_humongous，

@@ -89,10 +89,15 @@ class VM_G1IncCollectionPause: public VM_G1OperationWithAllocRequest {
 private:
     /**
      * 构造的时候决定是否需要进行_should_initiate_conc_mark.搜索VM_G1IncCollectionPause op，参考collect()方法
-     *
      */
   bool         _should_initiate_conc_mark;
+  /**
+   * 是否应该进行gc重试
+   */
   bool         _should_retry_gc;
+  /**
+   * 目标暂停时间
+   */
   double       _target_pause_time_ms;
   uint         _old_marking_cycles_completed_before;
 public:

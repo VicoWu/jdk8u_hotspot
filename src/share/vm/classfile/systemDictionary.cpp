@@ -118,7 +118,11 @@ void SystemDictionary::compute_java_system_loader(TRAPS) {
   CDS_ONLY(SystemDictionaryShared::initialize(CHECK);)
 }
 
-
+/**
+ * 根据当前的ClassLoader获取对应的 ClassLoaderData，如果存在则直接返回对应的ClassLoaderData，如果不存在则创建以后返回
+ * @param class_loader
+ * @return
+ */
 ClassLoaderData* SystemDictionary::register_loader(Handle class_loader, TRAPS) {
   if (class_loader() == NULL) return ClassLoaderData::the_null_class_loader_data();
   return ClassLoaderDataGraph::find_or_create(class_loader, THREAD);
@@ -994,6 +998,9 @@ Klass* SystemDictionary::parse_stream(Symbol* class_name,
     loader_data = ClassLoaderData::anonymous_class_loader_data(class_loader(), CHECK_NULL);
     loader_data->record_dependency(host_klass(), CHECK_NULL);
   } else {
+      /**
+       * 从当前的ClassLoader中直接取出ClassLoaderData
+       */
     loader_data = ClassLoaderData::class_loader_data(class_loader());
   }
 

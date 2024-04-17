@@ -194,12 +194,24 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   Metaspace * _metaspace;  // Meta-space where meta-data defined by the
                            // classes in the class loader are allocated.
   Mutex* _metaspace_lock;  // Locks the metaspace for allocations and setup.
+  /**
+   * 是否正在卸载这个ClassLoader
+   */
   bool _unloading;         // true if this class loader goes away
+  /**
+   * 是否是一个必须keep_alive的ClassLoader
+   */
   bool _keep_alive;        // if this CLD is kept alive without a keep_alive_object().
+  /**
+   * 是否是匿名类的ClassLoader
+   */
   bool _is_anonymous;      // if this CLD is for an anonymous class
   volatile int _claimed;   // true if claimed, for example during GC traces.
                            // To avoid applying oop closure more than once.
-                           // Has to be an int because we cas it.
+                           // Has to be an int because we cas it
+  /**
+   *  这个ClassLoader下面挂载的所有的类。很显然，这些类具有相同的_is_anoymous性质
+   */
   Klass* _klasses;         // The classes defined by the class loader.
   /**
    * _handles 是一个 ChunkedHandleList 类型的对象，用于存储对常量池数组等的句柄，其生命周期与相应的类加载器相同。
@@ -217,6 +229,9 @@ class ClassLoaderData : public CHeapObj<mtClass> {
   GrowableArray<Metadata*>*      _deallocate_list;
 
   // Support for walking class loader data objects
+  /**
+   * 用来给ClassLoaderDataGraph维护的ClassLoaderData对象的链表的next指针
+   */
   ClassLoaderData* _next; /// Next loader_datas created
 
   // ReadOnly and ReadWrite metaspaces (static because only on the null
@@ -296,7 +311,8 @@ class ClassLoaderData : public CHeapObj<mtClass> {
     /**
      * oop 类型的变量，用于唯一标识一个类加载器或规范的类路径。它可以用于在Java虚拟机中唯一地识别一个类加载器或类路径。
      * 当且仅当一个class loader 被卸载，这个class loader下面的类才可以被卸载。
-     * 对于一个普通的类，G1GC将这个_class_loader作为这个CLD 的keep_alive_object ，对于一个匿名类，则将_mirror作为它的keep_alive_object
+     * 对于一个普通的类，G1GC将这个_class_loader作为这个CLD 的keep_alive_object ，
+     * 对于一个匿名类，则将_mirror作为它的keep_alive_object
      */
   oop class_loader() const      { return _class_loader; }
 
@@ -305,6 +321,12 @@ class ClassLoaderData : public CHeapObj<mtClass> {
    * 搜索 ClassLoaderData::keep_alive_object
    */
 
+  /**
+   * 专门给G1GC使用的这个ClassLoader的keep_alive_object
+   *    对于一个普通的类，G1GC将这个_class_loader作为这个CLD 的keep_alive_object ，
+   *    对于一个匿名类，则将_mirror作为它的keep_alive_object
+   * @return
+   */
   oop keep_alive_object() const;
 
   // Returns true if this class loader data is for a loader going away.

@@ -698,7 +698,7 @@ ClassLoaderData* ClassLoaderDataGraph::add(Handle loader, bool is_anonymous, TRA
     if (old != NULL) { // 如果原来这个cld_addr 存放的不是null
       delete cld;  // 删除刚刚创建的ClassLoaderData
       // Returns the data.
-      return old; //依然使用旧的ClassLoaderData
+      return old; //依然使用旧的 ClassLoaderData
     }
   }
 

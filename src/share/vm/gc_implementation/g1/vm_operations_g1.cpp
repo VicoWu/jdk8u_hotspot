@@ -224,7 +224,7 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
    *      do_collection_pause_at_safepoint是尝试在VM_G1IncCollectionPause中进行回收和初始标记
    **/
   _pause_succeeded =
-    g1h->do_collection_pause_at_safepoint(_target_pause_time_ms);
+    g1h->do_collection_pause_at_safepoint(_target_pause_time_ms); // 在这个方法里面，将最终决定是否进行初始标记
   /**
    * 如果成功地进行了一次回收暂停，并且当前正在申请分配空间，那么，立刻进行一次分配
    * 如果回收本身是失败的 ，那么根本不会再尝试进行分配

@@ -95,8 +95,8 @@ class fieldDescriptor;
 /**
  * 继承关系如下
  * MetaspaceObj
-	---Metadata
-	   --->Klass
+	--- Metadata (注意不是Metaspace)
+	   ---> Klass
 	        ---> InstanceKlass
 	             ---> InstanceMirrorKlass
 	             ---> InstanceClassLoaderKlass

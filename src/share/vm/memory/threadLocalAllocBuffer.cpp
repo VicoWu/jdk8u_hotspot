@@ -193,6 +193,9 @@ void ThreadLocalAllocBuffer::initialize(HeapWord* start,
   invariants();
 }
 
+/**
+ * ThreadLocalAllocBuffer的成员方法，初始化这个ThreadLocalAllocBuffer对象
+ */
 void ThreadLocalAllocBuffer::initialize() {
   initialize(NULL,                    // start
              NULL,                    // top
@@ -214,19 +217,31 @@ void ThreadLocalAllocBuffer::initialize() {
   initialize_statistics();
 }
 
+/**
+ *  这是ThreadLocalAllocBuffer的 静态方法
+ */
 void ThreadLocalAllocBuffer::startup_initialization() {
 
   // Assuming each thread's active tlab is, on average,
   // 1/2 full at a GC
+  /**
+   * 在垃圾回收时，假设每个线程的活跃TLAB平均只有一半被使用
+   * TLABWasteTargetPercent是一个1 ~ 100的整数值，表示可以浪费的eden空间比值，这里是
+   */
   _target_refills = 100 / (2 * TLABWasteTargetPercent);
+  /**
+   * 目标回填次数最少是1
+   */
   _target_refills = MAX2(_target_refills, (unsigned)1U);
-
+  /**
+   *  创建一个全局TLAB统计信息的对象。
+   */
   _global_stats = new GlobalTLABStats();
 
   // During jvm startup, the main thread is initialized
   // before the heap is initialized.  So reinitialize it now.
   guarantee(Thread::current()->is_Java_thread(), "tlab initialization thread not Java thread");
-  Thread::current()->tlab().initialize();
+  Thread::current()->tlab().initialize(); // 初始化当前线程的tlab
 
   if (PrintTLAB && Verbose) {
     gclog_or_tty->print("TLAB min: " SIZE_FORMAT " initial: " SIZE_FORMAT " max: " SIZE_FORMAT "\n",
@@ -234,15 +249,25 @@ void ThreadLocalAllocBuffer::startup_initialization() {
   }
 }
 
+/**
+ * ThreadLocalAllocBuffer的实例方法，用来初始化这个tlab的预期的大小
+ * @return
+ */
 size_t ThreadLocalAllocBuffer::initial_desired_size() {
   size_t init_sz = 0;
-
+  /**
+   * 如果显式设置了非0的TLABSize(默认是0)，那么直接除以HeapWordSize计算得到这个TLAB的字大小
+   */
   if (TLABSize > 0) {
     init_sz = TLABSize / HeapWordSize;
-  } else if (global_stats() != NULL) {
+  } else if (global_stats() != NULL) { // 没有显示设置TLABSize
     // Initial size is a function of the average number of allocating threads.
     unsigned nof_threads = global_stats()->allocating_threads_avg();
-
+    /**
+     * 计算平均一个线程的预期大小
+     * 搜索 G1CollectedHeap::tlab_capacity(Thread* ignored)
+     * 这里的计算逻辑是，用整个堆内存的所有eden space的region的字大小总容量，除以线程总数，再除以 target_refills()
+     */
     init_sz  = (Universe::heap()->tlab_capacity(myThread()) / HeapWordSize) /
                       (nof_threads * target_refills());
     init_sz = align_object_size(init_sz);

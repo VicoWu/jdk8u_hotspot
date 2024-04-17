@@ -44,7 +44,7 @@ class GCCause : public AllStatic {
     _allocation_profiler,
     _jvmti_force_gc,
     _gc_locker, // 临界区线程清空导致的gc
-    _heap_inspection,
+    _heap_inspection, // 进行内存检查主动触发gc，即inspectheap触发的gc
     _heap_dump, //  heap dump导致的gc
     _wb_young_gc,
     _wb_conc_mark,
@@ -54,12 +54,12 @@ class GCCause : public AllStatic {
     /* implementation independent, but reserved for GC use */
     _no_gc,
     _no_cause_specified,
-    _allocation_failure, // 分配失败导致的gc
+    _allocation_failure, // 分配失败导致的gc，这个不是给G1GC用的
 
     /* implementation specific */
 
     _tenured_generation_full,
-    _metadata_GC_threshold,
+    _metadata_GC_threshold, // 元数据空间分配失败触发的gc
 
     _cms_generation_full,
     _cms_initial_mark,
@@ -70,10 +70,10 @@ class GCCause : public AllStatic {
     _old_generation_too_full_to_scavenge,
     _adaptive_size_policy,
 
-    _g1_inc_collection_pause,
+    _g1_inc_collection_pause, // 普通对象分配失败导致的GC
     _g1_humongous_allocation, // 大对象分配导致的gc
 
-    _last_ditch_collection,
+    _last_ditch_collection, // 最后一次gc，发生在所有gc方式都已经尝试，最后进行一次full gc，这次full gc将尝试清除soft link
     _last_gc_cause
   };
 

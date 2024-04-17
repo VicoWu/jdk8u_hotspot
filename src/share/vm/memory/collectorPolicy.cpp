@@ -876,6 +876,10 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
 
   do {
     MetaWord* result = NULL;
+    /**
+     * 当前处于临界区状态，因此当前不能立刻进行gc，但是已经有其它地方请求了GC，
+     * 因此一旦离开临界区这个gc就会自动触发，不需要这里再重复请求
+     */
     if (GC_locker::is_active_and_needs_gc()) {
       // If the GC_locker is active, just expand and allocate.
       // If that does not succeed, wait if this thread is not
@@ -914,9 +918,9 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
       full_gc_count = Universe::heap()->total_full_collections();
     }
 
-    // Generate a VM operation
     /**
-     * 创建一个 VM_CollectForMetadataAllocation，以便触发一次回收暂停
+     * 创建一个 VM_Operation的实现类，VM_CollectForMetadataAllocation，以便触发一次回收暂停
+     * 这个op如果成功执行，返回的结果就是分配成功以后的metadata的地址，一个MetaWord*
      */
     VM_CollectForMetadataAllocation op(loader_data,
                                        word_size,
@@ -924,6 +928,9 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
                                        gc_count,
                                        full_gc_count,
                                        GCCause::_metadata_GC_threshold);
+    /**
+     * 这里虽然是execute()，但是其实是异步的，是将这个VM_Operation提交到VMThread的执行队列一步执行
+     */
     VMThread::execute(&op);
 
     // If GC was locked out, try again.  Check
@@ -935,7 +942,7 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
     }
 
     if (op.prologue_succeeded()) {
-      return op.result();
+      return op.result(); // 经过GC以后成功分配了内存，返回分配成功以后的地址
     }
     loop_count++;
     if ((QueuedAllocationWarningCount > 0) &&

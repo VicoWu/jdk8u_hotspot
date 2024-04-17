@@ -110,6 +110,12 @@ void CollectedHeap::post_allocation_setup_array(KlassHandle klass,
   post_allocation_notify(klass, new_obj, new_obj->size());
 }
 
+/**
+ * 分配一个size大小的内存区域
+ * @param klass
+ * @param size
+ * @return
+ */
 HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t size, TRAPS) {
 
   // Clear unhandled oops for memory allocation.  Memory allocation might
@@ -122,7 +128,7 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
   }
 
   HeapWord* result = NULL;
-  if (UseTLAB) {
+  if (UseTLAB) { // 如果用户打开了UseTLAB参数，默认是打开的
     result = allocate_from_tlab(klass, THREAD, size); // 从TLAB分配内存，中间有可能  TLAB分配失败
     if (result != NULL) {
       assert(!HAS_PENDING_EXCEPTION,
@@ -131,10 +137,13 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
     }
   }
   bool gc_overhead_limit_was_exceeded = false;
-  // 使用TLAB分配失败，尝试使用普通的内存分配方式
+  /**
+   * 使用TLAB分配失败，尝试使用普通的内存分配方式，返回分配的内存的字地址 HeapWord
+   * 在G1GC的情况下，Universe::heap()返回的SharedHeap实现类是G1CollectedHeap
+   */
   result = Universe::heap()->mem_allocate(size, // 在这里，可能会抛出我们熟悉的Java heap space异常
                                           &gc_overhead_limit_was_exceeded);  // 这里调用的是具体的CollectHeap的实现类，比如G1CollectedHeap
-  if (result != NULL) {
+  if (result != NULL) { // 分配成功
     NOT_PRODUCT(Universe::heap()->
       check_for_non_bad_heap_word_value(result, size));
     assert(!HAS_PENDING_EXCEPTION,
@@ -146,8 +155,11 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
     return result;
   }
 
-
+  // result为空，分配失败
   if (!gc_overhead_limit_was_exceeded) {
+      /**
+       *  gc_overhead_limit_was_exceeded == false,说明是堆内存不足导致分配失败
+       */
     // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support
     report_java_out_of_memory("Java heap space");
 
@@ -159,6 +171,9 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
 
     THROW_OOP_0(Universe::out_of_memory_error_java_heap());
   } else {
+      /**
+       * gc_overhead_limit_was_exceeded == true，说明是gc尝试次数超过了上限
+       */
     // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support
     report_java_out_of_memory("GC overhead limit exceeded");
 

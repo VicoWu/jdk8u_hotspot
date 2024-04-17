@@ -93,7 +93,7 @@ bool VM_GC_Operation::skip_operation() const {
   }
   // skip 是false，说明构造VM_GC_Operation的时候整个gc的数量等于目前的gc数量，或者，尽管整体数量不等，但是当前进行的是full gc并且full gc的数量等于目前实时的full gc的数量
   // is_active_and_needs_gc()的内在含义是，当前有线程处在临界区，并且内存是需要gc的状态，当线程离开临界区的时候，肯定会触发一次gc请求(查看代码jni_unlock())
-  // 中间的确没有进行过其他gc，并且当前有现成在临界区并且内存状态需要gc(需要gc的意思是，有回收尝试进行，发现is_active=true，因此设置needs_gc=true并放弃)，并且已经进行了signal，并且GCLocker是活跃的
+  // 中间的确没有进行过其他gc，并且当前有线程在临界区并且内存状态需要gc(需要gc的意思是，有回收尝试进行，发现is_active=true，因此设置needs_gc=true并放弃)，并且已经进行了signal，并且GCLocker是活跃的
   if (!skip && GC_locker::is_active_and_needs_gc()) {
       // 堆可以扩展，skip == false；堆无法扩展，skip == true
       skip = Universe::heap()->is_maximal_no_gc(); // 如果可用region的数量等于0，即堆内存已经无法扩展达到最大状态，那么就skip，如果可用的region数量不等于0，即还有可用内存，那么就需要执行本次gc
@@ -262,6 +262,10 @@ VM_CollectForMetadataAllocation::VM_CollectForMetadataAllocation(ClassLoaderData
 }
 
 // Returns true iff concurrent GCs unloads metadata.
+/**
+ * 尝试初始化一个并发标记周期，即调用一次带有初始标记的回收暂停
+ * @return
+ */
 bool VM_CollectForMetadataAllocation::initiate_concurrent_GC() {
 #if INCLUDE_ALL_GCS
   if (UseConcMarkSweepGC && CMSClassUnloadingEnabled) {
@@ -283,6 +287,11 @@ bool VM_CollectForMetadataAllocation::initiate_concurrent_GC() {
 
     // At this point we are supposed to start a concurrent cycle. We
     // will do so if one is not already in progress.
+    /**
+     *  如果我们不处于一个并发标记的cycle中，那么设置G1CollectorPolicy的成员变量_initiate_conc_mark_if_possible为true，
+     *  返回true，表示当前可以进行一次全新的标记周期，即开始进行初始标记过程
+     *  否则，如果当前已经处于一个并发标记cycle中，返回false
+     */
     bool should_start = g1h->g1_policy()->force_initial_mark_if_outside_cycle(_gc_cause);
 
     if (should_start) {
@@ -326,7 +335,7 @@ void VM_CollectForMetadataAllocation::doit() {
   }
   /**
    * 在这里会触发一次并发标记请求
-   * initiate_concurrent_GC返回true，说明已经通过一次stw 触发了一次回收
+   * initiate_concurrent_GC返回true，说明已经通过一次stw 触发了一次回收，因此尝试进行扩展和分配
    */
   if (initiate_concurrent_GC()) {
     // For CMS and G1 expand since the collection is going to be concurrent.
@@ -339,11 +348,17 @@ void VM_CollectForMetadataAllocation::doit() {
   }
 
   // Don't clear the soft refs yet.
+  /**
+   * 在完成了初始标记以后，尝试进行一次full gc，这是一次并行的full gc，与用户线程同时执行，不会清理软引用
+   */
   heap->collect_as_vm_thread(GCCause::_metadata_GC_threshold);
   // After a GC try to allocate without expanding.  Could fail
   // and expansion will be tried below.
+  /**
+   * 在进行了full gc以后，在不尝试扩展元数据的情况下再次进行分配尝试
+   */
   _result = _loader_data->metaspace_non_null()->allocate(_size, _mdtype);
-  if (_result != NULL) {
+  if (_result != NULL) { // full gc以后分配成功
     return;
   }
 
@@ -352,6 +367,10 @@ void VM_CollectForMetadataAllocation::doit() {
   // amount of the expansion.
   // This should work unless there really is no more space
   // or a MaxMetaspaceSize has been specified on the command line.
+  /**
+   * 如果仍然失败，请允许扩展元空间。 有关扩展数量的说明，请参阅 delta_capacity_until_GC()。
+   * 除非确实没有更多空间或者已在命令行上指定了 MaxMetaspaceSize，否则这应该有效。
+   */
   _result = _loader_data->metaspace_non_null()->expand_and_allocate(_size, _mdtype);
   if (_result != NULL) {
     return;
@@ -362,6 +381,10 @@ void VM_CollectForMetadataAllocation::doit() {
   // behavior is similar to the last-ditch collection done for perm
   // gen when it was full and a collection for failed allocation
   // did not free perm gen space.
+  /**
+   * 如果扩展失败，请进行最后一搏的收集并尝试再次分配。
+   * 最后的收集将清除软引用。 此行为类似于在永久代已满时进行的最后一次收集，并且分配失败以后的收集行为并没有释放永久代空间。
+   */
   heap->collect_as_vm_thread(GCCause::_last_ditch_collection);
   _result = _loader_data->metaspace_non_null()->allocate(_size, _mdtype);
   if (_result != NULL) {
