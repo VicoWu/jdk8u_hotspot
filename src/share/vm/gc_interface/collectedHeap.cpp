@@ -274,6 +274,7 @@ void CollectedHeap::check_for_valid_allocation_state() {
 #endif
 
 /**
+ * 慢路径，说明对象已经尝试在这个tlab上分配但是失败，即对象大小是小于tlab当前的剩余空间的
  * 尝试先申请新的TLAB，然后再在这个新的TLAB上面分配这个大小为size的对象
  * @param klass
  * @param thread
@@ -284,16 +285,27 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
 
   // Retain tlab and allocate object in shared space if
   // the amount free in the tlab is too large to discard.
-    // 记录这一次的慢分配，即tlab无法容纳对象，但是剩余空间又太大导致创建新的tlab太浪费的过程
-  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) { //
-    thread->tlab().record_slow_allocation(size);
+  /**
+   * 即tlab无法容纳对象，但是剩余空间又太大导致创建新的tlab太浪费的过程
+   * 因此拒绝这个对象在tlab上分配
+   * 比如waste_limit = 10MB, 当前tlab的剩余大小是20MB， 对象大小是30MB， 无法分配，但是不会放弃这个tlab
+   */
+  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) {
+      /**
+       * 记录这一次的慢分配，这个方法会适当增加refill_waste_limit的大小，比如从10MB增加到25MB，
+       * 这时候就会放弃这个tlab然后重新申请一个新的tlab，避免这些对象全部分配在tlab外的堆内存中
+       */
+    thread->tlab().record_slow_allocation(size); //
     return NULL;
   }
-  // tlab剩余空间不够，因此需要申请新的tlab
+  /**
+   * tlab剩余空间不够(即剩余空间已经足够小了)，可以需要申请新的tlab了，也不会造成太大的空间浪费
+   */
+
   // Discard tlab and allocate a new one.
   // To minimize fragmentation, the last TLAB may be smaller than the rest.
   size_t new_tlab_size = thread->tlab().compute_size(size); // 根据待分配对象的大小，确定新的tlab的大小
-  // 卸载当前正在使用的tlab
+  // 卸载当前正在使用的tlab， 具体实现查看 ThreadLocalAllocBuffer::clear_before_allocation
   thread->tlab().clear_before_allocation();
 
   if (new_tlab_size == 0) {
@@ -320,12 +332,15 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
     // ensure that the returned space is not considered parsable by
     // any concurrent GC thread.
     size_t hdr_size = oopDesc::header_size(); // HotSpot中的类oopDesc的静态方法
-    // 从obj + hdr_size开始，长度为new_tlab_size - hdr_size的内存区域填充为badHeapWordVal。这是一种用于标记内存为无效值的技术，通常在开发和调试阶段用于帮助检测错误。
+    /**
+     * 从obj + hdr_size开始，长度为new_tlab_size - hdr_size的内存区域填充为badHeapWordVal。
+     * 这是一种用于标记内存为无效值的技术，通常在开发和调试阶段用于帮助检测错误。
+     **/
     Copy::fill_to_words(obj + hdr_size, new_tlab_size - hdr_size, badHeapWordVal);
 #endif // ASSERT
   }
   thread->tlab().fill(obj, obj + size, new_tlab_size); // fill方法会设置start，end，top，相当于一系列的初始化操作。而正常的分配(参考allocate_from_tlab()方法)调用的是tlab()->allocate()方法
-  return obj;
+  return obj; // 新分配的tlab的首地址就是这个对象的首地址，因为这个tlab刚刚申请，这个对象是这个tlab的第一个对象
 }
 
 void CollectedHeap::flush_deferred_store_barrier(JavaThread* thread) {
@@ -569,6 +584,9 @@ void CollectedHeap::accumulate_statistics_all_tlabs() {
   }
 }
 
+/**
+ * CollectedHeap的成员方法(G1CollectedHeap并没有重写这个方法)，发生在每次gc完成以后的收尾部分，会重算tlab的size
+ */
 void CollectedHeap::resize_all_tlabs() {
   if (UseTLAB) {
     assert(SafepointSynchronize::is_at_safepoint() ||

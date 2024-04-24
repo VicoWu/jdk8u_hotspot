@@ -112,12 +112,15 @@ void ThreadLocalAllocBuffer::accumulate_statistics() {
 // for example, clear_before_allocation().
 void ThreadLocalAllocBuffer::make_parsable(bool retire) {
   if (end() != NULL) {
-    invariants(); //检查当前TLAB的不变性
+    invariants(); //检查当前TLAB的一些不应该改变的性质，比如，top的位置等
     if (retire) {
       myThread()->incr_allocated_bytes(used_bytes()); //将已分配字节累加到当前线程的已分配自己统计值中
     }
 
-    // 调用静态方法fill_with_object, 将剩余部分的数据
+    /**
+     * 用虚拟填充数组填充当前的 tab，以创建连续eden空间的幻觉，并可选择退出该
+     */
+    // 调用静态方法fill_with_object, 将剩余部分的数据填充进去无用数据，
     CollectedHeap::fill_with_object(top(), hard_end(), retire);
 
     if (retire || ZeroTLAB) {  // "Reset" the TLAB
@@ -131,7 +134,9 @@ void ThreadLocalAllocBuffer::make_parsable(bool retire) {
          (start() == NULL && end() == NULL && top() == NULL),
          "TLAB must be reset");
 }
-
+/**
+ * 重新计算所有的线程的空间大小，这是发生在一次gc完成，通过可分配给tlab的总空间的大小，平均到每一个线程和tlab的分配次数以后的均值
+ */
 void ThreadLocalAllocBuffer::resize_all_tlabs() {
   if (ResizeTLAB) {
     for (JavaThread *thread = Threads::first(); thread != NULL; thread = thread->next()) {
@@ -140,15 +145,29 @@ void ThreadLocalAllocBuffer::resize_all_tlabs() {
   }
 }
 
+/**
+ * 在一次内存回收以后，会重新计算每一个tlab的大小
+ */
 void ThreadLocalAllocBuffer::resize() {
   // Compute the next tlab size using expected allocation amount
   assert(ResizeTLAB, "Should not call this otherwise");
+  /**
+   * 重新大致计算tlab的大小，这发生在一次垃圾回收结束以后，这时候年轻代的堆内存已经发生了变化，因此需要重新估计一个tlab区域的大小
+   * 注意，_allocation_fraction是一个成员变量，每一个_allocation_fraction都采样的是自己的内存占比，不是一个全局变量
+   *
+   */
   size_t alloc = (size_t)(_allocation_fraction.average() *
                           (Universe::heap()->tlab_capacity(myThread()) / HeapWordSize));
+  /**
+   * 总共分配给tlab的空间大小，处于tlab的分配次数，就是平均下来一个tlab的大小
+   * 这里的_target_refills是全局的目标填充次数，即所有线程的目标填充次数
+   */
   size_t new_size = alloc / _target_refills;
 
   new_size = MIN2(MAX2(new_size, min_size()), max_size());
-
+  /**
+   * 将size进行对齐，必须是8字节的整数倍
+   */
   size_t aligned_new_size = align_object_size(new_size);
 
   if (PrintTLAB && Verbose) {
@@ -157,7 +176,13 @@ void ThreadLocalAllocBuffer::resize() {
                         myThread(), myThread()->osthread()->thread_id(),
                         _target_refills, _allocation_fraction.average(), desired_size(), aligned_new_size);
   }
+  /**
+   * 设置新的tlab的大小
+   */
   set_desired_size(aligned_new_size);
+  /**
+   * 设置新的浪费空间的最大大小
+   */
   set_refill_waste_limit(initial_refill_waste_limit());
 }
 
@@ -207,26 +232,39 @@ void ThreadLocalAllocBuffer::initialize() {
   // thread is initialized before the heap is.  The initialization for
   // this thread is redone in startup_initialization below.
   if (Universe::heap() != NULL) {
+      /**
+       * 搜索 G1CollectedHeap::tlab_capacity
+       * 返回总共可以分配给TLAB的空间大小，这里以字大小为单位，即，所有的Young Region中Eden Space的大小总和
+       */
     size_t capacity   = Universe::heap()->tlab_capacity(myThread()) / HeapWordSize;
+    /**
+     * 每次的预期大小，乘以总的分配次数就是实际分配的大小，
+     * target_refills是所有线程的目标填充次数之和
+     * 因此alloc_frac表示年轻代中实际分配给当前线程的tlab的大小占整个年轻代(除去survivor区域)的比例
+     */
     double alloc_frac = desired_size() * target_refills() / (double) capacity;
     _allocation_fraction.sample(alloc_frac);
   }
-
+  /**
+   * 根据设置的TLABRefillWasteFraction，设置最大允许浪费的空间大小
+   */
   set_refill_waste_limit(initial_refill_waste_limit());
 
   initialize_statistics();
 }
 
 /**
- *  这是ThreadLocalAllocBuffer的 静态方法
+ *  这是ThreadLocalAllocBuffer的静态方法
  */
 void ThreadLocalAllocBuffer::startup_initialization() {
 
   // Assuming each thread's active tlab is, on average,
   // 1/2 full at a GC
   /**
-   * 在垃圾回收时，假设每个线程的活跃TLAB平均只有一半被使用
-   * TLABWasteTargetPercent是一个1 ~ 100的整数值，表示可以浪费的eden空间比值，这里是
+   * 在垃圾回收时，假设每个线程的活跃TLAB平均只有一半被使用,即浪费了50%的空间
+   * TLABWasteTargetPercent是一个1 ~ 100的整数值，表示所有的tlba总共可以浪费的eden的空间比值，默认是1，表示所有的TLAB总共可以浪费eden的1%的空间
+   * 这样，由于我们假设每次回收的时候所有的tlab都是一半存放、一半满(平均值)，即50%的浪费，由于TLABWasteTargetPercent=1表示每个tlab可以浪费掉整个eden的1%，
+   * 此时_target_refills=50，那么填充50次以后，堆内存的浪费比例是50%
    */
   _target_refills = 100 / (2 * TLABWasteTargetPercent);
   /**
@@ -262,17 +300,24 @@ size_t ThreadLocalAllocBuffer::initial_desired_size() {
     init_sz = TLABSize / HeapWordSize;
   } else if (global_stats() != NULL) { // 没有显示设置TLABSize
     // Initial size is a function of the average number of allocating threads.
+    /**
+     * 正在并行进行分配的线程的平均数量
+     * 如果只有一个并行线程在分配，那么就是除以全局的target_refills，如果有两个，除以 2 * target_refills()
+     */
     unsigned nof_threads = global_stats()->allocating_threads_avg();
     /**
      * 计算平均一个线程的预期大小
      * 搜索 G1CollectedHeap::tlab_capacity(Thread* ignored)
+     * Universe::heap()->tlab_capacity(myThread()) / HeapWordSize返回的是整个堆内存年轻代(不包括survivor)可以分配给tlab的空间大小，以字为单位
+     * nof_threads * target_refills() 是所有线程总共refill的次数之和
+     * 因此，（Universe::heap()->tlab_capacity(myThread()) / HeapWordSize）/ nof_threads * target_refills() 就代表每一个线程所分配的一个tlab的大小
      * 这里的计算逻辑是，用整个堆内存的所有eden space的region的字大小总容量，除以线程总数，再除以 target_refills()
      */
     init_sz  = (Universe::heap()->tlab_capacity(myThread()) / HeapWordSize) /
                       (nof_threads * target_refills());
-    init_sz = align_object_size(init_sz);
+    init_sz = align_object_size(init_sz); // 大小需要进行字对齐
   }
-  init_sz = MIN2(MAX2(init_sz, min_size()), max_size());
+  init_sz = MIN2(MAX2(init_sz, min_size()), max_size()); // 最小、最大的区间约束
   return init_sz;
 }
 

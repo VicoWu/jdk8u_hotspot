@@ -1393,6 +1393,9 @@ void set_object_alignment() {
   assert(is_power_of_2(ObjectAlignmentInBytes), "ObjectAlignmentInBytes must be power of 2");
   MinObjAlignmentInBytes     = ObjectAlignmentInBytes;
   assert(MinObjAlignmentInBytes >= HeapWordsPerLong * HeapWordSize, "ObjectAlignmentInBytes value is too small");
+  /**
+   * 搜索 lp64_product(intx, ObjectAlignmentInBytes
+   */
   MinObjAlignment            = MinObjAlignmentInBytes / HeapWordSize;
   assert(MinObjAlignmentInBytes == MinObjAlignment * HeapWordSize, "ObjectAlignmentInBytes value is incorrect");
   MinObjAlignmentInBytesMask = MinObjAlignmentInBytes - 1;

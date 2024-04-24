@@ -171,10 +171,10 @@ void HeapRegion::setup_heap_region_size(size_t initial_heap_size, size_t max_hea
   guarantee(GrainBytes == 0, "we should only set it once");
   // The cast to int is safe, given that we've bounded region_size by
   // MIN_REGION_SIZE and MAX_REGION_SIZE.
-  GrainBytes = (size_t)region_size; // 设置一个region的大小
+  GrainBytes = (size_t)region_size; // 设置一个region的大小,字节为单位
 
   guarantee(GrainWords == 0, "we should only set it once");
-  GrainWords = GrainBytes >> LogHeapWordSize;
+  GrainWords = GrainBytes >> LogHeapWordSize; // 一个region的大小，字为单位
   guarantee((size_t) 1 << LogOfHRGrainWords == GrainWords, "sanity");
 
   guarantee(CardsPerRegion == 0, "we should only set it once");

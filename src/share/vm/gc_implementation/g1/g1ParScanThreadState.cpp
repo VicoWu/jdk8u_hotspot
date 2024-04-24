@@ -229,7 +229,8 @@ InCSetState G1ParScanThreadState::next_state(InCSetState const state, markOop co
   return dest(state); // 或者这个state的目标state
 }
 /**
- * 在方法  G1ParCopyClosure<barrier, do_mark_object>::do_oop_work 和方法 template <class T> void G1ParScanThreadState::do_oop_evac中被调用
+ * 在方法  G1ParCopyClosure<barrier, do_mark_object>::do_oop_work 和
+ *  方法 template <class T> void G1ParScanThreadState::do_oop_evac中被调用
  */
 oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
                                                  oop const old, //需要移动的对象，oop是一个typedef oopDesc*   oop;

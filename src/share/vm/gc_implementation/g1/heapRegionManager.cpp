@@ -163,10 +163,17 @@ MemoryUsage HeapRegionManager::get_auxiliary_data_memory_usage() const {
   return MemoryUsage(0, used_sz, committed_sz, committed_sz);
 }
 
+
 uint HeapRegionManager::expand_by(uint num_regions) {
-  return expand_at(0, num_regions);
+  return expand_at(0, num_regions); // 总是从头开始找到一个合适的region
 }
 
+/**
+ * 从指定的位置start开始进行region的扩展
+ * @param start
+ * @param num_regions
+ * @return
+ */
 uint HeapRegionManager::expand_at(uint start, uint num_regions) {
   if (num_regions == 0) {
     return 0;
@@ -177,13 +184,19 @@ uint HeapRegionManager::expand_at(uint start, uint num_regions) {
   uint num_last_found = 0;
 
   uint expanded = 0;
-
+  /**
+   * 扩展的区域数量未达到请求的数量，并且仍有不可用区域存在的情况下，执行循环
+   */
   while (expanded < num_regions &&
+  // 如果找到的不可用区域的数量大于0
          (num_last_found = find_unavailable_from_idx(cur, &idx_last_found)) > 0) {
-    uint to_expand = MIN2(num_regions - expanded, num_last_found);
+      /**
+       * 在我当前仍需要的region的数量和刚刚找到的不可用region数量之间取较小值
+       */
+    uint to_expand = MIN2(num_regions - expanded, num_last_found); // 新发现了to_expand个可以
     make_regions_available(idx_last_found, to_expand);
-    expanded += to_expand;
-    cur = idx_last_found + num_last_found + 1;
+    expanded += to_expand; // 当前可扩展的region数量
+    cur = idx_last_found + num_last_found + 1; // cur设置为下一个可用的区域
   }
 
   verify_optional();
@@ -257,13 +270,20 @@ uint HeapRegionManager::find_unavailable_from_idx(uint start_idx, uint* res_idx)
   uint num_regions = 0;
 
   uint cur = start_idx;
+  // 只要cur是可用的，就一直往后移动
   while (cur < max_length() && is_available(cur)) {
     cur++;
   }
   if (cur == max_length()) {
     return num_regions;
   }
+  /**
+   * 直到一个不可用的region
+   */
   *res_idx = cur;
+  /**
+   * 只要是unavailable的，cur就一直往后移动
+   */
   while (cur < max_length() && !is_available(cur)) {
     cur++;
   }

@@ -521,7 +521,9 @@ G1CollectedHeap* G1CollectedHeap::_g1h;
 
 HeapRegion*
 G1CollectedHeap::new_region_try_secondary_free_list(bool is_old) {
+    // 获取次要空闲列表的互斥锁
   MutexLockerEx x(SecondaryFreeList_lock, Mutex::_no_safepoint_check_flag);
+  // 只要 二级空闲列表不为空或者还有空闲区域到来时持续执行
   while (!_secondary_free_list.is_empty() || free_regions_coming()) {
     if (!_secondary_free_list.is_empty()) {
       if (G1ConcRegionFreeingVerbose) {
@@ -532,10 +534,14 @@ G1CollectedHeap::new_region_try_secondary_free_list(bool is_old) {
       // It looks as if there are free regions available on the
       // secondary_free_list. Let's move them to the free_list and try
       // again to allocate from it.
+      /**
+       * 看起来 secondary_free_list 上似乎有可用的空闲区域。 让我们将它们移至 free_list 并再次尝试从中分配。
+       */
       append_secondary_free_list();
 
       assert(_hrm.num_free_regions() > 0, "if the secondary_free_list was not "
              "empty we should have moved at least one entry to the free_list");
+      // 搜索 HeapRegion* allocate_free_region
       HeapRegion* res = _hrm.allocate_free_region(is_old);
       if (G1ConcRegionFreeingVerbose) {
         gclog_or_tty->print_cr("G1ConcRegionFreeing [region alloc] : "
@@ -548,6 +554,7 @@ G1CollectedHeap::new_region_try_secondary_free_list(bool is_old) {
     // Wait here until we get notified either when (a) there are no
     // more free regions coming or (b) some regions have been moved on
     // the secondary_free_list.
+    // 在此等待，直到 (a) 没有更多空闲区域到来或 (b) 某些区域已移至 secondary_free_list 时我们收到通知。
     SecondaryFreeList_lock->wait(Mutex::_no_safepoint_check_flag);
   }
 
@@ -558,6 +565,13 @@ G1CollectedHeap::new_region_try_secondary_free_list(bool is_old) {
   return NULL;
 }
 
+/**
+ * 这个方法用来给一个大小为word_size的大对象分配空间而创建一个新的region
+ * @param word_size
+ * @param is_old
+ * @param do_expand
+ * @return
+ */
 HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_expand) {
   assert(!isHumongous(word_size) || word_size <= HeapRegion::GrainWords,
          "the only time we use this to allocate a humongous region is "
@@ -565,18 +579,26 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_e
 
   HeapRegion* res;
   if (G1StressConcRegionFreeing) {
-    if (!_secondary_free_list.is_empty()) {
+      /**
+       * 二级region空闲列表来自于并发标记的清理阶段
+       * ConcurrentMark::completeCleanup
+       */
+    if (!_secondary_free_list.is_empty()) { // 二级Region空闲列表不是空的
       if (G1ConcRegionFreeingVerbose) {
         gclog_or_tty->print_cr("G1ConcRegionFreeing [region alloc] : "
                                "forced to look at the secondary_free_list");
       }
-      res = new_region_try_secondary_free_list(is_old);
+      res = new_region_try_secondary_free_list(is_old); // 从二级Region空闲列表中取出region
       if (res != NULL) {
         return res;
       }
     }
   }
-
+  /**
+   *  如果打开了 G1StressConcRegionFreeing 并且二级region空闲列表不为空，从二级region空闲列表中分配成功则返回
+   *  否则，继续尝试分配
+   */
+  // 从主空闲列表中 分配一个新的堆区域
   res = _hrm.allocate_free_region(is_old);
 
   if (res == NULL) {
@@ -584,13 +606,22 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_e
       gclog_or_tty->print_cr("G1ConcRegionFreeing [region alloc] : "
                              "res == NULL, trying the secondary_free_list");
     }
+    // 在主空闲列表中分配失败，再次尝试二级空闲列表
     res = new_region_try_secondary_free_list(is_old);
   }
+  //
+  /**
+   * 一级和二级分配都失败，那么看看是否需要进行扩展
+   * 我们搜索  new_gc_alloc_region，humongous_obj_allocate，new_mutator_alloc_region，发现只有new_gc_alloc_region()会扩展
+   */
   if (res == NULL && do_expand && _expand_heap_after_alloc_failure) {
     // Currently, only attempts to allocate GC alloc regions set
     // do_expand to true. So, we should only reach here during a
     // safepoint. If this assumption changes we might have to
     // reconsider the use of _expand_heap_after_alloc_failure.
+    /**
+     * 进行堆内存扩展的时候必须要求处于safepoint
+     */
     assert(SafepointSynchronize::is_at_safepoint(), "invariant");
 
     ergo_verbose1(ErgoHeapSizing,
@@ -598,6 +629,9 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_e
                   ergo_format_reason("region allocation request failed")
                   ergo_format_byte("allocation request"),
                   word_size * HeapWordSize);
+    /**
+     * 方法实现 搜索 bool G1CollectedHeap::expand
+     */
     if (expand(word_size * HeapWordSize)) {
       // Given that expand() succeeded in expanding the heap, and we
       // always expand the heap by an amount aligned to the heap
@@ -751,17 +785,28 @@ G1CollectedHeap::humongous_obj_allocate_initialize_regions(uint first,
 // Otherwise, if can expand, do so.
 // Otherwise, if using ex regions might help, try with ex given back.
 HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationContext_t context) {
+    /**
+     * 或者已经拿到了HeapLock，或者当前处于safepoint
+     */
   assert_heap_locked_or_at_safepoint(true /* should_be_vm_thread */);
 
   verify_region_sets_optional();
 
   uint first = G1_NO_HRM_INDEX;
+  // 将对象大小对齐到区域的倍数，并将其除以区域的大小，以确定所涉及的区域数量
   uint obj_regions = (uint)(align_size_up_(word_size, HeapRegion::GrainWords) / HeapRegion::GrainWords);
-
+  /**
+   * 根据要分配的巨型对象所涉及的区域数量来选择不同的分配路径
+   */
   if (obj_regions == 1) {
     // Only one region to allocate, try to use a fast path by directly allocating
     // from the free lists. Do not try to expand here, we will potentially do that
     // later.
+    /**
+     * 如果只涉及一个区域，尝试从空闲列表直接分配一个新的区域
+     * 如果涉及多个区域，则根据当前的堆状态来选择分配路径
+     * 搜索 G1CollectedHeap::new_region
+     */
     HeapRegion* hr = new_region(word_size, true /* is_old */, false /* do_expand */);
     if (hr != NULL) {
       first = hr->hrm_index();
@@ -775,23 +820,30 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
     // current humongous allocation request. If we are only allocating one region
     // we use the one-region region allocation code (see above), that already
     // potentially waits for regions from the secondary free list.
+    /
     wait_while_free_regions_coming();
     append_secondary_free_list_if_not_empty_with_lock();
 
     // Policy: Try only empty regions (i.e. already committed first). Maybe we
     // are lucky enough to find some.
+    /**
+     * 尝试找到已经commit的region
+     */
     first = _hrm.find_contiguous_only_empty(obj_regions);
-    if (first != G1_NO_HRM_INDEX) {
+    if (first != G1_NO_HRM_INDEX) { // 找到了一个连续的Region
       _hrm.allocate_free_regions_starting_at(first, obj_regions);
     }
   }
 
-  if (first == G1_NO_HRM_INDEX) {
+  if (first == G1_NO_HRM_INDEX) { // 没有找到这样的连续的region
     // Policy: We could not find enough regions for the humongous object in the
     // free list. Look through the heap to find a mix of free and uncommitted regions.
     // If so, try expansion.
+    /**
+     * 我们无法在已经commit的region里面找到合适分配的区域。因此，我们查找整个heap去查找空闲以及未提交的region混合在一起的reigon
+     */
     first = _hrm.find_contiguous_empty_or_unavailable(obj_regions);
-    if (first != G1_NO_HRM_INDEX) {
+    if (first != G1_NO_HRM_INDEX) { //没有找到
       // We found something. Make sure these regions are committed, i.e. expand
       // the heap. Alternatively we could do a defragmentation GC.
       ergo_verbose1(ErgoHeapSizing,
@@ -800,7 +852,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
                     ergo_format_byte("allocation request"),
                     word_size * HeapWordSize);
 
-      _hrm.expand_at(first, obj_regions);
+      _hrm.expand_at(first, obj_regions); // 对region进行扩展
       g1_policy()->record_new_heap_size(num_regions());
 
 #ifdef ASSERT
@@ -811,6 +863,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
         assert(is_on_master_free_list(hr), "sanity");
       }
 #endif
+    // 扩展以后再次尝试尽心分配
       _hrm.allocate_free_regions_starting_at(first, obj_regions);
     } else {
       // Policy: Potentially trigger a defragmentation GC.
@@ -865,10 +918,13 @@ G1CollectedHeap::mem_allocate(size_t word_size,
 
     HeapWord* result = NULL;
     if (!isHumongous(word_size)) {
-        // 调用的是方法 HeapWord* G1CollectedHeap::attempt_allocation
+        /**
+         * 调用的是方法 HeapWord* G1CollectedHeap::attempt_allocation
+         * 注意，在下层的 G1AllocRegion::attempt_allocation，但是是下层了
+         */
       result = attempt_allocation(word_size, &gc_count_before, &gclocker_retry_count);
     } else {
-        // 调用方法G1CollectedHeap:attempt_allocation_humongous
+        // 调用方法 G1CollectedHeap::attempt_allocation_humongous
       result = attempt_allocation_humongous(word_size, &gc_count_before, &gclocker_retry_count);
     }
     if (result != NULL) {
@@ -1120,11 +1176,15 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
     uint gc_count_before;
 
     {
+        /**
+         * 获取整个的Heap_lock
+         */
       MutexLockerEx x(Heap_lock); // 开始持有Heap_lock， 所有的锁都定义在gcLocker.cpp中
 
       // Given that humongous objects are not allocated in young
       // regions, we'll first try to do the allocation without doing a
       // collection hoping that there's enough space in the heap.
+      // 搜索 HeapWord* G1CollectedHeap::humongous_obj_allocate
       result = humongous_obj_allocate(word_size, AllocationContext::current());
       if (result != NULL) {
         return result; // 分配成功，直接返回
@@ -1640,7 +1700,10 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       // TraceMemoryManagerStats is called) so that the G1 memory pools are updated
       // before any GC notifications are raised.
       g1mm()->update_sizes();
-
+      /**
+       * 做一些收尾工作，比如，可能会重新设置tlab的大小
+       * 搜索 G1CollectedHeap::gc_epilogue
+       */
       gc_epilogue(true);
     }
 
@@ -1892,6 +1955,11 @@ HeapWord* G1CollectedHeap::expand_and_allocate(size_t word_size, AllocationConte
   return NULL;
 }
 
+/**
+ * 堆内存扩展必须发生在safepoint中
+ * @param expand_bytes 需要扩展的字节数
+ * @return
+ */
 bool G1CollectedHeap::expand(size_t expand_bytes) {
   size_t aligned_expand_bytes = ReservedSpace::page_align_size_up(expand_bytes);
   aligned_expand_bytes = align_size_up(aligned_expand_bytes,
@@ -1911,7 +1979,7 @@ bool G1CollectedHeap::expand(size_t expand_bytes) {
 
   uint regions_to_expand = (uint)(aligned_expand_bytes / HeapRegion::GrainBytes);
   assert(regions_to_expand > 0, "Must expand by at least one region");
-
+  // 搜索 uint HeapRegionManager::expand_by(uint num_regions)
   uint expanded_by = _hrm.expand_by(regions_to_expand);
 
   if (expanded_by > 0) {
@@ -2010,7 +2078,7 @@ G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
   _gc_time_stamp(0),
   _survivor_plab_stats(YoungPLABSize, PLABWeight),
   _old_plab_stats(OldPLABSize, PLABWeight),
-  _expand_heap_after_alloc_failure(true),
+  _expand_heap_after_alloc_failure(true), // 分配失败以后会尝试扩展堆内存
   _surviving_young_words(NULL),
   _old_marking_cycles_started(0),
   _old_marking_cycles_completed(0),
@@ -3151,6 +3219,9 @@ bool G1CollectedHeap::supports_tlab_allocation() const {
   return true;
 }
 
+/**
+ * 返回总共可以分配给TLAB的空间大小，以Byte为单位，即，所有的年轻代中eden space的大小总和
+ */
 size_t G1CollectedHeap::tlab_capacity(Thread* ignored) const {
     /**
      * GrainBytes是一个Region的字节数。搜索 GrainBytes = (size_t)region_size
@@ -3879,7 +3950,10 @@ void G1CollectedHeap::gc_epilogue(bool full) {
   COMPILER2_PRESENT(assert(DerivedPointerTable::is_empty(),
                         "derived pointer present"));
   // always_do_update_barrier = true;
-
+  /**
+   * 重新设置所有线程的tlab的大小
+   * 搜索 void CollectedHeap::resize_all_tlabs()
+   */
   resize_all_tlabs();
   allocation_context_stats().update(full);
 
@@ -6388,7 +6462,7 @@ void G1CollectedHeap::enqueue_discovered_references(uint no_of_gc_workers) {
  * @param evacuation_info
  */
 void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
-  _expand_heap_after_alloc_failure = true;
+  _expand_heap_after_alloc_failure = true; // 分配失败以后会试图扩展堆内存
   _evacuation_failed = false;
 
   // Should G1EvacuationFailureALot be in effect for this GC?

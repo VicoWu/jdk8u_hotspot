@@ -474,6 +474,10 @@ const bool support_IRIW_for_not_multiple_copy_atomic_cpu = false;
 // for use in places like enum definitions that require compile-time constant
 // expressions and a function for all other places so as to get type checking.
 
+/**
+ * 使用了一个位操作的技巧来将 size 向上对齐到最接近的 alignment 的整数倍
+ * 它将 size 加上 (alignment - 1)，然后用 ~((alignment) - 1) 来取反，最后与原值相与，以保留 size 中低位对齐的部分而将高位对齐到下一个 alignment 的整数倍。
+ */
 #define align_size_up_(size, alignment) (((size) + ((alignment) - 1)) & ~((alignment) - 1))
 
 inline bool is_size_aligned(size_t size, size_t alignment) {
@@ -484,6 +488,9 @@ inline bool is_ptr_aligned(void* ptr, size_t alignment) {
   return align_size_up_((intptr_t)ptr, (intptr_t)alignment) == (intptr_t)ptr;
 }
 
+/**
+ * 将一个给定的大小size按照指定的对齐方式MinObjAlignment向上对齐到最接近的边界
+ */
 inline intptr_t align_size_up(intptr_t size, intptr_t alignment) {
   return align_size_up_(size, alignment);
 }
@@ -506,6 +513,9 @@ inline void* align_ptr_down(void* ptr, size_t alignment) {
 
 // Align objects by rounding up their size, in HeapWord units.
 
+/**
+ * 默认是按照8byte对齐
+ */
 #define align_object_size_(size) align_size_up_(size, MinObjAlignment)
 
 inline intptr_t align_object_size(intptr_t size) {

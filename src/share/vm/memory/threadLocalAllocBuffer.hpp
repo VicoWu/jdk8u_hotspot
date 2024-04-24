@@ -44,10 +44,16 @@ private:
   HeapWord* _pf_top;                             // allocation prefetch watermark
   HeapWord* _end;                                // allocation end (excluding alignment_reserve)
   size_t    _desired_size;                       // desired size   (including alignment_reserve)
+  /**
+   * 只要这个tlab中剩余空间的大小大于这个值，就一直使用这个tlab
+   */
   size_t    _refill_waste_limit;                 // hold onto tlab if free() is larger than this
   size_t    _allocated_before_last_gc;           // total bytes allocated up until the last gc
 
   static size_t   _max_size;                     // maximum size of any TLAB
+  /**
+   * 全局静态变量，表示单个线程需要进行refill的次数
+   */
   static unsigned _target_refills;               // expected number of refills between GCs
 
   unsigned  _number_of_refills;
@@ -68,6 +74,10 @@ private:
   void set_desired_size(size_t desired_size)     { _desired_size = desired_size; }
   void set_refill_waste_limit(size_t waste)      { _refill_waste_limit = waste;  }
 
+  /**
+   * 期望的大小，处于最大允许的浪费比例,默认TLABRefillWasteFraction = 16，即最大允许浪费预期空间的 1/16
+   * @return
+   */
   size_t initial_refill_waste_limit()            { return desired_size() / TLABRefillWasteFraction; }
 
   static int    target_refills()                 { return _target_refills; }
@@ -152,7 +162,7 @@ public:
   // Accumulate statistics across all tlabs before gc
   static void accumulate_statistics_before_gc();
 
-  // Resize tlabs for all threads
+  // Resize tlabs for al≈l threads
   static void resize_all_tlabs();
 
   void fill(HeapWord* start, HeapWord* top, size_t new_size);

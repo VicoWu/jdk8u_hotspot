@@ -157,7 +157,7 @@ inline bool G1CollectedHeap::obj_in_cs(oop obj) {
 
 /**
  * 这个方法不会负责大对象的分配，大对象的分配由方法attempt_allocation_humongous()负责
- *
+ * 由于取出的是mutator_alloc_region，因此可见这个方法只负责给用户层面进行内存分配
  * 注意将该方法与 G1AllocRegion::attempt_allocation()区分，两个方法同名，但是处于不同的层次
  * 从G1CollectedHeap::mem_allocate()可以看到，方法G1CollectedHeap::attempt_allocation()的是TLAB分配失败后才会尝试调用的
  * @param word_size

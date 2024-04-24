@@ -167,6 +167,9 @@ public:
   }
 
   HeapRegion* allocate_free_region(bool is_old) {
+      /**
+       * is_old其实只是标记了是从头部节点开始
+       */
     HeapRegion* hr = _free_list.remove_region(is_old);
 
     if (hr != NULL) {

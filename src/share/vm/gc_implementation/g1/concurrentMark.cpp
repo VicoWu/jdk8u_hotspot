@@ -2352,6 +2352,7 @@ void ConcurrentMark::completeCleanup() {
   // No one else should be accessing the _cleanup_list at this point,
   // so it is not necessary to take any locks
   while (!_cleanup_list.is_empty()) { // cleanup_list中放的是待整体回收的region
+      // 逐渐从_cleanup_list中取出HeapRegion，经过清理处理，添加到tmp_free_list中
     HeapRegion* hr = _cleanup_list.remove_region(true /* from_head */);
     assert(hr != NULL, "Got NULL from a non-empty list");
     hr->par_clear();
@@ -2363,6 +2364,11 @@ void ConcurrentMark::completeCleanup() {
     // we do during this process. We'll also append the local list when
     // _cleanup_list is empty (which means we just removed the last
     // region from the _cleanup_list).
+    /**
+     * 我们不是一次将一个区域添加到 secondary_free_list 中，而是将它们累积在本地列表中并一次移动几个区域。
+     * 这也减少了我们在此过程中调用notify_all()的次数。
+     * 当 _cleanup_list 为空时，我们还将附加本地列表（这意味着我们刚刚从 _cleanup_list 中删除了最后一个区域）
+     */
     if ((tmp_free_list.length() % G1SecondaryFreeListAppendLength == 0) ||
         _cleanup_list.is_empty()) {
       if (G1ConcRegionFreeingVerbose) {
@@ -2375,8 +2381,8 @@ void ConcurrentMark::completeCleanup() {
 
       {
         MutexLockerEx x(SecondaryFreeList_lock, Mutex::_no_safepoint_check_flag);
-        g1h->secondary_free_list_add(&tmp_free_list);
-        SecondaryFreeList_lock->notify_all();
+        g1h->secondary_free_list_add(&tmp_free_list); // 一次性加入到G1CollectedHeap的free list中
+        SecondaryFreeList_lock->notify_all(); // 通知在这个list上等待获取region的线程(比如大对象分配过程中需要从二级空闲region中获取region)
       }
 
       if (G1StressConcRegionFreeing) {
