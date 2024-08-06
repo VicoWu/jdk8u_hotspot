@@ -565,14 +565,14 @@ block_start_unsafe_const(const void* addr) const {
 }
 
 /**
+ * 构造方法 G1BlockOffsetArrayContigSpace::G1BlockOffsetArrayContigSpace
  * 构造 G1BlockOffsetArrayContigSpace的时候，
  *  初始化_next_offset_threshold和_next_offset_index
  *  G1BlockOffsetArrayContigSpace是 G1BlockOffsetArray的子类， 同时G1BlockOffsetArray是G1BlockOffsetTable的子类
  * @param array
  * @param mr
  */
-G1BlockOffsetArrayContigSpace::
-G1BlockOffsetArrayContigSpace(G1BlockOffsetSharedArray* array,
+G1BlockOffsetArrayContigSpace::G1BlockOffsetArrayContigSpace(G1BlockOffsetSharedArray* array,
                               MemRegion mr) :
   G1BlockOffsetArray(array, mr)
 {

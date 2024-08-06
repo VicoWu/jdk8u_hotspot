@@ -259,7 +259,7 @@ oop G1ParScanThreadState::copy_to_survivor_space(InCSetState const state,
        */
     obj_ptr = _g1_par_allocator->allocate_direct_or_new_plab(dest_state, word_sz, context);
     if (obj_ptr == NULL) {
-        // 尝试在下一个state对应的region中分配
+        // 尝试在当前的dest_state的下一个state对应的region中分配
       obj_ptr = allocate_in_next_plab(state, &dest_state, word_sz, context);
       if (obj_ptr == NULL) { // 最终失败，进行转移失败的相关处理
         // This will either forward-to-self, or detect that someone else has

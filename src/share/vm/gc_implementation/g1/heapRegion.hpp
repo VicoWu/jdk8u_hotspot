@@ -336,6 +336,13 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // resets the BOT for that heap region.
   // The default values for clear_space means that we will do the clearing if
   // there's clearing to be done ourselves. We also always mangle the space.
+  /**
+   * 初始化HeapRegion不仅会重置数据结构，还会重置该堆区域的BOT。
+   * clear_space 的默认值为false，意味着如果需要我们自己进行清理，我们将进行清理。 同时，我们也总是破坏空间。
+   * @param mr
+   * @param clear_space
+   * @param mangle_space
+   */
   virtual void initialize(MemRegion mr, bool clear_space = false, bool mangle_space = SpaceDecorator::Mangle);
 
   static int    LogOfHRGrainBytes;
@@ -664,7 +671,7 @@ class HeapRegion: public G1OffsetTableContigSpace {
   double gc_efficiency() { return _gc_efficiency;}
 
   /**
-   * 搜 YoungList::push_region ， 可以看到 _young_index_in_cset的含义，其实是代表这个YoungRegiion在Young Region List中的编号
+   * 搜 YoungList::push_region ， 可以看到 _young_index_in_cset的含义，其实是代表这个YoungRegion在Young Region List中的编号
    * @return
    */
   int  young_index_in_cset() const { return _young_index_in_cset; }
@@ -717,13 +724,16 @@ class HeapRegion: public G1OffsetTableContigSpace {
       assert( _age_index == -1, "pre-condition" );
     }
   }
-
+  /**
+   * HeapRegion::set_free
+   */
   void set_free() { _type.set_free(); }
 
   void set_eden()        { _type.set_eden();        }
   void set_eden_pre_gc() { _type.set_eden_pre_gc(); }
   void set_survivor()    { _type.set_survivor();    }
 
+    // HeapRegion::set_old
   void set_old() { _type.set_old(); }
 
   // Determine if an object has been allocated since the last

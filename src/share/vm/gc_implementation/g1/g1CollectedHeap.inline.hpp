@@ -107,6 +107,9 @@ inline uint G1CollectedHeap::addr_to_region(HeapWord* addr) const {
   return (uint)(pointer_delta(addr, _reserved.start(), sizeof(uint8_t)) >> HeapRegion::LogOfHRGrainBytes);
 }
 
+/**
+ * 将Region的index获取对应的Region的地址，一个HeapWord指针
+ */
 inline HeapWord* G1CollectedHeap::bottom_addr_for_region(uint index) const {
   return _hrm.reserved().start() + index * HeapRegion::GrainWords;
 }
@@ -181,11 +184,11 @@ inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
   // 在GC过程中，还会在其他区域比如survivor区域分配，也会在old区域分配，分别使用的方式是survivor_gc_alloc_region(), old_gc_alloc_region()
   HeapWord* result = _allocator
           ->mutator_alloc_region(context) // 返回MutatorAllocRegion对象
-                  // 调用MutatorAllocRegion::attempt_allocation(),实际上是调用父类方法G1AllocRegion::attempt_allocation()，
+                  // 调用 MutatorAllocRegion::attempt_allocation(),实际上是调用父类方法G1AllocRegion::attempt_allocation()，
                   // 由于是young 区，因此bot_update是false
           ->attempt_allocation(word_size, false /* bot_updates */);
   if (result == NULL) { //  尝试分配但是失败，因此调用G1CollectedHeap::attempt_allocation_slow()进行慢分配
-    // 这里会通过上锁的方式调用G1CollectedHeap::attempt_allocation_slow()进行分配，如果分配失败，方法中会直接进行gc
+    // 这里会通过上锁的方式调用 G1CollectedHeap::attempt_allocation_slow()进行分配，如果分配失败，方法中会直接进行gc
     result = attempt_allocation_slow(word_size, // 尝试进行一次full gc然后再接着进行分配
                                      context,
                                      gc_count_before_ret,

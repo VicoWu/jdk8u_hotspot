@@ -303,7 +303,8 @@ G1CollectorPolicy::G1CollectorPolicy() :
   assert(GCTimeRatio > 0,
          "we should have set it to a default value set_g1_gc_flags() "
          "if a user set it to 0");
-  // G1GC中GCTimeRatio默认是9，比如，用户程序运行时间是9，gc时间是9，那么_gc_overhead_perc=0.1，代表gc消耗的时间占整体时间的比例
+  // G1GC中GCTimeRatio默认是9，比如，GCTimeRatio是99(默认值)
+  // 那么_gc_overhead_perc=1，代表gc消耗的时间占整体时间的比例为1%
   _gc_overhead_perc = 100.0 * (1.0 / (1.0 + GCTimeRatio));
 
   uintx reserve_perc = G1ReservePercent;
@@ -1445,24 +1446,30 @@ void G1CollectorPolicy::update_recent_gc_times(double end_time_sec,
   _prev_collection_pause_end_ms = end_time_sec * 1000.0;
 }
 
+/**
+ * 计算需要额外扩展的Region的数量
+ * 这个发生在一次回收完成以后
+ */
 size_t G1CollectorPolicy::expansion_amount() {
   double recent_gc_overhead = recent_avg_pause_time_ratio() * 100.0; // 最近的gc开销
-  double threshold = _gc_overhead_perc; // gc占用整个jvm时间的比例
+  double threshold = _gc_overhead_perc; // gc占用整个jvm时间的比例，默认是1,代表gc开销占整个jvm的时间开销是1%
   if (recent_gc_overhead > threshold) { // 最近的gc开销大于用户配置的允许的gc开销
     // We will double the existing space, or take
     // G1ExpandByPercentOfAvailable % of the available expansion
     // space, whichever is smaller, bounded below by a minimum
     // expansion (unless that's all that's left.)
-    const size_t min_expand_bytes = 1*M;
-    size_t reserved_bytes = _g1->max_capacity();
-    size_t committed_bytes = _g1->capacity();
-    size_t uncommitted_bytes = reserved_bytes - committed_bytes;
+    const size_t min_expand_bytes = 1*M; // 定义内存扩展的最小值为1M
+    size_t reserved_bytes = _g1->max_capacity(); // G1堆的总容量
+    size_t committed_bytes = _g1->capacity(); // 已经提交即使用的内存容量
+
+    size_t uncommitted_bytes = reserved_bytes - committed_bytes;// 剩余可以进行扩展的可用空间
     size_t expand_bytes;
+    // 每次可以扩展的字节数。G1ExpandByPercentOfAvailable代表每次可以扩展的空间占uncommited空间的比例
     size_t expand_bytes_via_pct =
       uncommitted_bytes * G1ExpandByPercentOfAvailable / 100;
-    expand_bytes = MIN2(expand_bytes_via_pct, committed_bytes);
-    expand_bytes = MAX2(expand_bytes, min_expand_bytes);
-    expand_bytes = MIN2(expand_bytes, uncommitted_bytes);
+    expand_bytes = MIN2(expand_bytes_via_pct, committed_bytes); // 确保扩展的内存不超过已经提交的内存
+    expand_bytes = MAX2(expand_bytes, min_expand_bytes); // 确保扩展内存大小大于 最小允许扩展 的大小
+    expand_bytes = MIN2(expand_bytes, uncommitted_bytes); // 不可以超过未提交空间，因为扩展本来就是在uncommit的区域内进行
 
     ergo_verbose5(ErgoHeapSizing,
                   "attempt heap expansion",
@@ -1476,7 +1483,7 @@ size_t G1CollectorPolicy::expansion_amount() {
                   uncommitted_bytes,
                   expand_bytes_via_pct, (double) G1ExpandByPercentOfAvailable);
 
-    return expand_bytes;
+    return expand_bytes; // 扩展字节数
   } else {
     return 0;
   }
@@ -2108,7 +2115,7 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
   init_cset_region_lengths(eden_region_length, survivor_region_length);
 
   HeapRegion* hr = young_list->first_survivor_region();
-  while (hr != NULL) {
+  while (hr != NULL) { // 遍历所有的survivor regio
     assert(hr->is_survivor(), "badly formed young list");
     // There is a convention that all the young regions in the CSet
     // are tagged as "eden", so we do this for the survivors here. We
@@ -2232,7 +2239,7 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
       time_remaining_ms = MAX2(time_remaining_ms - predicted_time_ms, 0.0);
       predicted_pause_time_ms += predicted_time_ms;
       cset_chooser->remove_and_move_to_next(hr);
-      _g1->old_set_remove(hr);
+      _g1->old_set_remove(hr); // 将这个HeapRegion从_old_set中删除
       add_old_region_to_cset(hr);
 
       hr = cset_chooser->peek();

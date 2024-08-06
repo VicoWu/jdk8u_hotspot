@@ -164,6 +164,12 @@ inline HeapWord* G1AllocRegion::attempt_allocation_locked(size_t word_size,
   return NULL;
 }
 
+/**
+ *
+ * @param word_size
+ * @param bot_updates
+ * @return
+ */
 inline HeapWord* G1AllocRegion::attempt_allocation_force(size_t word_size,
                                                          bool bot_updates) {
   assert(bot_updates == _bot_updates, ar_ext_msg(this, "pre-condition"));

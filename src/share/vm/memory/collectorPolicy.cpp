@@ -903,7 +903,7 @@ MetaWord* CollectorPolicy::satisfy_failed_metadata_allocation(
         // is (currently) needed for unloading classes so continue
         // to the next iteration to get a full GC.
         continue;
-      } else {
+      } else { // 这里的意思是，当前已经处于临界区的用户线程希望进行GC，而GC显然不允许任何用户线程处于临界区，这显然是逻辑上的dead lock
         if (CheckJNICalls) {
           fatal("Possible deadlock due to allocating while"
                 " in jni critical section");

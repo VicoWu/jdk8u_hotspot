@@ -476,7 +476,8 @@ const bool support_IRIW_for_not_multiple_copy_atomic_cpu = false;
 
 /**
  * 使用了一个位操作的技巧来将 size 向上对齐到最接近的 alignment 的整数倍
- * 它将 size 加上 (alignment - 1)，然后用 ~((alignment) - 1) 来取反，最后与原值相与，以保留 size 中低位对齐的部分而将高位对齐到下一个 alignment 的整数倍。
+ * 它将 size 加上 (alignment - 1)，然后用 ~((alignment) - 1) 来取反，最后与原值相与，
+ * 以保留 size 中低位对齐的部分而将高位对齐到下一个 alignment 的整数倍。
  */
 #define align_size_up_(size, alignment) (((size) + ((alignment) - 1)) & ~((alignment) - 1))
 

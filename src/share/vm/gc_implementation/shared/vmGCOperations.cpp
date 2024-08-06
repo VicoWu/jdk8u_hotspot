@@ -294,7 +294,7 @@ bool VM_CollectForMetadataAllocation::initiate_concurrent_GC() {
      */
     bool should_start = g1h->g1_policy()->force_initial_mark_if_outside_cycle(_gc_cause);
 
-    if (should_start) {
+    if (should_start) { // 当前不在任何一次concurrent mark cycle中，已经设置了_initiate_conc_mark_if_possible
       double pause_target = g1h->g1_policy()->max_pause_time_ms();
       /**
        * 调用 do_collection_pause_at_safepoint，触发一次带有初始标记的回收暂停
@@ -359,7 +359,7 @@ void VM_CollectForMetadataAllocation::doit() {
    */
   _result = _loader_data->metaspace_non_null()->allocate(_size, _mdtype);
   if (_result != NULL) { // full gc以后分配成功
-    return;
+    return; // 分配成功，返回
   }
 
   // If still failing, allow the Metaspace to expand.
@@ -388,14 +388,14 @@ void VM_CollectForMetadataAllocation::doit() {
   heap->collect_as_vm_thread(GCCause::_last_ditch_collection);
   _result = _loader_data->metaspace_non_null()->allocate(_size, _mdtype);
   if (_result != NULL) {
-    return;
+    return; // 分配成功，返回
   }
 
   if (Verbose && PrintGCDetails) {
     gclog_or_tty->print_cr("\nAfter Metaspace GC failed to allocate size "
                            SIZE_FORMAT, _size);
   }
-
+  // 如果当前发现处于临界区，并且已经设置了_needs_gc变量，那么设置gc lock，调用者发现设置了GC lock，那么就可以尝试进行重试，而不是直接放弃
   if (GC_locker::is_active_and_needs_gc()) {
     set_gc_locked();
   }

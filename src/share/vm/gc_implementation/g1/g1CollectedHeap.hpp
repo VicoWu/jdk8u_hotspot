@@ -83,9 +83,7 @@ typedef GenericTaskQueueSet<RefToScanQueue, mtGC> RefToScanQueueSet;
 typedef int RegionIdx_t;   // needs to hold [ 0..max_regions() )
 typedef int CardIdx_t;     // needs to hold [ 0..CardsPerRegion )
 
-/**
- * 一个Region只有一个YoungList对象
- */
+
 class YoungList : public CHeapObj<mtGC> {
 private:
   G1CollectedHeap* _g1h;
@@ -96,7 +94,10 @@ private:
   HeapRegion* _survivor_tail;
 
   HeapRegion* _curr; //进行采样遍历的游标指针
-
+  /**
+   * 整个年轻代的length，包括了eden space和survivor space的length综合
+   * 从 eden_used_bytes()方法可以看出来
+   */
   uint        _length;
   uint        _survivor_length;
 
@@ -107,8 +108,15 @@ private:
 
 public:
   YoungList(G1CollectedHeap* g1h);
-
+  /**
+   * 搜索 void YoungList::push_region(HeapRegion *hr)
+   * @param hr
+   */
   void         push_region(HeapRegion* hr);
+  /**
+   * 搜索 void YoungList::add_survivor_region
+   * @param hr
+   */
   void         add_survivor_region(HeapRegion* hr);
 
   void         empty_list();
@@ -1253,7 +1261,7 @@ public:
 
   // Wrapper for the region list operations that can be called from
   // methods outside this class.
-
+  // 在 void ConcurrentMark::cleanup() 中被调用
   void secondary_free_list_add(FreeRegionList* list) {
     _secondary_free_list.add_ordered(list);
   }
@@ -1532,10 +1540,13 @@ public:
   // Returns "true" iff the given word_size is "very large".
   static bool isHumongous(size_t word_size) {
     // Note this has to be strictly greater-than as the TLABs
-    // are capped at the humongous thresold and we want to
+    // are capped at the humongous threshold and we want to
     // ensure that we don't try to allocate a TLAB as
     // humongous and that we don't allocate a humongous
     // object in a TLAB.
+    /**
+     * 请注意，这必须严格大于，因为 TLAB 的上限(>=)为_humongous_object_threshold_in_words，并且我们希望确保不会尝试将 TLAB 分配为巨大的，并且不会在 TLAB 中分配巨大的对象。
+     */
     return word_size > _humongous_object_threshold_in_words;
   }
 

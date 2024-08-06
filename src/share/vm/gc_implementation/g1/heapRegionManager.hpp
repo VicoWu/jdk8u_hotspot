@@ -65,10 +65,23 @@ class G1HeapRegionTable : public G1BiasedMappedArray<HeapRegion*> {
 // * max_length() returns the maximum number of regions the heap can have.
 //
 
+/**
+ * 该类跟踪实际的堆内存、辅助数据及其元数据（即 HeapRegion 实例）以及空闲Region列表。
+ * 这为根据外部请求决定提交或取消提交提供了最大的灵活性。
+ * HeapRegions 按地址顺序保存在 _regions 数组中。
+ *  数组中区域的索引对应于其在堆中的索引（即，0 是堆底部的区域，1 是其后面的区域，等等）。
+ *  数组中连续的两个区域在地址空间中也应该相邻（即，region(i).end() == Region(i+1).bottom()）。
+ *  当我们第一次commit Region的地址空间时，我们创建一个 HeapRegion。
+ *  当我们uncommit 某个Region的地址空间时，我们保留 HeapRegion 以便将来能够重新使用它（以防我们重新提交它）。
+ *  我们跟踪三个长度：
+ *      * _num_commited （由 length() 返回）是当前提交区域的数量。 这些可能不连续。
+ *      * _allocated_heapregions_length（未在此类之外公开）是我们拥有 HeapRegions 的区域数量+1。
+ *      * max_length() 返回堆可以拥有的最大区域数。
+ */
 class HeapRegionManager: public CHeapObj<mtGC> {
   friend class VMStructs;
   /**
-   * G1HeapRegionTable是G1BiasedMappedArray的子类，而G1BiasedMappedArray专门用来处理偏移索引，
+   * G1HeapRegionTable 是 G1BiasedMappedArray 的子类，而 G1BiasedMappedArray 专门用来处理偏移索引，
    * 从而让我们可以根据任意一个Region的地址查询这个地址所在的region
    */
   G1HeapRegionTable _regions;
@@ -84,6 +97,9 @@ class HeapRegionManager: public CHeapObj<mtGC> {
 
   // Each bit in this bitmap indicates that the corresponding region is available
   // for allocation.
+  /**
+   * 该位图中的每一位指示相应的Region可用于分配
+   */
   BitMap _available_map;
 
    // The number of regions committed in the heap.

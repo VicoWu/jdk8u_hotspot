@@ -169,51 +169,59 @@ YoungList::YoungList(G1CollectedHeap* g1h) :
   guarantee(check_list_empty(false), "just making sure...");
 }
 
+/**
+ * 查看 G1CollectedHeap::new_mutator_alloc_region，因此只发生在用户层面需要创建一个新的region的时候
+ */
 void YoungList::push_region(HeapRegion *hr) {
   assert(!hr->is_young(), "should not already be young");
-  assert(hr->get_next_young_region() == NULL, "cause it should!");
-
+  assert(hr->get_next_young_region() == NULL, "cause it should!")
+  /**
+   * 将当前region的_next_young_region设置为当前的_head
+   */
   hr->set_next_young_region(_head);
   _head = hr;
 
-  _g1h->g1_policy()->set_region_eden(hr, (int) _length);
-  ++_length;
+  _g1h->g1_policy()->set_region_eden(hr, (int) _length); // 这肯定是一个eden region
+  ++_length; // 为什么在add_survivor_region中添加的时候必须要递增++_length
 }
 
+/**
+ * 向YoungList中添加一个新的Survivor HeapRegion
+ */
 void YoungList::add_survivor_region(HeapRegion* hr) {
   assert(hr->is_survivor(), "should be flagged as survivor region");
   assert(hr->get_next_young_region() == NULL, "cause it should!");
-
+  // 这个新插入的Region的下一个young region是_survivor_head
   hr->set_next_young_region(_survivor_head);
-  if (_survivor_head == NULL) {
-    _survivor_tail = hr;
+  if (_survivor_head == NULL) { //如果当前还没有任何一个survivor region
+    _survivor_tail = hr; // 设置tail
   }
-  _survivor_head = hr;
+  _survivor_head = hr; // 当前新push进来的HeapRegion作为Survivor Region链表的头指针
   ++_survivor_length;
 }
 
 void YoungList::empty_list(HeapRegion* list) {
   while (list != NULL) {
     HeapRegion* next = list->get_next_young_region();
-    list->set_next_young_region(NULL);
+    list->set_next_young_region(NULL); // 从young list中剥离
     list->uninstall_surv_rate_group();
     // This is called before a Full GC and all the non-empty /
     // non-humongous regions at the end of the Full GC will end up as
     // old anyway.
-    list->set_old();
-    list = next;
+    list->set_old(); // 将这个Region的类型设置为old
+    list = next; // next指针指向下一个Young HeapRegion，查看下一个Young HeapRegion
   }
 }
 
 void YoungList::empty_list() {
   assert(check_list_well_formed(), "young list should be well formed");
 
-  empty_list(_head);
-  _head = NULL;
-  _length = 0;
+  empty_list(_head); // void YoungList::empty_list(HeapRegion* list) 将以_head为链表的YoungList中的
+  _head = NULL; // _head置为空
+  _length = 0; // YoungList长度清空
 
-  empty_list(_survivor_head);
-  _survivor_head = NULL;
+  empty_list(_survivor_head);// void YoungList::empty_list(HeapRegion* list) 将以_survivor_head为链表的YoungList中的所有HeapRegion执行清理
+  _survivor_head = NULL; // survivor的head、tail都置为空
   _survivor_tail = NULL;
   _survivor_length = 0;
 
@@ -392,13 +400,23 @@ void G1RegionMappingChangedListener::on_commit(uint start_idx, size_t num_region
   reset_from_card_cache(start_idx, num_regions);
 }
 
+/**
+ * 这个方法涉及到了两个原子交换操作
+ * 第一个原子交换，用来让自己的_dirty_cards_region_addr指针指向自己，这个操作用来获取 将这个Region推送到脏卡片列表的权利，
+ *      因为如果要将Region推送到脏卡片列表，需要next == null
+ * 第二个原子交换，用来将当前的Region设置为头结点  _dirty_cards_region_list
+ * @param hr
+ */
 void G1CollectedHeap::push_dirty_cards_region(HeapRegion* hr)
 {
   // Claim the right to put the region on the dirty cards region list
   // by installing a self pointer.
   HeapRegion* next = hr->get_next_dirty_cards_region();
+  // 当前堆区域还没有被添加到脏卡片区域列表中。
   if (next == NULL) {
+      // 当前堆区域的指针设置为下一个脏卡片区域的指针，如果操作成功，则将当前堆区域添加到脏卡片区域列表中。
     HeapRegion* res = (HeapRegion*)
+      //  这个原子交换操作将hr->next_dirty_cards_region_addr() 处的指针与 NULL 进行比较，如果相等，则将其替换为 hr。该操作返回原来的值。
       Atomic::cmpxchg_ptr(hr, hr->next_dirty_cards_region_addr(),
                           NULL);
     if (res == NULL) {
@@ -406,19 +424,21 @@ void G1CollectedHeap::push_dirty_cards_region(HeapRegion* hr)
       do {
         // Put the region to the dirty cards region list.
         head = _dirty_cards_region_list;
+        // 尝试将当前堆区域添加到脏卡片区域列表的头部，返回
+        // 比较 _dirty_cards_region_list 的头部指针与 head，如果相等，则将其替换为 hr，并返回原来的值
         next = (HeapRegion*)
           Atomic::cmpxchg_ptr(hr, &_dirty_cards_region_list, head);
-        if (next == head) {
+        if (next == head) { // 添加成功，即当前列表的头部没有被其他线程修改，替换成功，此时头部已经是hr了
           assert(hr->get_next_dirty_cards_region() == hr,
                  "hr->get_next_dirty_cards_region() != hr");
           if (next == NULL) {
             // The last region in the list points to itself.
-            hr->set_next_dirty_cards_region(hr);
+            hr->set_next_dirty_cards_region(hr); // 列表中最后一个HeapRegion的_next_dirty_cards_region指向自己
           } else {
-            hr->set_next_dirty_cards_region(next);
+            hr->set_next_dirty_cards_region(next);// 列表中最后一个HeapRegion的_next_dirty_cards_region指向next
           }
         }
-      } while (next != head);
+      } while (next != head); // 替换不成功
     }
   }
 }
@@ -534,15 +554,12 @@ G1CollectedHeap::new_region_try_secondary_free_list(bool is_old) {
       // It looks as if there are free regions available on the
       // secondary_free_list. Let's move them to the free_list and try
       // again to allocate from it.
-      /**
-       * 看起来 secondary_free_list 上似乎有可用的空闲区域。 让我们将它们移至 free_list 并再次尝试从中分配。
-       */
-      append_secondary_free_list();
+      append_secondary_free_list(); // 看起来 secondary_free_list 上似乎有可用的空闲区域。 让我们将它们移至 free_list 并再次尝试从中分配。
 
       assert(_hrm.num_free_regions() > 0, "if the secondary_free_list was not "
              "empty we should have moved at least one entry to the free_list");
       // 搜索 HeapRegion* allocate_free_region
-      HeapRegion* res = _hrm.allocate_free_region(is_old);
+      HeapRegion* res = _hrm.allocate_free_region(is_old); // 从一级空闲列表中取出一个Region
       if (G1ConcRegionFreeingVerbose) {
         gclog_or_tty->print_cr("G1ConcRegionFreeing [region alloc] : "
                                "allocated " HR_FORMAT " from secondary_free_list",
@@ -555,6 +572,7 @@ G1CollectedHeap::new_region_try_secondary_free_list(bool is_old) {
     // more free regions coming or (b) some regions have been moved on
     // the secondary_free_list.
     // 在此等待，直到 (a) 没有更多空闲区域到来或 (b) 某些区域已移至 secondary_free_list 时我们收到通知。
+    // 在CM的cleanup阶段结束的时候，会调用reset_free_regions_coming，进而通知SecondaryFreeList_lock
     SecondaryFreeList_lock->wait(Mutex::_no_safepoint_check_flag);
   }
 
@@ -578,6 +596,7 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_e
          "when we are allocating a single humongous region");
 
   HeapRegion* res;
+  // 如果打开了 G1StressConcRegionFreeing 并且二级region空闲列表不为空，从二级region空闲列表中分配成功则返回
   if (G1StressConcRegionFreeing) {
       /**
        * 二级region空闲列表来自于并发标记的清理阶段
@@ -595,7 +614,6 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_e
     }
   }
   /**
-   *  如果打开了 G1StressConcRegionFreeing 并且二级region空闲列表不为空，从二级region空闲列表中分配成功则返回
    *  否则，继续尝试分配
    */
   // 从主空闲列表中 分配一个新的堆区域
@@ -606,7 +624,7 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool is_old, bool do_e
       gclog_or_tty->print_cr("G1ConcRegionFreeing [region alloc] : "
                              "res == NULL, trying the secondary_free_list");
     }
-    // 在主空闲列表中分配失败，再次尝试二级空闲列表
+    // 在主空闲列表中分配失败，尝试二级空闲列表
     res = new_region_try_secondary_free_list(is_old);
   }
   //
@@ -784,6 +802,7 @@ G1CollectedHeap::humongous_obj_allocate_initialize_regions(uint first,
 // If could fit into free regions w/o expansion, try.
 // Otherwise, if can expand, do so.
 // Otherwise, if using ex regions might help, try with ex given back.
+// 安全点进行大对象分配
 HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationContext_t context) {
     /**
      * 或者已经拿到了HeapLock，或者当前处于safepoint
@@ -793,7 +812,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
   verify_region_sets_optional();
 
   uint first = G1_NO_HRM_INDEX;
-  // 将对象大小对齐到区域的倍数，并将其除以区域的大小，以确定所涉及的区域数量
+  // 将对象大小对齐到Region的倍数，并将其除以区域的大小，以确定所涉及的Region数量
   uint obj_regions = (uint)(align_size_up_(word_size, HeapRegion::GrainWords) / HeapRegion::GrainWords);
   /**
    * 根据要分配的巨型对象所涉及的区域数量来选择不同的分配路径
@@ -803,7 +822,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
     // from the free lists. Do not try to expand here, we will potentially do that
     // later.
     /**
-     * 如果只涉及一个区域，尝试从空闲列表直接分配一个新的区域
+     * 如果只涉及一个区域，尝试从空闲列表直接分配一个新的Region
      * 如果涉及多个区域，则根据当前的堆状态来选择分配路径
      * 搜索 G1CollectedHeap::new_region
      */
@@ -812,26 +831,23 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
       first = hr->hrm_index();
     }
   } else {
-    // We can't allocate humongous regions spanning more than one region while
-    // cleanupComplete() is running, since some of the regions we find to be
-    // empty might not yet be added to the free list. It is not straightforward
-    // to know in which list they are on so that we can remove them. We only
-    // need to do this if we need to allocate more than one region to satisfy the
-    // current humongous allocation request. If we are only allocating one region
-    // we use the one-region region allocation code (see above), that already
-    // potentially waits for regions from the secondary free list.
-    /
+    /**
+     * 在 cleanupComplete() 运行时，我们无法分配跨越多个Region的超大区域，因为我们发现的一些空区域可能尚未添加到空闲列表中。
+     * 我们无法直接知道它们在哪个列表中，以便我们可以删除它们。只有在我们需要分配多个区域以满足当前超大分配请求时，我们才需要这样做。
+     * 如果我们只分配一个区域，我们使用单区域区域分配代码（见上文），该代码可能已经等待来自二级空闲列表的区域。
+     */
     wait_while_free_regions_coming();
     append_secondary_free_list_if_not_empty_with_lock();
 
     // Policy: Try only empty regions (i.e. already committed first). Maybe we
     // are lucky enough to find some.
     /**
-     * 尝试找到已经commit的region
+     * 尝试找到已经commit的空的region
      */
     first = _hrm.find_contiguous_only_empty(obj_regions);
-    if (first != G1_NO_HRM_INDEX) { // 找到了一个连续的Region
-      _hrm.allocate_free_regions_starting_at(first, obj_regions);
+    if (first != G1_NO_HRM_INDEX) {
+        // 找到了一个连续的Region
+      _hrm.allocate_free_regions_starting_at(first, obj_regions); // 把这一片连续的Region从_free_list中remove掉
     }
   }
 
@@ -840,10 +856,11 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
     // free list. Look through the heap to find a mix of free and uncommitted regions.
     // If so, try expansion.
     /**
-     * 我们无法在已经commit的region里面找到合适分配的区域。因此，我们查找整个heap去查找空闲以及未提交的region混合在一起的reigon
+     * 我们无法在已经commit的region里面找到合适分配的区域。
+     * 因此，我们查找整个heap去查找空闲以及未提交的region混合在一起的region
      */
     first = _hrm.find_contiguous_empty_or_unavailable(obj_regions);
-    if (first != G1_NO_HRM_INDEX) { //没有找到
+    if (first != G1_NO_HRM_INDEX) { // 成功找到
       // We found something. Make sure these regions are committed, i.e. expand
       // the heap. Alternatively we could do a defragmentation GC.
       ergo_verbose1(ErgoHeapSizing,
@@ -852,7 +869,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
                     ergo_format_byte("allocation request"),
                     word_size * HeapWordSize);
 
-      _hrm.expand_at(first, obj_regions); // 对region进行扩展
+      _hrm.expand_at(first, obj_regions); // 对region进行扩展，对于那些unavailable的region进行提交，准备使用
       g1_policy()->record_new_heap_size(num_regions());
 
 #ifdef ASSERT
@@ -863,7 +880,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
         assert(is_on_master_free_list(hr), "sanity");
       }
 #endif
-    // 扩展以后再次尝试尽心分配
+    // 扩展以后再次尝试进行分配，即将这些Region从_free_list中删除
       _hrm.allocate_free_regions_starting_at(first, obj_regions);
     } else {
       // Policy: Potentially trigger a defragmentation GC.
@@ -871,7 +888,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
   }
 
   HeapWord* result = NULL;
-  if (first != G1_NO_HRM_INDEX) {
+  if (first != G1_NO_HRM_INDEX) { // 分配成功了，大对象分配条件下的Region的初始化
     result = humongous_obj_allocate_initialize_regions(first, obj_regions,
                                                        word_size, context);
     assert(result != NULL, "it should always return a valid result");
@@ -879,7 +896,7 @@ HeapWord* G1CollectedHeap::humongous_obj_allocate(size_t word_size, AllocationCo
     // A successful humongous object allocation changes the used space
     // information of the old generation so we need to recalculate the
     // sizes and update the jstat counters here.
-    g1mm()->update_sizes();
+    g1mm()->update_sizes(); //修改内存空间的使用信息
   }
 
   verify_region_sets_optional();
@@ -1037,18 +1054,19 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
       // If we reach here, attempt_allocation_locked() above failed to
       // allocate a new region. So the mutator alloc region should be NULL.
       assert(_allocator->mutator_alloc_region(context)->get() == NULL, "only way to get here");
-
+      // 当前处于临界区状态，因此当前不能立刻进行gc，但是已经有其它地方请求了GC，一旦离开临界区就会被触发，因此不需要我们自己进行重复的gc
       if (GC_locker::is_active_and_needs_gc()) {
-        if (g1_policy()->can_expand_young_list()) {
+        if (g1_policy()->can_expand_young_list()) { // 还可以扩展 young 区region的数量
           // No need for an ergo verbose message here,
           // can_expand_young_list() does this when it returns true.
+          // 进行基于Young区Region扩展的分配
           result = _allocator->mutator_alloc_region(context)->attempt_allocation_force(word_size,
                                                                                        false /* bot_updates */);
           if (result != NULL) {
             return result;
           }
         }
-        should_try_gc = false;
+        should_try_gc = false; // 不应该主动进行gc
       } else {
         // The GCLocker may not be active but the GCLocker initiated
         // GC may not yet have been performed (GCLocker::needs_gc()
@@ -1059,7 +1077,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
           should_try_gc = false;
         } else {
           // Read the GC count while still holding the Heap_lock.
-          gc_count_before = total_collections();
+          gc_count_before = total_collections(); // 没有GCLocker,同时也没有needs_gc的请求，因此，我们需要自己进行gc
           should_try_gc = true;
         }
       }
@@ -1074,7 +1092,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
         return result; // 成功，直接返回
       }
       /**
-       * 这里的意思是，gc成功了，但是依然没有成功分配到内存
+       * 这里的意思是，没有成功分配到内存，但是GC是成功的，那么没有必要再尝试了
        */
       if (succeeded) {
         // If we get here we successfully scheduled a collection which
@@ -1128,7 +1146,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
 }
 
 /**
- * 给大对象分配内存。
+ * 给大对象分配内存。这里是在非安全点进行大对象分配
  * 给小对象分配内存是在方法attempt_allocation_slow()中
  * @param word_size
  * @param gc_count_before_ret
@@ -1203,7 +1221,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
         // wait until the GCLocker initiated GC is performed, and
         // then retry the allocation.
         /**
-         * 这时候 is_active 是 false，但是由gclocker触发的gc还没有进行，因此needs_gc 还是等于true
+         * 这时候 is_active 是 false，但是由gclocker触发的gc还没有进行，因此 needs_gc 还是等于true
          * 这时候我们在下面会通过stall_until_clear()方法一直等待needs_gc为false
          */
         if (GC_locker::needs_gc()) {
@@ -1526,7 +1544,8 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       abandon_collection_set(g1_policy()->inc_cset_head());
       g1_policy()->clear_incremental_cset();
       g1_policy()->stop_incremental_cset_building();
-
+      // 在进行Full GC以前，先摧毁所有的RegionSet，比如，将所有的Old Region从_old_sets中删掉，而Young Region和巨型对象的Region不处理
+      // 搜索 G1CollectedHeap::tear_down_region_sets
       tear_down_region_sets(false /* free_list_only */);
       g1_policy()->set_gcs_are_young(true);
 
@@ -1546,11 +1565,13 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       // 在这里进行gc的操作
       {
         HandleMark hm;  // Discard invalid handles created during gc
+        // 搜索 G1MarkSweep::invoke_at_safepoint
         G1MarkSweep::invoke_at_safepoint(ref_processor_stw(), do_clear_all_soft_refs);
       }
 
       assert(num_free_regions() == 0, "we should not have added any free regions");
-      rebuild_region_sets(false /* free_list_only */);
+        // 搜索 void G1CollectedHeap::rebuild_region_sets(bool free_list_only)
+      rebuild_region_sets(false /* free_list_only */); // 重构RegionSet
 
       // Enqueue any discovered reference objects that have
       // not been removed from the discovered lists.
@@ -1725,6 +1746,8 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
 
 /**
  * STW的full gc。
+ * 在VM_G1CollectFull::doit()中被调用，调用的时候clear_all_soft_refs=false
+ *
  * 与
  * @param clear_all_soft_refs
  */
@@ -1976,7 +1999,9 @@ bool G1CollectedHeap::expand(size_t expand_bytes) {
                       ergo_format_reason("heap already fully expanded"));
     return false;
   }
-
+  /**
+   * 计算需要扩展的Region的数量
+   */
   uint regions_to_expand = (uint)(aligned_expand_bytes / HeapRegion::GrainBytes);
   assert(regions_to_expand > 0, "Must expand by at least one region");
   // 搜索 uint HeapRegionManager::expand_by(uint num_regions)
@@ -2037,9 +2062,9 @@ void G1CollectedHeap::shrink(size_t shrink_bytes) {
   // Instead of tearing down / rebuilding the free lists here, we
   // could instead use the remove_all_pending() method on free_list to
   // remove only the ones that we need to remove.
-  tear_down_region_sets(true /* free_list_only */);
+  tear_down_region_sets(true /* free_list_only */); // 摧毁整个Region Set，但是仅限于解散Free List
   shrink_helper(shrink_bytes);
-  rebuild_region_sets(true /* free_list_only */);
+  rebuild_region_sets(true /* free_list_only */); // 摧毁整个Region Set，但是仅限于重构Free List
 
   _hrm.verify_optional();
   verify_region_sets_optional();
@@ -3995,7 +4020,7 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
   HeapWord* result = op.result(); // 分配的结果
   /**
    * VM_GC_Operation::doit_prologue
-   * 表示 这个 VM_G1IncCollectionPause得到了执行
+   * 表示 这个 VM_G1IncCollectionPause 得到了执行
    */
   bool ret_succeeded = op.prologue_succeeded() && op.pause_succeeded();
   assert(result == NULL || ret_succeeded,
@@ -4414,7 +4439,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
     // set, skip this step so that the region allocation code has to
     // get entries from the secondary_free_list.
     if (!G1StressConcRegionFreeing) {
-      append_secondary_free_list_if_not_empty_with_lock();
+      append_secondary_free_list_if_not_empty_with_lock(); // 将整个_secondary_free_list添加到_free_list
     }
 
     assert(check_young_list_well_formed(), "young list should be well formed");
@@ -4562,7 +4587,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
          * 以及通过方法 cleanup_after_oops_into_collection_set_do进行回收失败的处理工作
          */
         evacuate_collection_set(evacuation_info);
-
+        // 将回收集合中的Region放回到FreeList中去
         free_collection_set(g1_policy()->collection_set(), evacuation_info);
 
         eagerly_reclaim_humongous_regions();
@@ -4631,16 +4656,19 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         _young_list->print();
         g1_policy()->print_collection_set(g1_policy()->inc_cset_head(), gclog_or_tty);
 #endif // YOUNG_LIST_VERBOSE
-
+        // 回收结束以后重置MutatorAllocRegion
         _allocator->init_mutator_alloc_region();
 
         {
+            /**
+             * 计算需要扩展的字节数量
+             */
           size_t expand_bytes = g1_policy()->expansion_amount();
           if (expand_bytes > 0) {
             size_t bytes_before = capacity();
             // No need for an ergo verbose message here,
             // expansion_amount() does this when it returns a value > 0.
-            if (!expand(expand_bytes)) {
+            if (!expand(expand_bytes)) { // 扩展是否成功 G1CollectedHeap::expand
               // We failed to expand the heap. Cannot do anything about it.
             }
           }
@@ -6563,7 +6591,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
     double fixup_time_ms = (os::elapsedTime() - fixup_start) * 1000.0;
     phase_times->record_string_dedup_fixup_time(fixup_time_ms);
   }
-
+  // 删除当前的_gc_alloc_regions，将其保存在_retained_old_gc_alloc_region中
   _allocator->release_gc_alloc_regions(n_workers, evacuation_info);
   /**
    * void G1RemSet::cleanup_after_oops_into_collection_set_do()
@@ -6610,6 +6638,9 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
 
+/**
+ * 在大对象回收的时候，或者在普通的GC Pause已经evacuation 成功以后将整个回收集合回收的时候，会调用free_region
+ */
 void G1CollectedHeap::free_region(HeapRegion* hr,
                                   FreeRegionList* free_list,
                                   bool par,
@@ -6631,7 +6662,7 @@ void G1CollectedHeap::free_region(HeapRegion* hr,
     _cg1r->hot_card_cache()->reset_card_counts(hr);
   }
   hr->hr_clear(par, true /* clear_space */, locked /* locked */);
-  free_list->add_ordered(hr);
+  free_list->add_ordered(hr); // 将这个Region添加到一级空闲列表中
 }
 
 void G1CollectedHeap::free_humongous_region(HeapRegion* hr,
@@ -7024,7 +7055,7 @@ void G1CollectedHeap::free_collection_set(HeapRegion* cs_head, EvacuationInfo& e
       // And the region is empty.
       assert(!used_mr.is_empty(), "Should not have empty regions in a CS.");
       pre_used += cur->used();
-      free_region(cur, &local_free_list, false /* par */, true /* locked */);
+      free_region(cur, &local_free_list, false /* par */, true /* locked */); // 释放这个Region，会把这个Region放回到free_list中
     } else {
       cur->uninstall_surv_rate_group();
       if (cur->is_young()) {
@@ -7268,7 +7299,7 @@ void G1CollectedHeap::wait_while_free_regions_coming() {
   {
     MutexLockerEx x(SecondaryFreeList_lock, Mutex::_no_safepoint_check_flag);
     while (free_regions_coming()) {
-      SecondaryFreeList_lock->wait(Mutex::_no_safepoint_check_flag);
+      SecondaryFreeList_lock->wait(Mutex::_no_safepoint_check_flag); // 在二级空闲列表中等待
     }
   }
 
@@ -7278,9 +7309,14 @@ void G1CollectedHeap::wait_while_free_regions_coming() {
   }
 }
 
+/**
+ * 创建了一个eden space的region(肯定是用户层面导致的创建，因此是eden space)
+ * @param hr
+ */
 void G1CollectedHeap::set_region_short_lived_locked(HeapRegion* hr) {
   assert(heap_lock_held_for_gc(),
               "the heap lock should already be held by or for this thread");
+  // 搜索 YoungList::push_region
   _young_list->push_region(hr);
 }
 
@@ -7312,6 +7348,11 @@ bool G1CollectedHeap::check_young_list_empty(bool check_heap, bool check_sample)
   return ret;
 }
 
+/**
+ * 遍历所有区域，并根据区域的类型进行不同的处理：
+    老年代区域（old regions）：从 _old_set 中删除。
+    空闲区域（free regions）、年轻代区域（young regions）、巨型对象区域（humongous regions）：跳过，不进行处理。
+ */
 class TearDownRegionSetsClosure : public HeapRegionClosure {
 private:
   HeapRegionSet *_old_set;
@@ -7321,7 +7362,7 @@ public:
 
   bool doHeapRegion(HeapRegion* r) {
     if (r->is_old()) {
-      _old_set->remove(r);
+      _old_set->remove(r); // 从_old_set中删除所有的old_region
     } else {
       // We ignore free regions, we'll empty the free list afterwards.
       // We ignore young regions, we'll empty the young list afterwards.
@@ -7338,10 +7379,14 @@ public:
   }
 };
 
+/**
+ * 在void G1CollectedHeap::shrink(size_t shrink_bytes)  中调用的时候，free_list_only = true
+ * 在 do_collection()即full gc中调用的时候， free_list_only = false
+ */
 void G1CollectedHeap::tear_down_region_sets(bool free_list_only) {
   assert_at_safepoint(true /* should_be_vm_thread */);
 
-  if (!free_list_only) {
+  if (!free_list_only) { // 在full gc的时候，free_list_only = false
     TearDownRegionSetsClosure cl(&_old_set);
     heap_region_iterate(&cl);
 
@@ -7370,19 +7415,28 @@ public:
       assert(_old_set->is_empty(), "pre-condition");
     }
   }
-
+  /**
+   * 这里的含义是，如果是full gc触发的(_free_list_only=true)，那么如果region是空的，那么全部加入到free_list中去
+   * @param r
+   * @return
+   */
   bool doHeapRegion(HeapRegion* r) {
+      /**
+       * 这个region只是巨型对象的一部分,不处理
+       */
     if (r->continuesHumongous()) {
       return false;
     }
-
-    if (r->is_empty()) {
+    // 这里的意思是，无论怎样，只要这个Region是空的，就添加到_free_list中去。
+    // 而如果这个Region不是空的并且_free_list_only=false（full gc的时候）,这个Region添加到_old_set中去
+    // 所以，如果仅仅是shrink(_free_list_only=true)，那么只会将空的region添加到free list
+    if (r->is_empty()) { // region本来就是空的，那么还是作为young
       // Add free regions to the free list
-      r->set_free();
+      r->set_free();  // HeapRegion::set_free
       r->set_allocation_context(AllocationContext::system());
-      _hrm->insert_into_free_list(r);
-    } else if (!_free_list_only) {
-      assert(!r->is_young(), "we should not come across young regions");
+      _hrm->insert_into_free_list(r); // 把这个region添加到hrm的freelist中去
+    } else if (!_free_list_only) { // 如果这个Region不是空的，并且_free_list_only == false
+      assert(!r->is_young(), "we should not come across young regions"); // 肯定不是Young Region
 
       if (r->isHumongous()) {
         // We ignore humongous regions, we left the humongous set unchanged
@@ -7391,8 +7445,8 @@ public:
         // that were previously old or free.
         assert(r->is_free() || r->is_old(), "invariant");
         // We now consider them old, so register as such.
-        r->set_old();
-        _old_set->add(r);
+        r->set_old(); // 搜索 HeapRegion::set_old
+        _old_set->add(r); // 将Region添加到_old_set中
       }
       _total_used += r->used();
     }
@@ -7405,16 +7459,26 @@ public:
   }
 };
 
+/**
+ * 在G1CollectedHeap::shrink 和 G1CollectedHeap::do_collection 中被调用
+ * 重建Region Set/List，以便重新填充它们以反映堆的内容。
+ * 唯一的例外是最初没有被拆除的巨型对象的Region。如果 free_list_only 为真，它将仅重建 master free list。
+ * 这个方法 它在Full GC（free_list_only == false）或Heap Shrink（free_list_only == true）后调用。
+ * 这里的含义是，在Full GC（free_list_only == false）的时候，会解散整个的Young List。如果Young List中的Region是空的,就加入到FreeList中，如果不为空，就放到Old Set中
+ * 在Heap Shrink（free_list_only == true）(搜索 resize_if_necessary_after_full_collection)的时候，不会解散Young List，只会把空的Region加入到FreeList中，而不会把不空的Region加入到old set 中
+ * @param free_list_only
+ */
 void G1CollectedHeap::rebuild_region_sets(bool free_list_only) {
   assert_at_safepoint(true /* should_be_vm_thread */);
-
+  // 如果不仅仅是_free_list(full gc的时候)，那么清空Young List
   if (!free_list_only) {
-    _young_list->empty_list();
+    _young_list->empty_list(); // 搜索 void YoungList::empty_list()，这里会把所有的Young Region设置成Old Region
   }
 
   RebuildRegionSetsClosure cl(free_list_only, &_old_set, &_hrm);
-  heap_region_iterate(&cl);
+  heap_region_iterate(&cl); // 遍历HeapRegionManager中的_regions
 
+  // 如果不仅仅是_free_list(full gc的时候)，那么清空Young List
   if (!free_list_only) {
     _allocator->set_used(cl.total_used());
   }
@@ -7446,13 +7510,19 @@ HeapRegion* G1CollectedHeap::new_mutator_alloc_region(size_t word_size,
   assert_heap_locked_or_at_safepoint(true /* should_be_vm_thread */);
   assert(!force || g1_policy()->can_expand_young_list(),
          "if force is true we should be able to expand the young list");
+  /**
+   * 判断当前的_young_list的长度是否等于目标长度
+   */
   bool young_list_full = g1_policy()->is_young_list_full();
   if (force || !young_list_full) {
+      /**
+       * 创建一个新的Young Region
+       */
     HeapRegion* new_alloc_region = new_region(word_size,
-                                              false /* is_old */,
-                                              false /* do_expand */);
-    if (new_alloc_region != NULL) {
-      set_region_short_lived_locked(new_alloc_region);
+                                              false /* is_old */, // 不是old，因为是为用户分配，肯定是分配在Young region
+                                              false /* do_expand */); // 由于是MutatorAllocRegion，不是GC触发的，因此不进行扩展
+    if (new_alloc_region != NULL) { // 创建成功
+      set_region_short_lived_locked(new_alloc_region); // 将这个Region添加到YoungList中去
       _hr_printer.alloc(new_alloc_region, G1HRPrinter::Eden, young_list_full);
       check_bitmaps("Mutator Region Allocation", new_alloc_region);
       return new_alloc_region;
@@ -7505,7 +7575,8 @@ void G1CollectedHeap::set_par_threads() {
 /**
  *  gc进行的region的分配，因此调用方是
  *  SurvivorGCAllocRegion::allocate_new_region 和 OldGCAllocRegion::allocate_new_region
- *  区别，如果是用户线程进行的分配，那么就是 new_mutator_alloc_region
+ *  区别是，SurvivorGCAllocRegion::allocate_new_region调用的时候，dest = Young
+ *  OldGCAllocRegion::allocate_new_region调用的时候， dest = Old
  */
 HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
                                                  uint count,
@@ -7513,9 +7584,12 @@ HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
   assert(FreeList_lock->owned_by_self(), "pre-condition");
 
   if (count < g1_policy()->max_regions(dest)) {
-    const bool is_survivor = (dest.is_young());
+    const bool is_survivor = (dest.is_young()); // 如果dest = young，那么既然是gc请求分配，就只能是survivor
+    /**
+     * 搜索 G1CollectedHeap::new_region
+     */
     HeapRegion* new_alloc_region = new_region(word_size,
-                                              !is_survivor,
+                                              !is_survivor, // 如果是分配survivor，那么第二个参数(is_old)是false，如果是分配old，那么第二个参数(is_old)是true
                                               true /* do_expand */);
     if (new_alloc_region != NULL) {
       // We really only need to do this for old regions given that we

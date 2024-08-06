@@ -325,6 +325,12 @@ HeapRegion::HeapRegion(uint hrm_index,
   initialize(mr);
 }
 
+/**
+ * 调用者 HeapRegionManager::make_regions_available
+ * @param mr
+ * @param clear_space
+ * @param mangle_space
+ */
 void HeapRegion::initialize(MemRegion mr, bool clear_space, bool mangle_space) {
   assert(_rem_set->is_empty(), "Remembered set must be empty");
 
@@ -1177,8 +1183,7 @@ void G1OffsetTableContigSpace::prepare_for_compaction(CompactPoint* cp) {
  * 在这里构造了成员变量G1OffsetTableContigSpace
  * G1OffsetTableContigSpace 是HeapRegion的父类，因此搜索 HeapRegion::HeapRegion 的构造函数查看该构造函数的调用
  */
-G1OffsetTableContigSpace::
-G1OffsetTableContigSpace(G1BlockOffsetSharedArray* sharedOffsetArray,
+G1OffsetTableContigSpace::G1OffsetTableContigSpace(G1BlockOffsetSharedArray* sharedOffsetArray,
                          MemRegion mr) :
   _offsets(sharedOffsetArray, mr), //  构造了一个G1BlockOffsetArrayContigSpace对象
   _par_alloc_lock(Mutex::leaf, "OffsetTableContigSpace par alloc lock", true),

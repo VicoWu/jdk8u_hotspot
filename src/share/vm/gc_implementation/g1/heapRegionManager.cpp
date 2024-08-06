@@ -70,9 +70,16 @@ HeapRegion* HeapRegionManager::new_heap_region(uint hrm_index) {
   HeapWord* bottom = g1h->bottom_addr_for_region(hrm_index);
   MemRegion mr(bottom, bottom + HeapRegion::GrainWords);
   assert(reserved().contains(mr), "invariant");
+  // 创建对应的HeapRegion对象，返回
+  // HeapRegion* new_heap_region
   return g1h->allocator()->new_heap_region(hrm_index, g1h->bot_shared(), mr);
 }
 
+/**
+ * 提交这些Region到操作系统，这个提交发生在我们刚刚创建了这个region的时候，查看调用者方法 HeapRegionManager::make_regions_available
+ * @param index 连续区域的索引起始地点
+ * @param num_regions 提交的连续的region的数量
+ */
 void HeapRegionManager::commit_regions(uint index, size_t num_regions) {
   guarantee(num_regions > 0, "Must commit more than zero regions");
   guarantee(_num_committed + num_regions <= max_length(), "Cannot commit more than the maximum amount of regions");
@@ -81,7 +88,7 @@ void HeapRegionManager::commit_regions(uint index, size_t num_regions) {
 
   _heap_mapper->commit_regions(index, num_regions);
 
-  // Also commit auxiliary data
+  // 提交一些辅助数据，比如 prev
   _prev_bitmap_mapper->commit_regions(index, num_regions);
   _next_bitmap_mapper->commit_regions(index, num_regions);
 
@@ -118,17 +125,23 @@ void HeapRegionManager::uncommit_regions(uint start, size_t num_regions) {
   _card_counts_mapper->uncommit_regions(start, num_regions);
 }
 
+/**
+ * 在 find_unavailable_from_idx 中调用
+ */
 void HeapRegionManager::make_regions_available(uint start, uint num_regions) {
   guarantee(num_regions > 0, "No point in calling this for zero regions");
-  commit_regions(start, num_regions);
+  commit_regions(start, num_regions); // 提交这个region到操作系统，即JVM开始使用这个Region对应的内存区域
   for (uint i = start; i < start + num_regions; i++) {
+      // 这个region还没有创建
     if (_regions.get_by_index(i) == NULL) {
-      HeapRegion* new_hr = new_heap_region(i);
+        // HeapRegion* HeapRegionManager::new_heap_region，通过
+      HeapRegion* new_hr = new_heap_region(i); //
+      // 将创建的HeapRegion放入到G1HeapRegionTable _regions 中
       _regions.set_by_index(i, new_hr);
       _allocated_heapregions_length = MAX2(_allocated_heapregions_length, i + 1);
     }
   }
-
+  // 刚刚通过_available_map找到了unavailable region，创建完成以后，_available_map中标记这些region为available
   _available_map.par_set_range(start, start + num_regions, BitMap::unknown_range);
 
   for (uint i = start; i < start + num_regions; i++) {
@@ -137,10 +150,13 @@ void HeapRegionManager::make_regions_available(uint start, uint num_regions) {
     if (G1CollectedHeap::heap()->hr_printer()->is_active()) {
       G1CollectedHeap::heap()->hr_printer()->commit(hr->bottom(), hr->end());
     }
+    // 计算当前的这个新分配的HeapRegion的bottom
     HeapWord* bottom = G1CollectedHeap::heap()->bottom_addr_for_region(i);
+    // 新建一个MemRegion，代表当前的HeapRegion
     MemRegion mr(bottom, bottom + HeapRegion::GrainWords);
-
+    // 搜索 HeapRegion::initialize
     hr->initialize(mr);
+    // 将这个Region插入HeapRegionManager管理的_free_list中，供上层调用者来进行分配
     insert_into_free_list(at(i));
   }
 }
@@ -188,13 +204,11 @@ uint HeapRegionManager::expand_at(uint start, uint num_regions) {
    * 扩展的区域数量未达到请求的数量，并且仍有不可用区域存在的情况下，执行循环
    */
   while (expanded < num_regions &&
-  // 如果找到的不可用区域的数量大于0
+    // 如果找到的不可用区域的数量大于0
          (num_last_found = find_unavailable_from_idx(cur, &idx_last_found)) > 0) {
-      /**
-       * 在我当前仍需要的region的数量和刚刚找到的不可用region数量之间取较小值
-       */
+    // 在我当前仍需要的region的数量和刚刚找到的不可用region数量之间取较小值
     uint to_expand = MIN2(num_regions - expanded, num_last_found); // 新发现了to_expand个可以
-    make_regions_available(idx_last_found, to_expand);
+    make_regions_available(idx_last_found, to_expand); // 将区域  [idx_last_found,to_expand]中标记为available，即设置HRM中的Region位图 _available_map
     expanded += to_expand; // 当前可扩展的region数量
     cur = idx_last_found + num_last_found + 1; // cur设置为下一个可用的区域
   }
@@ -207,9 +221,11 @@ uint HeapRegionManager::find_contiguous(size_t num, bool empty_only) {
   uint found = 0;
   size_t length_found = 0;
   uint cur = 0;
-
+  // 遍历整个_regions
   while (length_found < num && cur < max_length()) {
-    HeapRegion* hr = _regions.get_by_index(cur);
+    HeapRegion* hr = _regions.get_by_index(cur); // 这里有可能返回null，_regions中还没有
+    // 如果不要求是empty，并且不是available(available说明这个region正在使用)
+    // 或者这个Region是available，并且这个Region是empty的region
     if ((!empty_only && !is_available(cur)) || (is_available(cur) && hr != NULL && hr->is_empty())) {
       // This region is a potential candidate for allocation into.
       length_found++;
@@ -221,7 +237,7 @@ uint HeapRegionManager::find_contiguous(size_t num, bool empty_only) {
     cur++;
   }
 
-  if (length_found == num) {
+  if (length_found == num) { // 找到了足够数量的Region
     for (uint i = found; i < (found + num); i++) {
       HeapRegion* hr = _regions.get_by_index(i);
       // sanity check
@@ -270,7 +286,7 @@ uint HeapRegionManager::find_unavailable_from_idx(uint start_idx, uint* res_idx)
   uint num_regions = 0;
 
   uint cur = start_idx;
-  // 只要cur是可用的，就一直往后移动
+  // 只要cur是available的，就一直往后移动, 搜 HeapRegionManager::is_available，直到找到一个unavailable的region
   while (cur < max_length() && is_available(cur)) {
     cur++;
   }
@@ -278,16 +294,16 @@ uint HeapRegionManager::find_unavailable_from_idx(uint start_idx, uint* res_idx)
     return num_regions;
   }
   /**
-   * 直到一个不可用的region
+   * 找到一个unavailable的region，即还没有使用的region
    */
   *res_idx = cur;
   /**
-   * 只要是unavailable的，cur就一直往后移动
+   * 只要是unavailable的，cur就一直往后移动，或者已经找到足够数量的region，或者遇到了一个已经分配(即available)的region
    */
   while (cur < max_length() && !is_available(cur)) {
     cur++;
   }
-  num_regions = cur - *res_idx;
+  num_regions = cur - *res_idx; // 找到的Region的数量
 #ifdef ASSERT
   for (uint i = *res_idx; i < (*res_idx + num_regions); i++) {
     assert(!is_available(i), "just checking");

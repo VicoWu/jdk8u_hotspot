@@ -29,6 +29,9 @@
 #include "gc_implementation/g1/heapRegion.inline.hpp"
 #include "gc_implementation/g1/heapRegionSet.inline.hpp"
 
+/**
+ *  在一次回收暂停结束以后，会调用这个初始化操作
+ */
 void G1DefaultAllocator::init_mutator_alloc_region() {
   assert(_mutator_alloc_region.get() == NULL, "pre-condition");
   _mutator_alloc_region.init(); // 查看 G1AllocRegion::init

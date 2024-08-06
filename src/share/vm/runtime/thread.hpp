@@ -111,7 +111,7 @@ class WorkerThread;
      - WorkerThread
        - GangWorker
        - GCTaskThread
-   - JavaThread is_JAVA_thread(){return false}
+   - JavaThread is_Java_thread(){return true}
    - WatcherThread
  */
 class Thread: public ThreadShadow {
@@ -1424,7 +1424,6 @@ class JavaThread: public Thread {
    * 尽管当前线程不是自己，但是当前线程是虚拟机线程(JVM内部线程，比如GC等，即虚拟机线程可以让其它线程进入关键区)并且正处于安全点的同步状态
    * 所以，VM 线程要求其他线程进入关键区，必须要求整个HotSpot已经处于安全点的同步状态
    */
-
   void enter_critical() { assert(Thread::current() == this || // 如果是线程自己进入关键区，或者虽然不是自己，但是当前线程是vm线程，同时HotSpot VM处于正在进入安全区(还未完全进入)的状态，那么就可以进入关键区
                                  Thread::current()->is_VM_thread() && SafepointSynchronize::is_synchronizing(),
                                  "this must be current thread or synchronizing");
