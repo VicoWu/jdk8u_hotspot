@@ -75,9 +75,9 @@ public:
 
   // The first four operations provide a direct implementation of the
   // barrier set.  An interpreter loop, for example, could call these
-  // directly, as appropriate.
+  // directly, as ap
 
-  // Invoke the barrier, if any, necessary when reading the given ref field.
+  // Invoke the barrpropriate.ier, if any, necessary when reading the given ref field.
   virtual void read_ref_field(void* field) = 0;
 
   // Invoke the barrier, if any, necessary when reading the given primitive

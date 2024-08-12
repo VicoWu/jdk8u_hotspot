@@ -72,7 +72,7 @@ public:
   BarrierSet* bs() { return _bs; }
 
   // Set the barrier set.
-  void set_bs(BarrierSet* bs) { _bs = bs; }
+  void set_bs(BarrierSet* bs) { _bs = bs; } // 设置BarrierSet。在构造子类CardTableRS的时候设置BS
 
   KlassRemSet* klass_rem_set() { return &_klass_rem_set; }
 

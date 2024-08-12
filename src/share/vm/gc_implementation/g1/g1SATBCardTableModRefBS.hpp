@@ -151,11 +151,13 @@ class G1SATBCardTableLoggingModRefBSChangedListener : public G1MappingChangedLis
 
 // Adds card-table logging to the post-barrier.
 // Usual invariant: all dirty cards are logged in the DirtyCardQueueSet.
+
+// 在 CardTableRS::CardTableRS中被构造，一个BS往往属于一个RSet
 class G1SATBCardTableLoggingModRefBS: public G1SATBCardTableModRefBS {
   friend class G1SATBCardTableLoggingModRefBSChangedListener;
  private:
   G1SATBCardTableLoggingModRefBSChangedListener _listener;
-  DirtyCardQueueSet& _dcqs;
+  DirtyCardQueueSet& _dcqs; // 所有的脏卡片被记录在 DirtyCardQueueSet中
  public:
   static size_t compute_size(size_t mem_region_size_in_words) {
     size_t number_of_slots = (mem_region_size_in_words / card_size_in_words);

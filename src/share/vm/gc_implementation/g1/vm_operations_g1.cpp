@@ -132,6 +132,7 @@ bool VM_G1IncCollectionPause::doit_prologue() {
  */
 void VM_G1IncCollectionPause::doit() { // 进行增量收集
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
+  // 这里的意思是，如果_should_initiate_conc_mark = true，那么should_do_concurrent_full_gc()肯定是true
   assert(!_should_initiate_conc_mark || g1h->should_do_concurrent_full_gc(_gc_cause),
       "only a GC locker, a System.gc(), stats update, whitebox, or a hum allocation induced GC should start a cycle");
 
@@ -209,7 +210,7 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
    */
     if (!res) {  // 当前正处于一个cycle中，那么将跳过下面的转移暂停evacuation pause
       assert(_word_size == 0, "Concurrent Full GC/Humongous Object IM shouldn't be allocating");
-      if (_gc_cause != GCCause::_g1_humongous_allocation) { // 基于大对象分配所进行的收集，不进行尝试
+      if (_gc_cause != GCCause::_g1_humongous_allocation) { // 基于大对象分配所进行的收集，不进行重试
         _should_retry_gc = true;
       }
       return; // 直接返回，不再尝试下面的gc，这时候，_pause_succeeded=false，并没有被置为true
@@ -235,6 +236,8 @@ void VM_G1IncCollectionPause::doit() { // 进行增量收集
                                       true /* expect_null_cur_alloc_region */);
   } else {
     assert(_result == NULL, "invariant");
+    //  查看，可以看到do_collection_pause_at_safepoint()中
+    //  只有GC_locker::check_active_before_gc()为false的时候才会让_pause_succeeded = false
     if (!_pause_succeeded) { // 分配不成功，可能是GCLocker 导致的，那么我们需要等GC_locker结束以后再进行
       // Another possible reason reason for the pause to not be successful
       // is that, again, the GC locker is active (and has become active
@@ -271,12 +274,13 @@ void VM_G1IncCollectionPause::doit_epilogue() {
 
     // If the condition has already been reached, there's no point in
     // actually taking the lock and doing the wait.
+    //
     if (g1h->old_marking_cycles_completed() <=
                                           _old_marking_cycles_completed_before) {
       // The following is largely copied from CMS
       // 为什么一定是Java Thread? 只有Java Thread才会执行doit_epilogue和doit_prologure
       Thread* thr = Thread::current(); // 需要搜索提交任务VM_G1IncCollectionPause的线程，就知道提交线程是什么线程
-      assert(thr->is_Java_thread(), "invariant");
+      assert(thr->is_Java_thread(), "invariant"); // 触发System.gc()的一定是用户线程
       JavaThread* jt = (JavaThread*)thr;
       ThreadToNativeFromVM native(jt);
 

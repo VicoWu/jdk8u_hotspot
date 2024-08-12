@@ -130,8 +130,8 @@ class CardTableModRefBS: public ModRefBarrierSet {
   // in, um, words.
   inline size_t cards_required(size_t covered_words) {
     // Add one for a guard card, used to detect errors.
-    const size_t words = align_size_up(covered_words, card_size_in_words);
-    return words / card_size_in_words + 1;
+    const size_t words = align_size_up(covered_words, card_size_in_words); // 堆内存的大小(以HeapWord为单位)
+    return words / card_size_in_words + 1; // 需要多少个卡片来映射整个堆内存
   }
 
   inline size_t compute_byte_map_size();
@@ -161,6 +161,7 @@ class CardTableModRefBS: public ModRefBarrierSet {
   MemRegion committed_unique_to_self(int self, MemRegion mr) const;
 
   // Mapping from address to card marking array entry
+  // 输入一个地址，返回指向对应卡表的指针，这是一个char*
   jbyte* byte_for(const void* p) const {
     assert(_whole_heap.contains(p),
            err_msg("Attempt to access p = " PTR_FORMAT " out of bounds of "
@@ -168,7 +169,7 @@ class CardTableModRefBS: public ModRefBarrierSet {
                    p2i(p), p2i(_whole_heap.start()), p2i(_whole_heap.end())));
     jbyte* result = &byte_map_base[uintptr_t(p) >> card_shift]; // 右移9位然后取地址，因为一个卡片对应了512字节，所以这里result就对应了这个卡片对应的512的首地址
     assert(result >= _byte_map && result < _byte_map + _byte_map_size,
-           "out of bounds accessor for card marking array");
+           "out of bounds accessor for card marking array"); //这个内存地址不可能越过卡表的起始地址
     return result;
   }
 
@@ -272,9 +273,9 @@ class CardTableModRefBS: public ModRefBarrierSet {
 public:
   // Constants
   enum SomePublicConstants {
-    card_shift                  = 9,
-    card_size                   = 1 << card_shift,
-    card_size_in_words          = card_size / sizeof(HeapWord)
+    card_shift                  = 9, // 一个卡片对应的内存大小的log值，因此，一个卡片对应了2^9 = 512B的内存大小
+    card_size                   = 1 << card_shift, // 一个卡片对应的内存大小，2^9=512B
+    card_size_in_words          = card_size / sizeof(HeapWord) // 一个卡片对应的HeapWord的大小
   };
 
   static int clean_card_val()      { return clean_card; }

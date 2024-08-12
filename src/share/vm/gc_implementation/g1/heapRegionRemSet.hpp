@@ -131,7 +131,7 @@ class OtherRegionsTable VALUE_OBJ_CLASS_SPEC {
   HeapRegion*      _hr; // 当前这个OtherRegionsTable所对应的Region的HeapRegion对象
 
   // These are protected by "_m".
-  BitMap      _coarse_map;  // 粗粒度PRT
+  BitMap      _coarse_map;  // 粗粒度PRT，只用一个bit来表示是否存在来自某一个Region的引用关系
   size_t      _n_coarse_entries; // 粗粒度元素的数量, 从方法OtherRegionsTable::occ_coarse可以看出来，一个entry会存储HeapRegion::CardsPerRegion个卡片信息
   static jint _n_coarsenings;
   /**
@@ -258,7 +258,7 @@ private:
 
   Mutex _m;
 
-  OtherRegionsTable _other_regions;
+  OtherRegionsTable _other_regions; // 粗粒度哈希表
 
   enum ParIterState { Unclaimed, Claimed, Complete };
   volatile ParIterState _iter_state;

@@ -764,13 +764,15 @@ public:
   // GC to happen (e.g., it called System.gc() with
   // +ExplicitGCInvokesConcurrent).
   /**
-   * 这在并发周期或完整 GC 结束时调用，以更新已完成的旧标记周期数。
-   * 这两者可以以嵌套方式发生，即，我们开始一个并发循环，在其中途发生一次 Full GC，首先结束，然后该循环注意到发生了一次 Full GC，也结束了。
+   * 这在并发周期或Full GC 结束时调用，以更新已完成的旧标记周期数。
+   * 这两者可以以嵌套方式发生，即，我们开始一个并发标记周期，在其中途发生一次Full GC，并且Full GC结束，然后这个并发标记周期注意到发生了一次 Full GC，也结束了(已经发生了Full GC，因此没必要再继续并发标记)。
    * 并发参数是一个布尔值，可以帮助我们在方法中进行更严格的一致性检查。
    *    如果并发为 false，则调用者是嵌套中的内部调用者（即 Full GC）。
    *    如果并发为 true，则调用者是此嵌套（即并发循环）中的外部调用者。
    *    目前不支持进一步嵌套。
    * 如果 Java 线程正在等待完整 GC 发生（例如，它使用 +ExplicitGCInvokesConcurrent 调用 System.gc()），此调用的结束还会通知 FullGCCount_lock。
+   * 可以看到，在并发标记中调用，increment_old_marking_cycles_completed(true)
+   * 在Full GC中调用，increment_old_marking_cycles_completed(false)
    * @param concurrent
    */
   void increment_old_marking_cycles_completed(bool concurrent);
@@ -1357,7 +1359,7 @@ public:
   virtual bool is_in_closed_subset(const void* p) const;
 
   G1SATBCardTableLoggingModRefBS* g1_barrier_set() {
-    return (G1SATBCardTableLoggingModRefBS*) barrier_set();
+    return (G1SATBCardTableLoggingModRefBS*) barrier_set(); // 返回对应的_barrier_set
   }
 
   // This resets the card table to all zeros.  It is used after
@@ -1462,6 +1464,7 @@ public:
 
   // Returns the HeapRegion that contains addr. addr must not be NULL.
   // If addr is within a humongous continues region, it returns its humongous start region.
+  // 返回addr所在的Region。如果addr在一个巨型对象内部，那么就返回这个巨型对象的第一个Region
   template <class T>
   inline HeapRegion* heap_region_containing(const T addr) const;
 
@@ -1631,7 +1634,7 @@ public:
   bool is_obj_dead(const oop obj, const HeapRegion* hr) const {
     return
       !hr->obj_allocated_since_prev_marking(obj) && // 上次标记的时候这个对象还没有分配
-      !isMarkedPrev(obj); // 并且 这个对象在本轮标记的时候也没有被标记
+      !isMarkedPrev(obj); // 并且 这个对象在上一轮标记的时候也没有被标记 搜索 inline bool G1CollectedHeap::isMarkedPrev(oop obj)
   }
 
   // This function returns true when an object has been

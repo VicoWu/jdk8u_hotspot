@@ -739,9 +739,11 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // Determine if an object has been allocated since the last
   // mark performed by the collector. This returns true iff the object
   // is within the unmarked area of the region.
+  // prev_top_at_mark_start()是上次开始标记的时候的最高地址，如果obj比这个地址还高，那么这个对象肯定是在上次标记开始以后分配的
   bool obj_allocated_since_prev_marking(oop obj) const {
     return (HeapWord *) obj >= prev_top_at_mark_start();
   }
+  // next_top_at_mark_start()是本次标记的时候的最高地址，如果obj比这个地址还高，那么这个对象肯定是在这次标记以后分配的
   bool obj_allocated_since_next_marking(oop obj) const {
     return (HeapWord *) obj >= next_top_at_mark_start();
   }

@@ -760,7 +760,7 @@ public:
 
   template <class T>
   void verify_liveness(T* p) {
-    T heap_oop = oopDesc::load_heap_oop(p);
+    T heap_oop = oopDesc::load_heap_oop(p); // heap_oop 是一个 oopDesc*
     if (!oopDesc::is_null(heap_oop)) {
       oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
       bool failed = false;
@@ -821,26 +821,35 @@ public:
   }
 
   template <class T>
-  void verify_remembered_set(T* p) {
-    T heap_oop = oopDesc::load_heap_oop(p);
-    if (!oopDesc::is_null(heap_oop)) {
-      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-      bool failed = false;
-      HeapRegion* from = _g1h->heap_region_containing((HeapWord*)p);
-      HeapRegion* to   = _g1h->heap_region_containing(obj);
-      if (from != NULL && to != NULL &&
-          from != to &&
-          !to->isHumongous()) {
-        jbyte cv_obj = *_bs->byte_for_const(_containing_obj);
-        jbyte cv_field = *_bs->byte_for_const(p);
-        const jbyte dirty = CardTableModRefBS::dirty_card_val();
+  //  VerifyRemSetClosure::verify_remembered_set
+  void verify_remembered_set(T* p) { // 对这个oop进行验证
 
-        bool is_bad = !(from->is_young()
-                        || to->rem_set()->contains_reference(p)
+      // 静态方法 搜索 inline oop       oopDesc::load_heap_oop(oop* p) {return *p};
+    T heap_oop = oopDesc::load_heap_oop(p); // oopDesc*
+    if (!oopDesc::is_null(heap_oop)) {
+        // 静态方法 inline oop oopDesc::decode_heap_oop_not_null(oop v) { return v; }
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop); // 搜索 inline oop oopDesc::decode_heap_oop_not_null
+      bool failed = false;
+      // *p = obj
+      //   inline HeapRegion* heap_region_containing(const T addr) const;
+      HeapRegion* from = _g1h->heap_region_containing((HeapWord*)p); // 获取包含指针 p 所在内存地址的堆区域 from
+      // *p
+      HeapRegion* to   = _g1h->heap_region_containing(obj); // 获取包含对象 obj 所在内存地址的堆区域 to，搜索 HeapRegion* G1CollectedHeap::heap_region_containing
+      if (from != NULL && to != NULL &&
+          from != to && // from和to在不同的Region
+          !to->isHumongous()) { // 不是指向一个巨型对象
+            // const jbyte* byte_for_const(const void* p)
+            jbyte cv_obj = *_bs->byte_for_const(_containing_obj);// 这个对象对应的卡表调用byte_for_const以后，返回char*，取值
+            jbyte cv_field = *_bs->byte_for_const(p); // 调用byte_for_const以后，返回char*，取值
+        const jbyte dirty = CardTableModRefBS::dirty_card_val(); // static int dirty_card_val()
+
+        bool is_bad = !(from->is_young() // from来自于young region，肯定没问题
+                        || to->rem_set()->contains_reference(p) // from虽然不是来自于young，但是to region的RSet含有指针p
+                        // 如果并不强制在检查以前flush log buffer
                         || !G1HRRSFlushLogBuffersOnVerify && // buffers were not flushed
-                            (_containing_obj->is_objArray() ?
-                                cv_field == dirty
-                             : cv_obj == dirty || cv_field == dirty));
+                            (_containing_obj->is_objArray() ?  // _containing_obj是当前其所有的field被apply VerifyRemSetClosure的那个对象
+                                cv_field == dirty // 如果是数组，那么field对应的卡片必须标记为脏卡片
+                             : cv_obj == dirty || cv_field == dirty));  // 如果是普通对象，那么cv_obj或者cv_field有一个是脏的
         if (is_bad) {
           MutexLockerEx x(ParGCRareEvent_lock,
                           Mutex::_no_safepoint_check_flag);
@@ -1052,12 +1061,19 @@ void HeapRegion::verify_rem_set(VerifyOption vo, bool* failures) const {
   HeapWord* prev_p = NULL;
   VerifyRemSetClosure vr_cl(g1, vo);
   while (p < top()) {
-    oop obj = oop(p);
+    oop obj = oop(p); // obj 是一个 oopDesc*
     size_t obj_size = block_size(p);
-
-    if (!g1->is_obj_dead_cond(obj, this, vo)) {
+    /**
+     *  * 给定该对象以及该对象所属的区域，确定该对象是否已死亡。 一个对象已死亡，当且仅当
+   *    a) 这个对象是在prev ntams以前分配的，
+   *       **并且**
+   *    b) 这个对象在上次的标记位图中没有被标记
+     */
+    if (!g1->is_obj_dead_cond(obj, this, vo)) { // 如果不是死亡对象
       if (obj->is_oop()) {
         vr_cl.set_containing_obj(obj);
+        // 在这个对象上运行 VerifyRemSetClosure::verify_remembered_set 以验证RSet,
+        // 其实是遍历这个对象所有的Filed，然后逐个Filed验证RSet
         obj->oop_iterate_no_header(&vr_cl);
 
         if (vr_cl.failures()) {
@@ -1081,6 +1097,7 @@ void HeapRegion::verify_rem_set(VerifyOption vo, bool* failures) const {
 
 void HeapRegion::verify_rem_set() const {
   bool failures = false;
+  // 搜索 void HeapRegion::verify_rem_set(VerifyOption vo, bool* failures)
   verify_rem_set(VerifyOption_G1UsePrevMarking, &failures);
   guarantee(!failures, "HeapRegion RemSet verification failed");
 }

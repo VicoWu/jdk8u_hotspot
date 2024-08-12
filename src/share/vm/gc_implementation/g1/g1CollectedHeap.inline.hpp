@@ -129,7 +129,7 @@ inline HeapRegion* G1CollectedHeap::heap_region_containing_raw(const T addr) con
 
 template <class T>
 inline HeapRegion* G1CollectedHeap::heap_region_containing(const T addr) const {
-  HeapRegion* hr = heap_region_containing_raw(addr);
+  HeapRegion* hr = heap_region_containing_raw(addr); // 搜索 HeapRegion* G1CollectedHeap::heap_region_containing_raw
   if (hr->continuesHumongous()) {
     return hr->humongous_start_region();
   }

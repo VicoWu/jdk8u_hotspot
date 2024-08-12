@@ -43,18 +43,18 @@ CardTableRS::CardTableRS(MemRegion whole_heap,
   _cur_youngergen_card_val(youngergenP1_card),
   _regions_to_iterate(max_covered_regions - 1)
 {
-#if INCLUDE_ALL_GCS
-  if (UseG1GC) {
+#if INCLUDE_ALL_GCS // 是否包含所有的垃圾回收期代码，一般是enable的
+  if (UseG1GC) { // 如果使用G1GC，那么bs就使用G1SATBCardTableLoggingModRefBS
       _ct_bs = new G1SATBCardTableLoggingModRefBS(whole_heap,
                                                   max_covered_regions);
   } else {
     _ct_bs = new CardTableModRefBSForCTRS(whole_heap, max_covered_regions);
   }
 #else
-  _ct_bs = new CardTableModRefBSForCTRS(whole_heap, max_covered_regions);
+  _ct_bs = new CardTableModRefBSForCTRS(whole_heap, max_covered_regions); // 构造卡表的写屏障集合
 #endif
   _ct_bs->initialize();
-  set_bs(_ct_bs);
+  set_bs(_ct_bs); // 将barrierset设置为 G1SATBCardTableLoggingModRefBS
   _last_cur_val_in_gen = NEW_C_HEAP_ARRAY3(jbyte, GenCollectedHeap::max_gens + 1,
                          mtGC, CURRENT_PC, AllocFailStrategy::RETURN_NULL);
   if (_last_cur_val_in_gen == NULL) {

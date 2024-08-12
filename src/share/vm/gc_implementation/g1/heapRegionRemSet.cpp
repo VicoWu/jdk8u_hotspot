@@ -38,7 +38,7 @@
 
 PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 /**
- * 细粒度PRT(Per Region Table)，每一个Region对象会有一个PRT对象与之一一对应
+ * 细粒度PRT(Per Region Table)，每一个HeapRegion对象会有一个PRT对象与之一一对应
  * 是一个双向链表，链表中的每一个节点是一个HeapRegion，每个节点中存放了一个key是card index的位图。向细粒度PRT中添加引用为：
  */
 class PerRegionTable: public CHeapObj<mtGC> {
@@ -204,7 +204,7 @@ public:
     return sizeof(PerRegionTable) + _bm.size_in_words() * HeapWordSize;
   }
 
-  // Requires "from" to be in "hr()".
+  // 这是方法 PerRegionTable::contains_reference
   bool contains_reference(OopOrNarrowOopStar from) const {
     assert(hr()->is_in_reserved(from), "Precondition.");
     size_t card_ind = pointer_delta(from, hr()->bottom(),
@@ -338,7 +338,7 @@ OtherRegionsTable::OtherRegionsTable(HeapRegion* hr, Mutex* m) :
 }
 
 /**
- * link_to_all其实就是添加到OtherRegionsTable对象所维护的一个全局双向链表中去，与哈希表无关
+ * link_to_all其实就是将这个PerRegionTable添加到OtherRegionsTable对象所维护的一个全局双向链表中去，与哈希表无关
  * @param prt
  */
 void OtherRegionsTable::link_to_all(PerRegionTable* prt) {
@@ -522,10 +522,10 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
    * 调用OtherRegionsTable::find_region_table，其实就是在细粒度的PRT(_fine_grain_regions**)中尝试查找这个from_hr是否存在
    */
   PerRegionTable* prt = find_region_table(ind, from_hr); // 搜索细粒度索引表_fine_grain_regions，看看是否找到对应的PerRegionTable
-  if (prt == NULL) { // 没找到
+  if (prt == NULL) { // 没找到这样一个PerRegionTable
     MutexLockerEx x(_m, Mutex::_no_safepoint_check_flag);
     // Confirm that it's really not there...
-    prt = find_region_table(ind, from_hr);
+    prt = find_region_table(ind, from_hr); // 加锁然后确认
     if (prt == NULL) { // 在细粒度索引中并没有找到
 
       uintptr_t from_hr_bot_card_index =
@@ -536,7 +536,7 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
              "Must be in range.");
       // 如果没有找到，并且我们enable了稀疏索引，那么就将这个region添加到稀疏索引中
       if (G1HRRSUseSparseTable &&  // G1HRRSUseSparseTable是是否使用稀疏索引的标志位
-          _sparse_table.add_card(from_hrm_ind, card_index)) { //  向稀疏PRT中添加卡片成功, 搜索SparsePRT::add_card查看方法的具体实现
+          _sparse_table.add_card(from_hrm_ind, card_index)) { //  向稀疏PRT中添加卡片成功, 搜索 SparsePRT::add_card 查看方法的具体实现
           // add_card()返回true，说明添加成功，并没有overflow
         if (G1RecordHRRSOops) {
           HeapRegionRemSet::record(hr(), from);
@@ -552,7 +552,7 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
           gclog_or_tty->print_cr("   added card to sparse table.");
         }
         assert(contains_reference_locked(from), err_msg("We just added " PTR_FORMAT " to the Sparse table", from));
-        // 可以看到，如果前面的add_card()返回了true，这个方法就直接返回了，即引用信息添加到稀疏索引中
+        // 可以看到，如果前面的add_card()返回了true，这个方法就直接返回了，即引用信息添加到稀疏索引中，就不会添加到细粒度索引了
         return;
       } else {
         if (G1TraceHeapRegionRememberedSet) {
@@ -562,7 +562,6 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
         }
       }
       // 并没有enable G1HRRSUseSparseTable，或者，尽管enable了，但是 并没有成功添加引用关系到稀疏索引表(RSHashTable存满了）
-
       // 向细粒度PRT索引中添加这个Region的信息。需要关注这个哈希表是否已经满了
       if (_n_fine_entries == _max_fine_entries) { // 当前细粒度哈希索引里面entry的数量已经等于最大entry的数量
           /**
@@ -575,7 +574,7 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
         prt->init(from_hr, false /* clear_links_to_all_list */);
       } else {// 细粒度的哈希索引还没有满，那么就重新申请一个PerRegionTable对象
         prt = PerRegionTable::alloc(from_hr); // 为这个From HeapRegion分配一个PerRegionTable对象
-        link_to_all(prt); // 调用OtherRegionsTable::link_to_all， 将这个HeapRegion放入OtherRegionsTable所维护的PerRegionTable对象的双向链表中
+        link_to_all(prt); // 调用 OtherRegionsTable::link_to_all， 将这个 PerRegionTable 放入OtherRegionsTable所维护的PerRegionTable对象的双向链表中
       }
 
       // 将新申请的或者初始化的细粒度PerRegionTable加入细粒度PerRegionTable表集合中
@@ -646,7 +645,7 @@ PerRegionTable*
 OtherRegionsTable::find_region_table(size_t ind, HeapRegion* hr) const {
   assert(0 <= ind && ind < _max_fine_entries, "Preconditions.");
   PerRegionTable* prt = _fine_grain_regions[ind];
-  while (prt != NULL && prt->hr() != hr) {
+  while (prt != NULL && prt->hr() != hr) { // 通过链地址法，在冲突链中查找
     prt = prt->collision_list_next();
   }
   // Loop postcondition is the method postcondition.
@@ -941,6 +940,13 @@ bool OtherRegionsTable::contains_reference(OopOrNarrowOopStar from) const {
   return contains_reference_locked(from);
 }
 
+/**
+ * 流程: 代码首先通过 coarse map 进行快速检查，如果没有找到相应记录，则查找更精细的区域表 (PerRegionTable) 或稀疏表 (sparse table)。
+        目的: 这一系列检查确保了在垃圾回收过程中能够准确地找到和处理跨区域的引用。
+        返回值: 如果引用 from 被记录在任何一个检查的表中，函数返回 true；否则返回 false。
+ * @param from
+ * @return
+ */
 bool OtherRegionsTable::contains_reference_locked(OopOrNarrowOopStar from) const {
   HeapRegion* hr = _g1h->heap_region_containing_raw(from);
   RegionIdx_t hr_ind = (RegionIdx_t) hr->hrm_index();

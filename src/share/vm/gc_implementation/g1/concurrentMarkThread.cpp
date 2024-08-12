@@ -211,7 +211,7 @@ void ConcurrentMarkThread::run() {
         CMCleanUp cl_cl(_cm);
         VM_CGC_Operation op(&cl_cl, "GC cleanup", false /* needs_pll */);
         VMThread::execute(&op);
-      } else {
+      } else {  // 如果已经被Full GC终止，则跳过清理操作
         // We don't want to update the marking status if a GC pause
         // is already underway.
         SuspendibleThreadSetJoiner sts;
@@ -319,7 +319,7 @@ void ConcurrentMarkThread::run() {
     // called System.gc() with +ExplicitGCInvokesConcurrent).
     {
       SuspendibleThreadSetJoiner sts;
-      g1h->increment_old_marking_cycles_completed(true /* concurrent */);
+      g1h->increment_old_marking_cycles_completed(true /* concurrent */); // 更新已经完成的Full GC的数量，同时在锁 FullGCCount_lock 上通知，通知那些在锁FullGCCount_lock上等待的操作，比如，System.gc()
       g1h->register_concurrent_cycle_end();
     }
   }

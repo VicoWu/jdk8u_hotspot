@@ -58,13 +58,16 @@ public:
     UnrollFactor  =  4
   };
 private:
+  // typedef int RegionIdx_t;   // needs to hold [ 0..max_regions() )
   RegionIdx_t _region_ind; // 当前的这个SparsePRTEntry对应的Region的索引
-  int         _next_index;
+  int         _next_index; //  这个SparsePRTEntry在对应的RSHashTable的entries中的下一个索引值
+  // typedef int CardIdx_t;     // needs to hold [ 0..CardsPerRegion )
   CardIdx_t   _cards[1]; // 当前的这个SparsePRTEntry对应的卡片索引的列表
   // WARNING: Don't put any data members beyond this line. Card array has, in fact, variable length.
   // It should always be the last data member.
 public:
   // Returns the size of the entry, used for entry allocation.
+  // 静态方法，返回整个 SparsePRTEntry 的实际大小，考虑到了可变数组_cards的实际大小，但是cards_num()也是静态方法，这意味着SparsePRTEntry类的所有对象的cards_num()都相同
   static size_t size() { return sizeof(SparsePRTEntry) + sizeof(CardIdx_t) * (cards_num() - 1); }
   // Returns the size of the card array.
   // 静态方法，返回卡片数量
@@ -127,9 +130,9 @@ class RSHashTable : public CHeapObj<mtGC> {
   size_t _occupied_cards; // cards的数量
 
   SparsePRTEntry* _entries;
-  int* _buckets;
-  int  _free_region;
-  int  _free_list;
+  int* _buckets;  //这个链地址法的桶结构，桶中存放的是一个index，这是这个桶下面的第一个SparsePRTEntry在_entries中的偏移量
+  int  _free_region; // 当前第一个连续空闲的SparsePRTEntry区域的index
+  int  _free_list; // 空闲的SparsePRTEntry链表的第一个SparsePRTEntry节点在_entries中的索引值
 
   // Requires that the caller hold a lock preventing parallel modifying
   // operations, and that the the table be less than completely full.  If
@@ -179,7 +182,8 @@ public:
   size_t occupied_entries() const { return _occupied_entries; }
   size_t occupied_cards() const   { return _occupied_cards;   } // void RSHashTable::add_entry(SparsePRTEntry* e) {
   size_t mem_size() const;
-
+  // SparsePRTEntry::size()返回的是一个SparsePRTEntry对象所占用的内存大小(字节数)
+  // 根据输入的索引值i，返回这个RSHashTable的第i个SparsePRTEntry的对象指针
   SparsePRTEntry* entry(int i) const { return (SparsePRTEntry*)((char*)_entries + SparsePRTEntry::size() * i); }
 
   void print();
@@ -228,10 +232,10 @@ class SparsePRT VALUE_OBJ_CLASS_SPEC {
   RSHashTable* _cur; // 搜索class RSHashTable获取它的定义，它的key是SparsePRTEntry
   RSHashTable* _next; // 扩展以后的RSHashTable
 
-  HeapRegion* _hr; // 当前SparsePRT对应的HeapRegion
+  HeapRegion* _hr; // 反向引用，当前SparsePRT对应的HeapRegion
 
   enum SomeAdditionalPrivateConstants {
-    InitialCapacity = 16
+    InitialCapacity = 16 // 稀疏表的RSHashTable _next的初始大小
   };
 
   void expand();

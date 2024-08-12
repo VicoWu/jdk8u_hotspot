@@ -67,7 +67,7 @@ bool SparsePRTEntry::contains_card(CardIdx_t card_index) const {
   }
 #else
   for (int i = 0; i < cards_num(); i++) {
-    if (_cards[i] == card_index) return true;
+    if (_cards[i] == card_index) return true; // 在一个SparsePRTEntry中遍历每一个卡片，看看是否等于card_index
   }
 #endif
   // Otherwise, we're full.
@@ -156,11 +156,11 @@ void SparsePRTEntry::copy_cards(SparsePRTEntry* e) const {
 
 // ----------------------------------------------------------------------
 
-RSHashTable::RSHashTable(size_t capacity) :
+RSHashTable::RSHashTable(size_t capacity) : // 大小默认是16
   _capacity(capacity), _capacity_mask(capacity-1),
   _occupied_entries(0), _occupied_cards(0),
   _entries((SparsePRTEntry*)NEW_C_HEAP_ARRAY(char, SparsePRTEntry::size() * capacity, mtGC)),
-  _buckets(NEW_C_HEAP_ARRAY(int, capacity, mtGC)),
+  _buckets(NEW_C_HEAP_ARRAY(int, capacity, mtGC)), // 一个大小为16的数组
   _free_list(NullEntry), _free_region(0)
 {
   clear();
@@ -194,14 +194,16 @@ void RSHashTable::clear() {
 }
 
 /**
- * 向稀疏PRT的RSHashTable对象中添加卡片
+ * 向SparkPRT的RSHashTable对象中添加卡片
  * 调用者是从SparsePRT中来的，查看调用者方法 bool SparsePRT::add_card
  * @param region_ind  region的索引
  * @param card_index 卡片对应的卡表索引
  * @return
  */
 bool RSHashTable::add_card(RegionIdx_t region_ind, CardIdx_t card_index) {
-  SparsePRTEntry* e = entry_for_region_ind_create(region_ind); // 根据region_ind获取或者创建对应的HashMap的Entry
+  // 根据region_ind获取或者创建对应的HashMap的SparsePRTEntry,所以，返回值e不应该是null
+  // 一个 SparsePRTEntry 对应了一个HeapRegion，而一个SparsePRTEntry显然含有这个HeapRegion的多个卡片
+  SparsePRTEntry* e = entry_for_region_ind_create(region_ind);
   assert(e != NULL && e->r_ind() == region_ind,
          "Postcondition of call above.");
   /**
@@ -209,7 +211,7 @@ bool RSHashTable::add_card(RegionIdx_t region_ind, CardIdx_t card_index) {
    *    (比如a.field = c,b.field = c， c是当前Region, a和b属于同一个Region的不同卡片)，
    *    因此，通过region_ind获取SparsePRTEntry，然后将对应的索引添加到这个entry中。这就如果一个链地址法
    */
-  SparsePRTEntry::AddCardResult res = e->add_card(card_index);
+  SparsePRTEntry::AddCardResult res = e->add_card(card_index); // 向这个SparsePRTEntry中添加对应的卡片索引
   if (res == SparsePRTEntry::added) _occupied_cards++; //返回了added，因此添加计数加1
 #if SPARSE_PRT_VERBOSE
   gclog_or_tty->print_cr("       after add_card[%d]: valid-cards = %d.",
@@ -221,9 +223,9 @@ bool RSHashTable::add_card(RegionIdx_t region_ind, CardIdx_t card_index) {
 }
 
 bool RSHashTable::get_cards(RegionIdx_t region_ind, CardIdx_t* cards) {
-  int ind = (int) (region_ind & capacity_mask());
+  int ind = (int) (region_ind & capacity_mask()); // 取模，模的大小是16
   int cur_ind = _buckets[ind];
-  SparsePRTEntry* cur;
+  SparsePRTEntry* cur; // 在数组下面，挂载了
   while (cur_ind != NullEntry &&
          (cur = entry(cur_ind))->r_ind() != region_ind) {
     cur_ind = cur->next_index();
@@ -273,14 +275,21 @@ bool RSHashTable::delete_entry(RegionIdx_t region_ind) {
   return true;
 }
 
+/**
+ * 查找From region的region_ind对应的SparsePRTEntry(还没有到进一步查找card的那一步)
+ * @param region_ind
+ * @return
+ */
 SparsePRTEntry*
 RSHashTable::entry_for_region_ind(RegionIdx_t region_ind) const {
   assert(occupied_entries() < capacity(), "Precondition");
-  int ind = (int) (region_ind & capacity_mask());
-  int cur_ind = _buckets[ind];
+  int ind = (int) (region_ind & capacity_mask());// 取模
+  int cur_ind = _buckets[ind];  // 获取这个桶中存放的
   SparsePRTEntry* cur;
+  // 关于entry()，搜索 SparsePRTEntry* entry(int i)
   while (cur_ind != NullEntry &&
-         (cur = entry(cur_ind))->r_ind() != region_ind) {
+         (cur = entry(cur_ind))->r_ind() != region_ind) {  // entry(cur_ind)返回RSHashTable的entries中的第cur_ind个 SparsePRTEntry，然后看一下这个 SparsePRTEntry 的RegionID是否就是要查找的ID
+      // 如果不是，那么就通过SparsePRTEntry的next_index往下链接
     cur_ind = cur->next_index();
   }
 
@@ -294,16 +303,16 @@ RSHashTable::entry_for_region_ind(RegionIdx_t region_ind) const {
 
 SparsePRTEntry*
 RSHashTable::entry_for_region_ind_create(RegionIdx_t region_ind) {
-  SparsePRTEntry* res = entry_for_region_ind(region_ind); // 找到这个region对应的SparsePRTEntry
+  SparsePRTEntry* res = entry_for_region_ind(region_ind); // 找到这个region对应的SparsePRTEntry，搜 RSHashTable::entry_for_region_ind
   if (res == NULL) { // 如果没有找到，就尝试创建一个entry
     int new_ind = alloc_entry();
     assert(0 <= new_ind && (size_t)new_ind < capacity(), "There should be room.");
-    res = entry(new_ind);
-    res->init(region_ind);
+    res = entry(new_ind); // 搜索 SparsePRTEntry* entry(int i)
+    res->init(region_ind); // 为这个Region初始化这个SparsePRTEntry
     // Insert at front.
-    int ind = (int) (region_ind & capacity_mask());
-    res->set_next_index(_buckets[ind]);
-    _buckets[ind] = new_ind;
+    int ind = (int) (region_ind & capacity_mask()); // 获取这个region对应的桶的index
+    res->set_next_index(_buckets[ind]); // 设置自己的下一个SparsePRTEntry在entry中的索引
+    _buckets[ind] = new_ind; // 更新这个桶下面挂载的第一个 SparsePRTEntry 的index，获取了这个SparsePRTEntry，就可以通过它的next指针获取这个bucket下面所有的SparsePRTEntry
     _occupied_entries++; // entry数量加1.注意，是etnries的数量加1，不是cards的数量+1， cards数量+1是在方法add_entry中进行的
   }
   return res;
@@ -311,22 +320,27 @@ RSHashTable::entry_for_region_ind_create(RegionIdx_t region_ind) {
 
 int RSHashTable::alloc_entry() {
   int res;
-  if (_free_list != NullEntry) {
+  // 随着不断分配的进行，整个RSHashTable的usage越来越大，随着释放的进行，空闲列表也越来越多，很多分配都开始从空闲列表中进行
+  if (_free_list != NullEntry) { // _free_list大表当前entry()中的空闲条目的索引值
     res = _free_list;
-    _free_list = entry(res)->next_index();
-    return res;
-  } else if ((size_t) _free_region+1 < capacity()) {
+    _free_list = entry(res)->next_index(); // 更新_free_list
+    return res; // 返回entry中的空闲条目索引
+  } else if ((size_t) _free_region+1 < capacity()) { // 没有free节点的时候，那就自行往后递增，当_free_region耗尽的时候，只要capacity()是够用的，那么基本上都会从_free_list中取到
     res = _free_region;
     _free_region++;
     return res;
   } else {
-    return NullEntry;
+    return NullEntry; // 没找到
   }
 }
 
+/**
+ * 当且仅当释放一个entry的时候，_free_list才会不为空
+ * @param fi
+ */
 void RSHashTable::free_entry(int fi) {
-  entry(fi)->set_next_index(_free_list);
-  _free_list = fi;
+  entry(fi)->set_next_index(_free_list); //待释放的这个SparsePRT的next_index设置为前一个_free_list，相当于维护了一个free_list链表，释放的时候是把最新的释放节点添加到链表头部
+  _free_list = fi; //设置为头结点
 }
 
 void RSHashTable::add_entry(SparsePRTEntry* e) {
@@ -391,9 +405,15 @@ bool RSHashTableIter::has_next(size_t& card_index) {
   return false;
 }
 
+/**
+ * 在RSHashTable中查找对应的包含了对应的card_index的Region的SparsePRTEntry
+ * @param region_index
+ * @param card_index
+ * @return
+ */
 bool RSHashTable::contains_card(RegionIdx_t region_index, CardIdx_t card_index) const {
   SparsePRTEntry* e = entry_for_region_ind(region_index);
-  return (e != NULL && e->contains_card(card_index));
+  return (e != NULL && e->contains_card(card_index)); // 搜索 SparsePRTEntry::contains_card
 }
 
 size_t RSHashTable::mem_size() const {
@@ -533,8 +553,8 @@ size_t SparsePRT::mem_size() const {
 /**
  * 向稀疏PRT中添加卡片
  * 这个方法是在维护对象的引用关系的时候触发的，查看方法 OtherRegionsTable::add_reference
- * @param region_id
- * @param card_index
+ * @param region_id 这个Region的region_id
+ * @param card_index 卡片索引，即这个Region中的oop相对于这个Region的bottom的卡片索引
  * @return
  */
 bool SparsePRT::add_card(RegionIdx_t region_id, CardIdx_t card_index) {
@@ -546,7 +566,7 @@ bool SparsePRT::add_card(RegionIdx_t region_id, CardIdx_t card_index) {
     expand(); // 当前已经占用的entry已经用到了capacity的一半，因此进行扩展
   }
   /**
-   * 将这个from_region_ind 和 对应的卡片索引添加到RSHashTable中，
+   * 将这个from_region_ind 和 对应的卡片索引添加到to region的OtherRegionsTable的SparkPRT的RSHashTable _next中，
    *  搜索bool RSHashTable::add_card
    */
   return _next->add_card(region_id, card_index);

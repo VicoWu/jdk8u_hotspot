@@ -130,7 +130,7 @@ public:
     _try_claimed(false)
   {
     _g1h = G1CollectedHeap::heap();
-    _bot_shared = _g1h->bot_shared(); // 全局的 G1BlockOffsetSharedArray对象
+    _bot_shared = _g1h->bot_shared(); // 全局的 G1BlockOffsetSharedArray 对象
     _ct_bs = _g1h->g1_barrier_set();
     _block_size = MAX2<int>(G1RSetScanBlockSize, 1);
   }
@@ -401,11 +401,15 @@ void G1RemSet::updateRS(DirtyCardQueue* into_cset_dcq, uint worker_i) {
   _g1->iterate_dirty_card_closure(&into_cset_update_rs_cl, into_cset_dcq, false, worker_i);
 }
 
+/**
+ * 清空所有的HeapRegionRememberSet
+ */
 void G1RemSet::cleanupHRRS() {
   HeapRegionRemSet::cleanup();
 }
 
 /**
+ * 静态方法
  * 搜 G1RootProcessor::scan_remembered_sets 查看调用位置，而G1RootProcessor::scan_remembered_sets是在evacuate_root 中被调用的，
  *   即这个方法做的事情就是以转移专用记忆集合RSet为根进行扫描
  */

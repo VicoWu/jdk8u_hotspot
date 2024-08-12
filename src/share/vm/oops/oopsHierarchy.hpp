@@ -72,7 +72,6 @@ typedef class     typeArrayOopDesc*            typeArrayOop;
 class Thread;
 class PromotedObject;
 
-
 class oop {
   oopDesc* _o;
 
@@ -120,6 +119,8 @@ public:
 #ifndef SOLARIS
   operator void* () const volatile    { return (void *)obj(); }
 #endif
+// oop  -> HeapWord*
+// oopDesc* -> HeapWord*
   operator HeapWord* () const         { return (HeapWord*)obj(); }
   operator oopDesc* () const volatile { return obj(); }
   operator intptr_t* () const         { return (intptr_t*)obj(); }

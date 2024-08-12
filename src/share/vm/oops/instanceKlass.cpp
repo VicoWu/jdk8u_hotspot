@@ -2209,7 +2209,7 @@ template <class T> void assert_nothing(T *p) {}
      is nonstatic_oop_map_size == 1. */                                  \
   OopMapBlock* map           = start_of_nonstatic_oop_maps();            \
   /**
- *   JVM维护了一个全局的
+ *  JVM维护了一个全局的
     OOpMap， 用于标记栈里面的数是立即数还是值。 每一个
     InstanceKlass都维护了一个Map（ OopMapBlock） 用于标记Java类
     里面的字段到底是OOP还是int这样的立即数类型。 这里面的字段Klass
@@ -2235,7 +2235,7 @@ template <class T> void assert_nothing(T *p) {}
     while (map < end_map) {                                              \
       InstanceKlass_SPECIALIZED_OOP_ITERATE(oop,                         \
         obj->obj_field_addr<oop>(map->offset()), map->count(),           \
-        do_oop, assert_fn)                                               \
+        do_oop, assert_fn)          // 遍历这个map，在map的每一个field中调用  InstanceKlass_SPECIALIZED_OOP_ITERATE                                \
       ++map;                                                             \
     }                                                                    \
   }                                                                      \

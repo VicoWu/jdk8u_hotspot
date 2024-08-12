@@ -86,6 +86,7 @@ CardTableModRefBS::CardTableModRefBS(MemRegion whole_heap,
   }
 }
 
+// G1GC中使用的是 G1SATBCardTableModRefBS的实现
 void CardTableModRefBS::initialize() {
   _guard_index = cards_required(_whole_heap.word_size()) - 1;
   _last_valid_index = _guard_index - 1;
@@ -118,8 +119,9 @@ void CardTableModRefBS::initialize() {
   // then add it to byte_map_base, i.e.
   //
   //   _byte_map = byte_map_base + (uintptr_t(low_bound) >> card_shift)
-  _byte_map = (jbyte*) heap_rs.base();
+  _byte_map = (jbyte*) heap_rs.base(); // 卡表的起始地址
   byte_map_base = _byte_map - (uintptr_t(low_bound) >> card_shift);
+  // 搜索 jbyte* byte_for(const void* p) const
   assert(byte_for(low_bound) == &_byte_map[0], "Checking start of map");
   assert(byte_for(high_bound-1) <= &_byte_map[_last_valid_index], "Checking end of map");
 

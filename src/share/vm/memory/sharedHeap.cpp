@@ -102,6 +102,7 @@ SharedHeap::StrongRootsScope::StrongRootsScope(SharedHeap* heap, bool activate)
   }
 }
 
+// 在G1CollectedHeap中也会调用
 void SharedHeap::set_barrier_set(BarrierSet* bs) {
   _barrier_set = bs;
   // Cached barrier set for fast access in oops

@@ -1147,6 +1147,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_slow(size_t word_size,
 
 /**
  * 给大对象分配内存。这里是在非安全点进行大对象分配
+ * 在这个方法内部，会尝试进行young gc，不会进行full gc
  * 给小对象分配内存是在方法attempt_allocation_slow()中
  * @param word_size
  * @param gc_count_before_ret
@@ -1179,8 +1180,8 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
   // 每一次大对象的分配以前，都需要检查如果大对象分配了以后是否导致需要进行并发标记。
   // 之所以在分配以前就检查，是为了避免我们在进行gc的时候还需要track这个新分配对象的内存
   if (g1_policy()->need_to_start_conc_mark("concurrent humongous allocation",
-                                           word_size)) {
-
+                                           word_size)) { //  如果当前没有处在一个标记周期
+    // 当前没有marking cycle
     collect(GCCause::_g1_humongous_allocation); // 进行回收，这个回收的原因是大对象的分配
   }
 
@@ -1257,6 +1258,7 @@ HeapWord* G1CollectedHeap::attempt_allocation_humongous(size_t word_size,
         *gc_count_before_ret = total_collections();
         return NULL;
       }
+      // 执行到这里，就会重试
     } else {
         // 不应该try gc
       if (*gclocker_retry_count_ret > GCLockerRetryAllocationCount) {
@@ -1525,12 +1527,12 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       // Abandon current iterations of concurrent marking and concurrent
       // refinement, if any are in progress. We have to do this before
       // wait_until_scan_finished() below.
-      concurrent_mark()->abort();
+      concurrent_mark()->abort(); // 中断并发标记
 
       // Make sure we'll choose a new allocation region afterwards.
       _allocator->release_mutator_alloc_region();
       _allocator->abandon_gc_alloc_regions();
-      g1_rem_set()->cleanupHRRS();
+      g1_rem_set()->cleanupHRRS(); // 清空 HeapRegionRemSet
 
       // We should call this after we retire any currently active alloc
       // regions so that all the ALLOC / RETIRE events are generated
@@ -1682,7 +1684,7 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
              "young list should be empty at this point");
 
       // Update the number of full collections that have been completed.
-      increment_old_marking_cycles_completed(false /* concurrent */);
+      increment_old_marking_cycles_completed(false /* concurrent */); // 更新已经完成的Full GC的数量，同时在锁 FullGCCount_lock 上通知，通知那些在锁FullGCCount_lock上等待的操作，比如，System.gc()
 
       _hrm.verify_optional();
       verify_region_sets_optional();
@@ -2231,13 +2233,15 @@ jint G1CollectedHeap::initialize() {
   _reserved.set_end((HeapWord*)(heap_rs.base() + heap_rs.size()));
 
   // Create the gen rem set (and barrier set) for the entire reserved region.
-  _rem_set = collector_policy()->create_rem_set(_reserved, 2);
-  set_barrier_set(rem_set()->bs());
+  // 创建整个Heap的RSet 搜索 CollectorPolicy::create_rem_set
+  _rem_set = collector_policy()->create_rem_set(_reserved, 2);// CardTableRS
+  //  搜索 CardTableRS::CardTableRS 的构造方法，看到_barrier_set是 G1SATBCardTableLoggingModRefBS
+  set_barrier_set(rem_set()->bs()); // 设置BarrierSet的实现类，可以看到，BarrierSet的实现类来自于RSet
   if (!barrier_set()->is_a(BarrierSet::G1SATBCTLogging)) {
     vm_exit_during_initialization("G1 requires a G1SATBLoggingCardTableModRefBS");
     return JNI_ENOMEM;
   }
-
+  // 搜索 G1SATBCardTableLoggingModRefBS* g1_barrier_set()
   // Also create a G1 rem set.
   _g1_rem_set = new G1RemSet(this, g1_barrier_set());
 
@@ -2680,6 +2684,8 @@ void G1CollectedHeap::increment_old_marking_cycles_completed(bool concurrent) {
   // behind the number of full collections started.
 
   // This is the case for the inner caller, i.e. a Full GC.
+  // 如果是Full GC结束时的调用，concurrent = false
+  // increment_old_marking_cycles_started() 会修改_old_marking_cycles_started的值
   assert(concurrent ||
          (_old_marking_cycles_started == _old_marking_cycles_completed + 1) ||
          (_old_marking_cycles_started == _old_marking_cycles_completed + 2),
@@ -2688,6 +2694,7 @@ void G1CollectedHeap::increment_old_marking_cycles_completed(bool concurrent) {
                  _old_marking_cycles_started, _old_marking_cycles_completed));
 
   // This is the case for the outer caller, i.e. the concurrent cycle.
+  // 如果是并发标记结束时调用
   assert(!concurrent ||
          (_old_marking_cycles_started == _old_marking_cycles_completed + 1),
          err_msg("for outer caller (concurrent cycle): "
@@ -2709,7 +2716,7 @@ void G1CollectedHeap::increment_old_marking_cycles_completed(bool concurrent) {
   // System.gc() with (with ExplicitGCInvokesConcurrent set or not)
   // and it's waiting for a full GC to finish will be woken up. It is
   // waiting in VM_G1IncCollectionPause::doit_epilogue().
-  FullGCCount_lock->notify_all();
+  FullGCCount_lock->notify_all(); // 假如调用System.gc()，需要通过这把锁等待Full GC完成，因此在这里通知
 }
 
 void G1CollectedHeap::register_concurrent_cycle_start(const Ticks& start_time) {
@@ -2799,7 +2806,7 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
       old_marking_count_before = _old_marking_cycles_started;// 暂时保存当前的G1CollectedHeap中的_old_marking_cycles_started
     }
     /**
-     * 根据gc cause的不同，确定是否需要进行需要进行并发标记的并发full gc
+     * 根据gc cause的不同，确定是否需要进行需要进行并发标记
      * 如果是用户调用system.gc，或者是刚离开关键区，并且用户通过
      *      GCLockerInvokesConcurrent或者ExplicitGCInvokesConcurrent表示都希望在这种情况下触发初始标记，那么就构造一个需要进行初始标记的gc pause
      * 如果返回true，比如回收的原因是当前分配了大对象，那么就调度一次顺道进行初始标记的gc
@@ -2830,19 +2837,19 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
            * _old_marking_cycles_started 没有发生变化，搜索方法G1CollectedHeap的成员方法 increment_old_marking_cycles_started
            */
         if (old_marking_count_before == _old_marking_cycles_started) {
-          retry_gc = op.should_retry_gc(); // 读取op的_should_retry标记，获取是否需要重试，在while循环中会判断retry_gc
+          retry_gc = op.should_retry_gc(); // 读取op的_should_retry标记，获取是否需要重试，在while循环中会判断retry_gc。对于大对象分配，不需要retry
         } else {
             /***
-             *  _old_marking_cycles_started已经发生了变化，说明刚刚发生了一次full gc不用重试了
+             *  _old_marking_cycles_started已经发生了变化，说明刚刚发生了一次full gc,不用重试了
              */
           // A Full GC happened while we were trying to schedule the
           // initial-mark GC. No point in starting a new cycle given
           // that the whole heap was collected anyway.
         }
 
-        if (retry_gc) { // 如果需要
+        if (retry_gc) { // 如果需要重试，必须等待关键区的线程清空并且没有在关键区的needs_gc请求
           if (GC_locker::is_active_and_needs_gc()) {
-            GC_locker::stall_until_clear(); // 循环等待_needs_gc清空
+            GC_locker::stall_until_clear(); // 循环等待_needs_gc清空,即GC_locker结束以后自动执行了gc。搜索 _needs_gc = false
           }
         }
       }
@@ -3784,11 +3791,18 @@ public:
   }
 };
 
+/**
+ * 在某种验证条件下，判断obj是否是死亡对象
+ * @param obj
+ * @param hr
+ * @param vo
+ * @return
+ */
 bool G1CollectedHeap::is_obj_dead_cond(const oop obj,
                                        const HeapRegion* hr,
                                        const VerifyOption vo) const {
   switch (vo) {
-  case VerifyOption_G1UsePrevMarking: return is_obj_dead(obj, hr);
+  case VerifyOption_G1UsePrevMarking: return is_obj_dead(obj, hr); // 搜索 bool is_obj_dead(const oop obj, const HeapRegion* hr)
   case VerifyOption_G1UseNextMarking: return is_obj_ill(obj, hr);
   case VerifyOption_G1UseMarkWord:    return !obj->is_gc_marked();
   default:                            ShouldNotReachHere();
@@ -4010,7 +4024,7 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
   // 仅仅是一次转移暂停，不进行初始标记暂停
   VM_G1IncCollectionPause op(gc_count_before,
                              word_size,
-                             false, //
+                             false, // 不开始一个新的标记周期
                              g1_policy()->max_pause_time_ms(),
                              gc_cause);
 
@@ -4040,7 +4054,7 @@ G1CollectedHeap::doConcurrentMark() {
   MutexLockerEx x(CGC_lock, Mutex::_no_safepoint_check_flag);
   if (!_cmThread->in_progress()) {
     _cmThread->set_started();
-    CGC_lock->notify();
+    CGC_lock->notify(); // 在锁上面等待 ConcurrentMarkThread::sleepBeforeNextCycle
   }
 }
 
@@ -4239,9 +4253,9 @@ G1CollectedHeap::cleanup_surviving_young_words() {
 
 class VerifyRegionRemSetClosure : public HeapRegionClosure {
   public:
-    bool doHeapRegion(HeapRegion* hr) {
-      if (!hr->continuesHumongous()) {
-        hr->verify_rem_set();
+    bool doHeapRegion(HeapRegion* hr) { // VerifyRegionRemSetClosure::doHeapRegion
+      if (!hr->continuesHumongous()) { // 不处理大对象Region
+        hr->verify_rem_set(); // 搜索 HeapRegion::verify_rem_set()
       }
       return false;
     }
@@ -4355,7 +4369,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   assert_at_safepoint(true /* should_be_vm_thread */); // 搜索 #define assert_at_safepoint
   guarantee(!is_gc_active(), "collection is not reentrant");
   // 将_needs_gc设置为true，同时返回is_active()的结果
-  // 当前有现成处于Critical Zone，直接放弃gc。在临界区状态结束以后，会重新立刻调度gc
+  // 当前有线程处于Critical Zone，直接放弃gc。在临界区状态结束以后，会重新立刻调度gc
   if (GC_locker::check_active_before_gc()) {
     return false;
   }
@@ -4378,15 +4392,16 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // for the duration of this pause.
     /**
      *  G1CollectorPolicy的成员方法
-     * 这个方法在转移暂停开始的时候被调用，如果上一轮的并发标记已经结束，
-     * 并且_initiate_conc_mark_if_possible是true，
-     * 那么_during_initial_mark_pause就会被设置为True，这样，就可以开始一个新的标记轮回
+     * ，如果上一轮的并发标记已经结束，
+     * 并且_initiate_conc_mark这个方法在转移暂停开始的时候被调用_if_possible是true，
+     * 那么 _during_initial_mark_pause 就会被设置为True，这样，就可以开始一个新的标记轮回
      **/
   g1_policy()->decide_on_conc_mark_initiation();
 
   // 如果当前正在进行初始标记（g1_policy()->during_initial_mark_pause() = true），
   // 并且正在进行mixed gc(g1_policy()->gcs_are_young() == false()),那么assert将失败
   // We do not allow initial-mark to be piggy-backed on a mixed GC.
+  // 初始标记只能被young gc所借道
   assert(!g1_policy()->during_initial_mark_pause() ||
           g1_policy()->gcs_are_young(), "sanity")-;
 
@@ -4403,10 +4418,11 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   // Inner scope for scope based logging, timers, and stats collection
   {
     EvacuationInfo evacuation_info;
-
+    // 这是一个初始标记暂停
     if (g1_policy()->during_initial_mark_pause()) {
       // We are about to start a marking cycle, so we increment the
       // full collection counter.
+      // full gc和初始标记暂停的时候，都会增加_old_marking_cycles_started的值，标记初始标记和full gc的次数
       increment_old_marking_cycles_started();
       register_concurrent_cycle_start(_gc_timer_stw->gc_start());
     }
@@ -4418,6 +4434,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
     uint active_workers = AdaptiveSizePolicy::calc_active_workers(workers()->total_workers(),
                                                                   workers()->active_workers(),
                                                                   Threads::number_of_non_daemon_threads());
+    // 只有当UseDynamicNumberOfGCThreads，active_workers才有可能不等于total_workers
     assert(UseDynamicNumberOfGCThreads ||
            active_workers == workers()->total_workers(),
            "If not dynamic should be using all the  workers");
@@ -4462,7 +4479,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
           gclog_or_tty->print_cr("[Verifying RemSets before GC]");
         }
         VerifyRegionRemSetClosure v_cl;
-        heap_region_iterate(&v_cl);
+        heap_region_iterate(&v_cl); // 在每一个Region上调用 HeapRegion::verify_rem_set
       }
 
       verify_before_gc();

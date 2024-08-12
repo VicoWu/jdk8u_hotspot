@@ -2402,13 +2402,15 @@ void ConcurrentMark::completeCleanup() {
  * 调用者 void ConcurrentMark::weakRefsWork
  * 判断这个object是否是存活的，判断的依据并不是依赖 prev_tams，而是本次的next_tams，因为，
  *      这个方法的调用是在本轮并发标记刚刚结束的时候进行，因此完全可以依赖本轮刚刚完成的标记
+ *      地址不为空，并且，（这个obj不在）
  * @param obj
  * @return
  */
 bool G1CMIsAliveClosure::do_object_b(oop obj) {
   HeapWord* addr = (HeapWord*)obj;
+  // 对象的地址有效，并且， 对象要么不在G1堆内，要么在堆内但不“异常”（即对象有效且存活），则返回 true。否则返回 false。
   return addr != NULL &&
-         (!_g1->is_in_g1_reserved(addr) // 是否在正常的的heap区域
+         (!_g1->is_in_g1_reserved(addr) // 是否在正常的的heap区域（注意，这里并不是指在G1对内的预留区域，而是指在G1的堆内）
          || !_g1->is_obj_ill(obj)); //  搜索 G1CollectedHeap::is_obj_ill()
 }
 
@@ -3617,6 +3619,7 @@ void ConcurrentMark::print_stats() {
   }
 }
 
+// 终止并发标记过程, 比如在Full GC发生的时候
 // abandon current marking iteration due to a Full GC
 void ConcurrentMark::abort() {
   // Clear all marks in the next bitmap for the next marking cycle. This will allow us to skip the next

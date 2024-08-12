@@ -423,8 +423,8 @@ protected:
   // Concurrent marking support structures
   CMBitMap                _markBitMap1;
   CMBitMap                _markBitMap2;
-  CMBitMapRO*             _prevMarkBitMap; // ConcurrentMark的全局变量，已经完成的mark bitmap
-  CMBitMap*               _nextMarkBitMap; // ConcurrentMark的全局变量，正在进行构建的mark bitmap
+  CMBitMapRO*             _prevMarkBitMap; // ConcurrentMark的全局变量，上次标记周期所完成的mark bitmap
+  CMBitMap*               _nextMarkBitMap; // ConcurrentMark的全局变量，当前标记周期正在进行构建的mark bitmap
 
   BitMap                  _region_bm;
   BitMap                  _card_bm;

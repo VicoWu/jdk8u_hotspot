@@ -212,7 +212,7 @@ G1SATBCardTableLoggingModRefBS::write_ref_field_work(void* field,
                                                      bool release) {
     /**
      * 搜索 jbyte* byte_for(const void* p) const { 查看 byte_for方法
-     * 取出field指针对应的卡片索引值
+     * 取出field指针对应的卡片地址
      */
   volatile jbyte* byte = byte_for(field); // 获取源对象地址，比如a.field = b ， 那么 byte就是a的地址
   if (*byte == g1_young_gen) { // 对于a.field = b ,假如a在young区，那么不用处理
