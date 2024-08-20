@@ -181,7 +181,7 @@ G1CollectorPolicy::G1CollectorPolicy() :
   // aligned with the region size. To get around this we use the
   // unaligned values for the heap.
   HeapRegion::setup_heap_region_size(InitialHeapSize, MaxHeapSize);
-  HeapRegionRemSet::setup_remset_size();
+  HeapRegionRemSet::setup_remset_size(); // 设置细粒度哈希表、稀疏表的大小
 
   G1ErgoVerbose::initialize();
   if (PrintAdaptiveSizePolicy) {

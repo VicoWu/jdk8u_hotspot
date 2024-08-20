@@ -119,6 +119,11 @@ public:
 // The current scheme that uses sequential unsigned ints will fail only if we have 4b
 // evacuation pauses between two cleanups, which is _highly_ unlikely.
 /**
+ * 在 G1 收集器中，为了确保安全扫描每个HeapRegion的对象，需要跟踪每个HeapRegion中可以安全扫描对象的最高地址，这只是跟GC-Alloc region相关，所以，我们记录了一个时间戳，用来判断这个HeapRegion是否是一个在当前GC期间分配的Region
+ * 如果某个Region在当前垃圾回收周期中分配了内存，其时间戳将更新。如果时间戳是最新的，那么系统将返回一个 scan_top 值，这个值在前一次垃圾回收结束时保存，表示这个区域内对象可以安全扫描的最高地址。
+ * 对于新分配的区域，scan_top 通常等于区域的底部（即最初分配的位置）。
+ */
+/**
  * 由于G1OffsetTableContigSpace是HeapRegion的父类，因此这里的构造函数在HeapRegion中构造（搜索 G1OffsetTableContigSpace）
  */
 class G1OffsetTableContigSpace: public CompactibleSpace {
@@ -248,6 +253,7 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // For a humongous region, region in which it starts.
   HeapRegion* _humongous_start_region;
   // For the start region of a humongous sequence, it's original end().
+  // G1 垃圾收集器仅修改巨大对象的第一个 HeapRegion 的 _orig_end，将其设置为整个巨大对象的结束地址，而后续区域保持各自的 _end 不变
   HeapWord* _orig_end;
 
   // True iff the region is in current collection_set.
@@ -782,8 +788,8 @@ class HeapRegion: public G1OffsetTableContigSpace {
   // card_ptr: if not NULL, and we decide that the card is not young
   // and we iterate over it, we'll clean the card before we start the
   // iteration.
-  HeapWord*
-  oops_on_card_seq_iterate_careful(MemRegion mr,
+  // 搜索 HeapWord* HeapRegion::oops_on_card_seq_iterate_careful
+  HeapWord* oops_on_card_seq_iterate_careful(MemRegion mr,
                                    FilterOutOfRegionClosure* cl,
                                    bool filter_young,
                                    jbyte* card_ptr);

@@ -70,6 +70,7 @@ class ConcurrentG1Refine: public CHeapObj<mtGC> {
   int _thread_threshold_step;
 
   // We delay the refinement of 'hot' cards using the hot card cache.
+  // 缓存中的热卡片不会进行立刻refine
   G1HotCardCache _hot_card_cache;
 
   // Reset the threshold step value based of the current zone boundaries.

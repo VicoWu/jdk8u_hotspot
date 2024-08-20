@@ -173,6 +173,7 @@ public:
 
   void add_entry(SparsePRTEntry* e);
 
+  // 具体实现搜索 SparsePRTEntry* RSHashTable::get_entry(RegionIdx_t region_ind)
   SparsePRTEntry* get_entry(RegionIdx_t region_id);
 
   void clear();
@@ -317,6 +318,23 @@ public:
   //   they complete their cleanup task. It adds the local list into
   //   the global expanded list. It assumes that the
   //   ParGCRareEvent_lock is being held to ensure MT-safety.
+  /**
+   * 方法解释
+reset_for_cleanup_tasks():
+    作用: 在清理暂停开始时调用，将全局扩展列表的头指针设置为 NULL。
+    目的: 清空全局扩展列表，以便在清理过程中重新创建它。这样可以避免在清理期间因区域释放而导致的竞争条件。
+
+do_cleanup_work(SparsePRTCleanupTask* sprt_cleanup_task):
+    作用: 由清理线程调用，处理每个未被释放或正在被释放的区域。这会将这些区域对应的稀疏表对象添加到线程本地的 SparsePRTCleanupTask 对象中。
+    目的: 创建一个包含所有扩展表的本地列表，这些表在当前清理任务中仍然有效。这样做的目的是避免在清理过程中对全局扩展列表进行修改，从而避免竞争条件。
+finish_cleanup_task(SparsePRTCleanupTask* sprt_cleanup_task):
+    作用: 在清理线程完成清理任务后调用，将本地列表中的扩展表添加到全局扩展列表中。
+    目的: 将本地列表中的表合并到全局扩展列表中。为了确保多线程安全，必须在持有 ParGCRareEvent_lock 锁的情况下进行合并。
+总结
+    reset_for_cleanup_tasks(): 清空全局扩展列表的头指针，为清理过程做准备。
+    do_cleanup_work(SparsePRTCleanupTask* sprt_cleanup_task): 处理每个待清理区域，将其对应的稀疏表添加到线程本地的清理任务列表中。
+    finish_cleanup_task(SparsePRTCleanupTask* sprt_cleanup_task): 将线程本地的清理任务列表合并到全局扩展列表中，以确保全局扩展列表的正确性和一致性。
+   */
   static void reset_for_cleanup_tasks();
   void do_cleanup_work(SparsePRTCleanupTask* sprt_cleanup_task);
   static void finish_cleanup_task(SparsePRTCleanupTask* sprt_cleanup_task);

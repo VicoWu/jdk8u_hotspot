@@ -113,12 +113,15 @@ SparsePRTEntry::AddCardResult SparsePRTEntry::add_card(CardIdx_t card_index) {
     c = _cards[i];
     if (c == card_index) return found; //找到，已经存在，直接返回
     if (c == NullEntry) { _cards[i] = card_index; return added; }// 发现了一个空位置，将这个卡片索引插入到这个空位置，然后返回added，表示已经添加成功
+
     c = _cards[i + 1];
     if (c == card_index) return found;
     if (c == NullEntry) { _cards[i + 1] = card_index; return added; }
+
     c = _cards[i + 2];
     if (c == card_index) return found;
     if (c == NullEntry) { _cards[i + 2] = card_index; return added; }
+
     c = _cards[i + 3];
     if (c == card_index) return found;
     if (c == NullEntry) { _cards[i + 3] = card_index; return added; }
@@ -301,6 +304,7 @@ RSHashTable::entry_for_region_ind(RegionIdx_t region_ind) const {
   }
 }
 
+
 SparsePRTEntry*
 RSHashTable::entry_for_region_ind_create(RegionIdx_t region_ind) {
   SparsePRTEntry* res = entry_for_region_ind(region_ind); // 找到这个region对应的SparsePRTEntry，搜 RSHashTable::entry_for_region_ind
@@ -351,14 +355,18 @@ void RSHashTable::add_entry(SparsePRTEntry* e) {
   assert(e2->num_valid_cards() > 0, "Postcondition.");
 }
 
+/**
+ * 以当前的_bl_ind为起点，遍历当前的冲突列表，只要找到的SparsePRTEntry含有卡片，那么就返回卡片索引
+ * @return
+ */
 CardIdx_t RSHashTableIter::find_first_card_in_list() {
   CardIdx_t res;
   while (_bl_ind != RSHashTable::NullEntry) {
-    res = _rsht->entry(_bl_ind)->card(0);
+    res = _rsht->entry(_bl_ind)->card(0); // 找到这个Entry的第一张卡片
     if (res != SparsePRTEntry::NullEntry) {
       return res;
     } else {
-      _bl_ind = _rsht->entry(_bl_ind)->next_index();
+      _bl_ind = _rsht->entry(_bl_ind)->next_index(); // 冲突链表的下一个SparsePRTEntry
     }
   }
   // Otherwise, none found:
@@ -366,40 +374,42 @@ CardIdx_t RSHashTableIter::find_first_card_in_list() {
 }
 
 size_t RSHashTableIter::compute_card_ind(CardIdx_t ci) {
-  return (_rsht->entry(_bl_ind)->r_ind() * HeapRegion::CardsPerRegion) + ci;
+  return (_rsht->entry(_bl_ind)->r_ind() * HeapRegion::CardsPerRegion) + ci; //  根据卡片的局部索引，获取全局索引
 }
 
 bool RSHashTableIter::has_next(size_t& card_index) {
-  _card_ind++;
+  _card_ind++; // 递增当前卡片的索引（_card_ind），代表开始检查当前的SparsePRTEntry的下一个卡片
   CardIdx_t ci;
   if (_card_ind < SparsePRTEntry::cards_num() &&
       ((ci = _rsht->entry(_bl_ind)->card(_card_ind)) !=
-       SparsePRTEntry::NullEntry)) {
-    card_index = compute_card_ind(ci);
+       SparsePRTEntry::NullEntry)) { // 当前的 卡片直接存在
+    card_index = compute_card_ind(ci); // 计算对应卡片的全局索引值，而不是这个卡片在这个Region的相对索引值
     return true;
   }
+  // 当前的SparsePRTEntry已经没有下一张卡片，尝试查看下一个可用的SparsePRTEntry
   // Otherwise, must find the next valid entry.
   _card_ind = 0;
 
   if (_bl_ind != RSHashTable::NullEntry) {
-      _bl_ind = _rsht->entry(_bl_ind)->next_index();
-      ci = find_first_card_in_list();
+      _bl_ind = _rsht->entry(_bl_ind)->next_index(); // 找到冲突链表的下一个SparsePRTEntry对应的index
+      ci = find_first_card_in_list(); // 以_bl_ind为起点，沿着当前的冲突链表的下一个位置查找
       if (ci != SparsePRTEntry::NullEntry) {
-        card_index = compute_card_ind(ci);
+        card_index = compute_card_ind(ci); // 计算对应卡片的全局索引值，而不是这个卡片在这个Region的相对索引值
         return true;
       }
   }
+
   // If we didn't return above, must go to the next non-null table index.
-  _tbl_ind++;
+  _tbl_ind++; // 尝试下一个bucket
   while ((size_t)_tbl_ind < _rsht->capacity()) {
-    _bl_ind = _rsht->_buckets[_tbl_ind];
-    ci = find_first_card_in_list();
+    _bl_ind = _rsht->_buckets[_tbl_ind]; // 这个bucket中挂载的第一个SparsePRTEntry在entry中的索引
+    ci = find_first_card_in_list(); // 找到第一张卡片
     if (ci != SparsePRTEntry::NullEntry) {
-      card_index = compute_card_ind(ci);
+      card_index = compute_card_ind(ci);  // 计算对应卡片的全局索引值，而不是这个卡片在这个Region的相对索引值
       return true;
     }
     // Otherwise, try next entry.
-    _tbl_ind++;
+    _tbl_ind++; //尝试下一个_buckets
   }
   // Otherwise, there were no entry.
   return false;
@@ -481,8 +491,8 @@ void SparsePRT::reset_for_cleanup_tasks() {
 /**
  * 调用者是 OtherRegionsTable::do_cleanup_work
  * 对当前的SparsePRT进行清理工作，但是只有当这个SparsePRT进行过扩展才会进行清理
- * 当这个SparsePRT进行过扩展，那么SparsePRT::_next会指向扩展的列表
- */
+ * 当这个SparsePRT进行过扩展，那么SparsePRT::_next会指
+ */向扩展的列表
 void SparsePRT::do_cleanup_work(SparsePRTCleanupTask* sprt_cleanup_task) {
   if (should_be_on_expanded_list()) {
     sprt_cleanup_task->add(this); // 将当前的SparsePRT添加到sprt_cleanup_task对象中
@@ -510,20 +520,20 @@ void SparsePRT::finish_cleanup_task(SparsePRTCleanupTask* sprt_cleanup_task) {
 bool SparsePRT::should_be_on_expanded_list() {
   if (_expanded) { // 只要这个SparsePRT进行了扩展，_cur 和 _next就不同，_next 还是之前的RSHashTable, _next已经指向了扩展后的RSHashTable
     assert(_cur != _next, "if _expanded is true, cur should be != _next");
-  } else { // 第一次扩展以前，_cur 和 _next相同，二者是同一个 RSHashTable
+  } else { // 第一次扩展以前，或者经过了clean_up以后，_cur 和 _next相同，二者是同一个 RSHashTable
     assert(_cur == _next, "if _expanded is false, cur should be == _next");
   }
   return expanded();
 }
 
 /**
- * 这是一个全局的静态方法
+ * 这是一个全局的静态方法，在垃圾收集的时候使用
  */
 void SparsePRT::cleanup_all() {
   // First clean up all expanded tables so they agree on next and cur.
   SparsePRT* sprt = get_from_expanded_list();
   while (sprt != NULL) {
-    sprt->cleanup();
+    sprt->cleanup();  // SparsePRT::cleanup()
     sprt = get_from_expanded_list();
   }
 }
@@ -580,10 +590,14 @@ SparsePRTEntry* SparsePRT::get_entry(RegionIdx_t region_id) {
   return _next->get_entry(region_id);
 }
 
+// 在方法 OtherRegionsTable::add_reference中，该条目添加到细粒度表以后，会从稀疏表中删除，
 bool SparsePRT::delete_entry(RegionIdx_t region_id) {
   return _next->delete_entry(region_id);
 }
 
+/**
+ * 完全初始化一个SparsePRT，容量为初始容量
+ */
 void SparsePRT::clear() {
   // If they differ, _next is bigger then cur, so next has no chance of
   // being the initial size.
@@ -601,6 +615,10 @@ void SparsePRT::clear() {
   _expanded = false;
 }
 
+/**
+ * SparsePRT::cleanup()
+ * 这里只是删除_cur，同时将_cur和_next都指向_next，相当于让状态进入一个一致状态
+ */
 void SparsePRT::cleanup() {
   // Make sure that the current and next tables agree.
   if (_cur != _next) {
@@ -611,7 +629,7 @@ void SparsePRT::cleanup() {
 }
 
 /**
- * 在SparkPRT::addCard()的时候会根据当前这个 SparsePRT对象的使用率来决定是否进行expand
+ * 在SparsePRT::add_card的时候会根据当前这个 SparsePRT对象的使用率来决定是否进行expand
  */
 void SparsePRT::expand() {
   RSHashTable* last = _next; // 暂存_next即原来的链表，因为在下面需要逐个遍历原来的链表，以将原来的链表中的元素拷贝出来
@@ -631,10 +649,10 @@ void SparsePRT::expand() {
       _next->add_entry(e);  // 将旧的对象迁移拷贝到新的位置
     }
   }
-  if (last != _cur) {
-    delete last; // 析构调原来的对象
+  if (last != _cur) { // last != _cur的含义是，扩展以前的_next != _cur，即当前的扩展已经不是第一次扩展，这里删除刚刚的_next，并不是删除_cur
+    delete last; // 析构调原来的对象，释放内存
   }
-  add_to_expanded_list(this); // 将当前这个已经进行了扩展的SparsePRT对象，添加到全局的扩展列表中去
+  add_to_expanded_list(this); // 将当前这个已经进行了扩展的SparsePRT对象，添加到全局的静态扩展列表中去
 }
 
 // 实际上是将当前的SparsePRT对象添加到以SparsePRTCleanupTask的_head和 _tail标记的链表的末尾

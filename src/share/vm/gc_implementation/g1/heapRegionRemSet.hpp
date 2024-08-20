@@ -119,7 +119,15 @@ class FromCardCache : public AllStatic {
 //      it's _coarse_map bit is set, so the that we were attempting to add
 //      is represented.  If a deleted PRT is re-used, a thread adding a bit,
 //      thinking the PRT is for a different region, does no harm.
+/**
+ * 锁与无锁机制：
 
+    无锁读取：线程可以在没有加锁的情况下定位 PRT 表项，从而提高读取操作的效率。
+    锁定修改：当线程尝试修改哈希表中的条目时，需要获取锁，以确保并发修改的安全性。
+    读取操作即使遇到并发删除 PRT 的情况也是安全的，这是因为：
+        PRT 仅在安全点被释放。
+        如果 PRT 被删除，对应的粗粒度位图会被设置，因此在 PRT 被删除后，不会丢失引用关系。
+ */
 /**
  * 每个HeapRegion都包含了一个HeapRegionRemSet，每个HeapRegionRemSet都包含了一个OtherRegionsTable，引用数据就保存在这个OtherRegionsTable中
  */
@@ -217,8 +225,9 @@ public:
   size_t mem_size() const;
   static size_t static_mem_size();
   static size_t fl_mem_size();
-
+  // OtherRegionsTable::contains_reference
   bool contains_reference(OopOrNarrowOopStar from) const;
+  // OtherRegionsTable::contains_reference_locked
   bool contains_reference_locked(OopOrNarrowOopStar from) const;
 
   void clear();
@@ -258,7 +267,7 @@ private:
 
   Mutex _m;
 
-  OtherRegionsTable _other_regions; // 粗粒度哈希表
+  OtherRegionsTable _other_regions; // 这个HeapRegion的RSet，包括了粗粒度，细粒度和稀疏表
 
   enum ParIterState { Unclaimed, Claimed, Complete };
   volatile ParIterState _iter_state;
@@ -410,6 +419,7 @@ public:
     return OtherRegionsTable::fl_mem_size();
   }
 
+  // HeapRegionRemSet::contains_reference
   bool contains_reference(OopOrNarrowOopStar from) const {
     return _other_regions.contains_reference(from);
   }
@@ -444,6 +454,7 @@ public:
   void print() PRODUCT_RETURN;
 
   // Called during a stop-world phase to perform any deferred cleanups.
+  //  HeapRegionRemSet::cleanup()
   static void cleanup();
 
   // Declare the heap size (in # of regions) to the HeapRegionRemSet(s).

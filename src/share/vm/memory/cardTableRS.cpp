@@ -36,12 +36,12 @@
 #include "gc_implementation/g1/concurrentMark.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #endif // INCLUDE_ALL_GCS
-
+// 继承关系 CardTableRS -> GenRemSet
 CardTableRS::CardTableRS(MemRegion whole_heap,
-                         int max_covered_regions) :
+                         int max_covered_regions) : // 在G1CollectedHeap中max_covered_regions=2
   GenRemSet(),
-  _cur_youngergen_card_val(youngergenP1_card),
-  _regions_to_iterate(max_covered_regions - 1)
+  _cur_youngergen_card_val(youngergenP1_card), // 当前的youngergen_card_val设置为 00010010， 即 youngergenP1_card
+  _regions_to_iterate(max_covered_regions - 1) // 1
 {
 #if INCLUDE_ALL_GCS // 是否包含所有的垃圾回收期代码，一般是enable的
   if (UseG1GC) { // 如果使用G1GC，那么bs就使用G1SATBCardTableLoggingModRefBS
@@ -55,13 +55,14 @@ CardTableRS::CardTableRS(MemRegion whole_heap,
 #endif
   _ct_bs->initialize();
   set_bs(_ct_bs); // 将barrierset设置为 G1SATBCardTableLoggingModRefBS
-  _last_cur_val_in_gen = NEW_C_HEAP_ARRAY3(jbyte, GenCollectedHeap::max_gens + 1,
+  // _last_cur_val_in_gen数组中的每一个元素记录每一代（generation）中的最后一个年轻代卡值
+  _last_cur_val_in_gen = NEW_C_HEAP_ARRAY3(jbyte, GenCollectedHeap::max_gens + 1, // 长度是11的数组
                          mtGC, CURRENT_PC, AllocFailStrategy::RETURN_NULL);
   if (_last_cur_val_in_gen == NULL) {
     vm_exit_during_initialization("Could not create last_cur_val_in_gen array.");
   }
   for (int i = 0; i < GenCollectedHeap::max_gens + 1; i++) {
-    _last_cur_val_in_gen[i] = clean_card_val();
+    _last_cur_val_in_gen[i] = clean_card_val(); // 初始化为 -1(11111111)
   }
   _ct_bs->set_CTRS(this);
 }
@@ -76,42 +77,56 @@ CardTableRS::~CardTableRS() {
   }
 }
 
+/**
+ * 这里的Region不是HeapRegion，而是对应了一个gen
+ * @param new_region
+ */
 void CardTableRS::resize_covered_region(MemRegion new_region) {
   _ct_bs->resize_covered_region(new_region);
 }
 
 jbyte CardTableRS::find_unused_youngergenP_card_value() {
-  for (jbyte v = youngergenP1_card;
-       v < cur_youngergen_and_prev_nonclean_card;
+    // 在youngergenP1_card 和 cur_youngergen_and_prev_nonclean_card中选择一个值
+  for (jbyte v = youngergenP1_card; // youngergenP1_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 2,
+       v < cur_youngergen_and_prev_nonclean_card; //     cur_youngergen_and_prev_nonclean_card = CardTableModRefBS::CT_MR_BS_last_reserved + 5,  00010101 当前年轻代和以前的年轻代（或非干净）的对象
        v++) {
     bool seen = false;
-    for (int g = 0; g < _regions_to_iterate; g++) {
-      if (_last_cur_val_in_gen[g] == v) {
-        seen = true;
+    /**
+     * 内部的嵌套循环检查这个值 v 是否已经被用于任何代（generation）的标识。如果 _last_cur_val_in_gen[g] == v 为 true，则表示该值已经在使用，因此将 seen 标志设为 true 并跳出内部循环。
+     */
+    for (int g = 0; g < _regions_to_iterate; g++) { //
+      if (_last_cur_val_in_gen[g] == v) { // 遍历每一个gen使用的值
+        seen = true; // 这个v已经被使用了，查看youngergenP1_card 和 cur_youngergen_and_prev_nonclean_card中的下一个值
         break;
       }
     }
+    // 只要有一个v在所有的大Region中不存在，则选定这个v
     if (!seen) return v;
   }
   ShouldNotReachHere();
   return 0;
 }
 
+/**
+ * 遍历 更年轻代 引用做准备。这个方法可以在并行或顺序的情况下运行，根据传入的参数 parallel 来决定不同的行为。
+ * @param parallel
+ */
 void CardTableRS::prepare_for_younger_refs_iterate(bool parallel) {
   // Parallel or sequential, we must always set the prev to equal the
   // last one written.
   if (parallel) {
     // Find a parallel value to be used next.
-    jbyte next_val = find_unused_youngergenP_card_value();
-    set_cur_youngergen_card_val(next_val);
+    jbyte next_val = find_unused_youngergenP_card_value(); // 并行状态下，需要找到一个没有使用的
+    set_cur_youngergen_card_val(next_val); // 当前更年轻一代的卡片使用这个未使用的值next_val
 
   } else {
     // In an sequential traversal we will always write youngergen, so that
     // the inline barrier is  correct.
-    set_cur_youngergen_card_val(youngergen_card);
+    set_cur_youngergen_card_val(youngergen_card); // 串行状态下，youngergen_card_val 就是youngergen_card固定值
   }
 }
 
+// 迭代更年轻一代的卡表
 void CardTableRS::younger_refs_iterate(Generation* g,
                                        OopsInGenClosure* blk) {
   _last_cur_val_in_gen[g->level()+1] = cur_youngergen_card_val();
@@ -251,24 +266,24 @@ void ClearNoncleanCardWrapper::do_MemRegion(MemRegion mr) {
 // cur-younger-gen                ==> cur_younger_gen
 // cur_youngergen_and_prev_nonclean_card ==> no change.
 void CardTableRS::write_ref_field_gc_par(void* field, oop new_val) {
-  jbyte* entry = ct_bs()->byte_for(field);
+  jbyte* entry = ct_bs()->byte_for(field); // 获取这个field对应的卡表地址
   do {
     jbyte entry_val = *entry;
     // We put this first because it's probably the most common case.
-    if (entry_val == clean_card_val()) {
+    if (entry_val == clean_card_val()) { // 很有可能是一个完全干净的卡片，jbyte clean_card_val()
       // No threat of contention with cleaning threads.
-      *entry = cur_youngergen_card_val();
+      *entry = cur_youngergen_card_val(); // 更新为 当前年轻的引用
       return;
-    } else if (card_is_dirty_wrt_gen_iter(entry_val)
-               || is_prev_youngergen_card_val(entry_val)) {
+    } else if (card_is_dirty_wrt_gen_iter(entry_val) // 卡表条目当前值表示脏卡 (card_is_dirty_wrt_gen_iter(entry_val)) 或
+               || is_prev_youngergen_card_val(entry_val)) { // 前年轻代卡 (is_prev_youngergen_card_val(entry_val)
       // Mark it as both cur and prev youngergen; card cleaning thread will
       // eventually remove the previous stuff.
       jbyte new_val = cur_youngergen_and_prev_nonclean_card;
       jbyte res = Atomic::cmpxchg(new_val, entry, entry_val);
       // Did the CAS succeed?
-      if (res == entry_val) return;
+      if (res == entry_val) return; // cas成功，将卡片的值修改为 cur_youngergen_and_prev_nonclean_card
       // Otherwise, retry, to see the new value.
-      continue;
+      continue; // cas失败，准备重试
     } else {
       assert(entry_val == cur_youngergen_and_prev_nonclean_card
              || entry_val == cur_youngergen_card_val(),
@@ -278,6 +293,9 @@ void CardTableRS::write_ref_field_gc_par(void* field, oop new_val) {
   } while (true);
 }
 
+/**
+ * 调用者查看 Generation::younger_refs_in_space_iterate
+ */
 void CardTableRS::younger_refs_in_space_iterate(Space* sp,
                                                 OopsInGenClosure* cl) {
   const MemRegion urasm = sp->used_region_at_save_marks();

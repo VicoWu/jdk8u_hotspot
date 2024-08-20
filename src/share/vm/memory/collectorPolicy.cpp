@@ -156,6 +156,12 @@ bool CollectorPolicy::use_should_clear_all_soft_refs(bool v) {
   return result;
 }
 
+/**
+ * 在 G1CollectedHeap::initialize()中调用，传入的参数值是2
+ * @param whole_heap
+ * @param max_covered_regions
+ * @return
+ */
 GenRemSet* CollectorPolicy::create_rem_set(MemRegion whole_heap,
                                            int max_covered_regions) {
   return new CardTableRS(whole_heap, max_covered_regions);

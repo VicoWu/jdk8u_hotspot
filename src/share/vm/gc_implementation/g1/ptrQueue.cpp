@@ -267,7 +267,7 @@ bool PtrQueueSet::process_or_enqueue_complete_buffer(void** buf) {
 void PtrQueueSet::enqueue_complete_buffer(void** buf, size_t index) {
   MutexLockerEx x(_cbl_mon, Mutex::_no_safepoint_check_flag);
   BufferNode* cbn = BufferNode::new_from_buffer(buf); // 搜索 BufferNode* new_from_buffer
-  cbn->set_index(index);
+  cbn->set_index(index); // 指示缓冲区中有效数据的结束位置
   // 将这个BufferNode添加到链表的末尾
   if (_completed_buffers_tail == NULL) { // 第一个节点
     assert(_completed_buffers_head == NULL, "Well-formedness");

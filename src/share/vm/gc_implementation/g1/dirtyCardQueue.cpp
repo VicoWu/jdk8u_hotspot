@@ -110,7 +110,7 @@ void DirtyCardQueueSet::initialize(CardTableEntryClosure* cl, Monitor* cbl_mon, 
   set_buffer_size(G1UpdateBufferSize);
   /**
    * 设置锁变量，标记自己虽然是 PrtQueue，但是是一个属于DirtyCardQueueSet 的全局PrtQueue，是存在多线程竞争关系的
-   * 在方法 DirtyCardQueueSet::concatenate_logs 中可以看到_shared_dirty_card_queue的使用
+   * 在方法 DirtyCardQueueSet::concatenate_logs 中可以看到 _shared_dirty_card_queue 的使用
    */
   _shared_dirty_card_queue.set_lock(lock); // 实现方法参考 void set_lock(Mutex* lock) { _lock = lock; }
   _free_ids = new FreeIdSet((int) num_par_ids(), _cbl_mon);
@@ -194,7 +194,7 @@ bool DirtyCardQueueSet::mut_process_buffer(void** buf) {
 
 
 /**
- * 获取以DCQS中的以_completed_buffers_head为链表的第一个节点_completed_buffers_head
+ * 获取以DCQS中的以 _completed_buffers_head 为链表的第一个节点_completed_buffers_head
  */
 
 BufferNode*
@@ -342,6 +342,9 @@ void DirtyCardQueueSet::abandon_logs() {
 }
 
 
+/**
+ * 遍历所有用户线程的不完整的logs以及全局的_shared_dirty_card_queue，将这些logs添加到全局的已完成的链表中去
+ */
 void DirtyCardQueueSet::concatenate_logs() {
   // Iterate over all the threads, if we find a partial log add it to
   // the global list of logs.  Temporarily turn off the limit on the number
@@ -351,20 +354,21 @@ void DirtyCardQueueSet::concatenate_logs() {
   assert(SafepointSynchronize::is_at_safepoint(), "Must be at safepoint.");
   for (JavaThread* t = Threads::first(); t; t = t->next()) {
     DirtyCardQueue& dcq = t->dirty_card_queue();
-    if (dcq.size() != 0) {
-      void **buf = t->dirty_card_queue().get_buf();
+    if (dcq.size() != 0) { // 该线程的脏卡片队列不为空
+      void **buf = t->dirty_card_queue().get_buf(); // 获取该线程的本地队列
       // We must NULL out the unused entries, then enqueue.
       for (size_t i = 0; i < t->dirty_card_queue().get_index(); i += oopSize) {
-        buf[PtrQueue::byte_index_to_index((int)i)] = NULL;
+        buf[PtrQueue::byte_index_to_index((int)i)] = NULL; // 将未使用的缓冲区条目设为 NULL,以确保在队列被合并到全局队列时，未使用的部分不会被错误处理。
       }
-      enqueue_complete_buffer(dcq.get_buf(), dcq.get_index());
-      dcq.reinitialize();
+      // 搜索 PtrQueueSet::enqueue_complete_buffer
+      enqueue_complete_buffer(dcq.get_buf(), dcq.get_index()); // 将缓冲区加入到全局队列中
+      dcq.reinitialize(); // 由于局部队列已经加入到全局队列中，因此这里重新初始化局部队列
     }
   }
   if (_shared_dirty_card_queue.size() != 0) {
     enqueue_complete_buffer(_shared_dirty_card_queue.get_buf(),
-                            _shared_dirty_card_queue.get_index());
-    _shared_dirty_card_queue.reinitialize();
+                            _shared_dirty_card_queue.get_index()); // 如果这个共享队列不为空，则将它也合并到全局队列中
+    _shared_dirty_card_queue.reinitialize(); // 这个共享队列已经加入到全局队列中，因此重新初始化共享队列
   }
   // Restore the completed buffer queue limit.
   _max_completed_queue = save_max_completed_queue;

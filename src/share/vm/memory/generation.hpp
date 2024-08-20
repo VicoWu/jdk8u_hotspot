@@ -126,6 +126,7 @@ class Generation: public CHeapObj<mtGC> {
   // The iteration is only over objects allocated at the start of the
   // iterations; objects allocated as a result of applying the closure are
   // not included.
+  // 将“cl->do_oop”应用于sp中指向 更年轻代 的所有 ref 字段（的地址）。迭代仅针对在迭代开始时分配的对象，而应用闭包后分配的对象不包括在内。
   void younger_refs_in_space_iterate(Space* sp, OopsInGenClosure* cl);
 
  public:

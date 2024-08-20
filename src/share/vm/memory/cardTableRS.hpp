@@ -61,17 +61,17 @@ class CardTableRS: public GenRemSet {
   void verify_space(Space* s, HeapWord* gen_start);
 
   enum ExtendedCardValue {
-    youngergen_card   = CardTableModRefBS::CT_MR_BS_last_reserved + 1,
+    youngergen_card   = CardTableModRefBS::CT_MR_BS_last_reserved + 1,  // 00010001
     // These are for parallel collection.
     // There are three P (parallel) youngergen card values.  In general, this
     // needs to be more than the number of generations (including the perm
     // gen) that might have younger_refs_do invoked on them separately.  So
     // if we add more gens, we have to add more values.
-    youngergenP1_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 2,
-    youngergenP2_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 3,
-    youngergenP3_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 4,
-    cur_youngergen_and_prev_nonclean_card =
-      CardTableModRefBS::CT_MR_BS_last_reserved + 5
+    youngergenP1_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 2,  // 00010010
+    youngergenP2_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 3,  // 00010011
+    youngergenP3_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 4,  // 00010100
+    cur_youngergen_and_prev_nonclean_card = // 当前年轻代和以前的年轻代（或非干净）的对象
+      CardTableModRefBS::CT_MR_BS_last_reserved + 5 // // 00010101
   };
 
   // An array that contains, for each generation, the card table value last
@@ -88,16 +88,27 @@ class CardTableRS: public GenRemSet {
   jbyte cur_youngergen_card_val() {
     return _cur_youngergen_card_val;
   }
+
+  /**
+   * 设置一个值，代表当前卡片中含有年轻代的引用
+   * @param v
+   */
   void set_cur_youngergen_card_val(jbyte v) {
     _cur_youngergen_card_val = v;
   }
+  /**
+   * 检查某个卡表条目值 v 是否表示 "前一代年轻代卡"
+   *
+   */
   bool is_prev_youngergen_card_val(jbyte v) {
     return
       youngergen_card <= v &&
       v < cur_youngergen_and_prev_nonclean_card &&
       v != _cur_youngergen_card_val;
   }
+
   // Return a youngergen_card_value that is not currently in use.
+  // 找到一个当前还没有使用的 youngergen_card_value
   jbyte find_unused_youngergenP_card_value();
 
 public:

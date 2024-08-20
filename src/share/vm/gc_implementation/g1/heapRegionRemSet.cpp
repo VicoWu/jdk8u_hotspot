@@ -46,7 +46,7 @@ class PerRegionTable: public CHeapObj<mtGC> {
   friend class HeapRegionRemSetIterator;
 
   HeapRegion*     _hr; // 反向引用了当前的PRT所对应的owning region
-  BitMap          _bm; // 位图，位图的key是卡片索引，因此传入一个卡片索引，通过在位图中执行一次查找，就知道这个索引对应的内存区域是否有指向该Region的引用
+  BitMap          _bm; // 位图，位图的key是卡片索引，因此传入一个卡片索引，通过在位图中执行一次查找，就知道这个索引对应的内存区域是否有指向该Region的引用，注意和粗粒度表的bm区分开
   jint            _occupied; // 该Region的RSet所对应的卡片的总的数量
 
   // next pointer for free/allocated 'all' list
@@ -77,13 +77,14 @@ protected:
   {}
 
   /**
-   * 这是PerRegionTable::add_card_work方法
+   *  PerRegionTable::add_card_work
    * CardIdx_t其实就是int，代表了卡片在卡表中的索引
    * 向该细粒度PTR（PerRegionTable）中添加一个卡片
    * @param from_card 指向该对象的对象对应的卡片的索引，(比如，a.field=b，那么from_card就是对象a对应的卡片在卡表中的索引
    * @param par 是否处于并行状态
    */
   void add_card_work(CardIdx_t from_card, bool par) {
+
     if (!_bm.at(from_card)) { // 这个卡片在当前的细粒度PTR中不存在
       if (par) { //处在并行状态，需要使用CAS来更新_occupied
         if (_bm.par_at_put(from_card, 1)) { // 通过cas的方式将index=from_card位置的值更新为1，如果更新成功，则返回true
@@ -91,7 +92,7 @@ protected:
         }
       } else { // 非并发，没有冲突问题，直接更新
         _bm.at_put(from_card, 1);
-        _occupied++;
+        _occupied++; // 记录这个PerRegionTable的卡片数量
       }
     }
   }
@@ -113,7 +114,7 @@ protected:
                              : (void *)oopDesc::load_decode_heap_oop((oop*)from));
     }
 
-    HeapRegion* loc_hr = hr();
+    HeapRegion* loc_hr = hr(); // 获取当前的PerRegionTable对应的HeapRegion
     // If the test below fails, then this table was reused concurrently
     // with this operation.  This is OK, since the old table was coarsened,
     // and adding a bit to the new table is never incorrect.
@@ -128,13 +129,13 @@ protected:
 
       assert(0 <= from_card && (size_t)from_card < HeapRegion::CardsPerRegion,
              "Must be in range.");
-      add_card_work(from_card, par); // 向细粒度的PRT中添加卡片
+      add_card_work(from_card, par); // 向细粒度的PRT中的bitmap中添加这个卡片
     }
   }
 
 public:
     /**
-     * 这个方法是PerRegionTable的方法，通过读取_hr的值，并转换成HeapRegion的指针,代表当前这个PRT所对应的HeapRegion
+     * 这个方法是 PerRegionTable 的方法，通过读取_hr的值，并转换成HeapRegion的指针,代表当前这个PRT所对应的HeapRegion
      * Read-Acquire  具有 Read-Acquire 语义的 Read 操作保证，所有后续的读写只有在该 Read 执行完毕后才能执行
      * Write-Release 具有 Write-Release 语义的 Write 操作保证，只有之前的所有读写都已经执行完毕，该 write 才能执行
      * 关于有序内存访问，参考 https://novoland.github.io/%E5%B9%B6%E5%8F%91/2014/07/26/Java%E5%86%85%E5%AD%98%E6%A8%A1%E5%9E%8B.html
@@ -144,6 +145,10 @@ public:
     return (HeapRegion*) OrderAccess::load_ptr_acquire(&_hr);
   }
 
+  /**
+   * 这是方法 PerRegionTable::occupied()方法
+   * @return
+   */
   jint occupied() const {
     // Overkill, but if we ever need it...
     // guarantee(_occupied == _bm.count_one_bits(), "Check");
@@ -164,7 +169,7 @@ public:
   }
 
   /**
-   * 这个方法其实是PerRegionTable::add_reference
+   *  PerRegionTable::add_reference
    */
   void add_reference(OopOrNarrowOopStar from) {
     add_reference_work(from, /*parallel*/ true);
@@ -182,15 +187,16 @@ public:
   }
 
   /**
-   * 这个方法是PerRegionTable的方法
+   * 这个方法是 PerRegionTable::add_card
+   * 在稀疏表中也有add_card操作
    * @param from_card_index
    */
   void add_card(CardIdx_t from_card_index) {
-    add_card_work(from_card_index, /*parallel*/ true);
+    add_card_work(from_card_index, /*parallel*/ true); // 使用并行方式插入，因此需要进行线程安全的处理
   }
 
   void seq_add_card(CardIdx_t from_card_index) {
-    add_card_work(from_card_index, /*parallel*/ false);
+    add_card_work(from_card_index, /*parallel*/ false); // 非并发，没有冲突问题，直接更新
   }
 
   // (Destructively) union the bitmap of the current table into the given
@@ -232,21 +238,23 @@ public:
 
   // Returns an initialized PerRegionTable instance.
   static PerRegionTable* alloc(HeapRegion* hr) {
-    PerRegionTable* fl = _free_list;
-    while (fl != NULL) {
+    PerRegionTable* fl = _free_list; // 静态的全局的PerRegionTable的空闲列表
+    while (fl != NULL) { // 如果全局的空闲列表不是空的
       PerRegionTable* nxt = fl->next();
+        // 如果 cmpxchg_ptr 成功（即 _free_list 在执行操作时没有被其他线程修改），那么 res 将等于 fl，表示成功获取了 fl 作为当前线程的 PerRegionTable 实例
+        // 否则，如果 cmpxchg_ptr 失败，意味着其他线程已经修改了 _free_list，那么 res 不等于 fl，需要重新获取空闲列表的头部 fl 并重试。
       PerRegionTable* res =
         (PerRegionTable*)
         Atomic::cmpxchg_ptr(nxt, &_free_list, fl);
-      if (res == fl) {
-        fl->init(hr, true);
+      if (res == fl) { // 成功
+        fl->init(hr, true); // 初始化，然后返回
         return fl;
       } else {
         fl = _free_list;
       }
     }
     assert(fl == NULL, "Loop condition.");
-    return new PerRegionTable(hr);
+    return new PerRegionTable(hr); // 如果没有成功，则创建一个
   }
 
   PerRegionTable* next() const { return _next; }
@@ -315,7 +323,7 @@ OtherRegionsTable::OtherRegionsTable(HeapRegion* hr, Mutex* m) :
   if (_max_fine_entries == 0) {
     assert(_mod_max_fine_entries_mask == 0, "Both or none.");
     size_t max_entries_log = (size_t)log2_long((jlong)G1RSetRegionEntries);
-    _max_fine_entries = (size_t)1 << max_entries_log;
+    _max_fine_entries = (size_t)1 << max_entries_log; //这个值只跟Region大小有关，与Region的数量无关
     _mod_max_fine_entries_mask = _max_fine_entries - 1;
 
     assert(_fine_eviction_sample_size == 0
@@ -323,7 +331,7 @@ OtherRegionsTable::OtherRegionsTable(HeapRegion* hr, Mutex* m) :
     _fine_eviction_sample_size = MAX2((size_t)4, max_entries_log);
     _fine_eviction_stride = _max_fine_entries / _fine_eviction_sample_size;
   }
-
+  // PerRegionTable** _fine_grain_regions
   _fine_grain_regions = NEW_C_HEAP_ARRAY3(PerRegionTablePtr, _max_fine_entries,
                         mtGC, CURRENT_PC, AllocFailStrategy::RETURN_NULL);
 
@@ -338,7 +346,7 @@ OtherRegionsTable::OtherRegionsTable(HeapRegion* hr, Mutex* m) :
 }
 
 /**
- * link_to_all其实就是将这个PerRegionTable添加到OtherRegionsTable对象所维护的一个全局双向链表中去，与哈希表无关
+ * link_to_all其实就是将这个PerRegionTable添加到OtherRegionsTable对象所维护的一个全局双向链表中去，与哈希表本身无关
  * @param prt
  */
 void OtherRegionsTable::link_to_all(PerRegionTable* prt) {
@@ -476,7 +484,7 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
                                                     : (void *)oopDesc::load_decode_heap_oop((oop*)from));
   }
   // 计算来自引用者的卡表索引。我们要做的就是将引用方的卡片索引添加到被引用方的RSet中去
-  int from_card = (int)(uintptr_t(from) >> CardTableModRefBS::card_shift);
+  int from_card = (int)(uintptr_t(from) >> CardTableModRefBS::card_shift); // 这里的CardTableModRefBS::card_shift = 9
 
   if (G1TraceHeapRegionRememberedSet) {
     gclog_or_tty->print_cr("Table for [" PTR_FORMAT "...): card %d (cache = " INT32_FORMAT ")",
@@ -498,8 +506,8 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
   }
   // FromCardCache::contains_or_replace返回了false，在方法contains_or_replace中已经将from_card放入到了缓存中
 
-  // 获取引用者所在的HeapRegion和Region的索引值
-  // Note that this may be a continued H region.
+  // 获取引用者(a.field)所在的HeapRegion和Region的索引值
+  // 注意，这可能是一个连续的大对象Region
   HeapRegion* from_hr = _g1h->heap_region_containing_raw(from);
   RegionIdx_t from_hrm_ind = (RegionIdx_t) from_hr->hrm_index();
 
@@ -514,16 +522,15 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
 
   // 粗粒度索引中不存在这个from region，继续在prt中进行搜索
   // Otherwise find a per-region table to add it to.
-  /**
-   *  region index根据细粒度PerRegionTable的size取模，取模以后在find_region_table中进行hash查找
-   */
+  // region index根据细粒度PerRegionTable的size取模，取模以后在find_region_table中进行hash查找
+  // 可以看到，ind 同时用在了细粒度表和稀疏表中
   size_t ind = from_hrm_ind & _mod_max_fine_entries_mask;
   /**
-   * 调用OtherRegionsTable::find_region_table，其实就是在细粒度的PRT(_fine_grain_regions**)中尝试查找这个from_hr是否存在
+   * 调用 OtherRegionsTable::find_region_table，其实就是在细粒度的PRT(_fine_grain_regions**)中尝试查找这个from_hr是否存在
    */
-  PerRegionTable* prt = find_region_table(ind, from_hr); // 搜索细粒度索引表_fine_grain_regions，看看是否找到对应的PerRegionTable
+  PerRegionTable* prt = find_region_table(ind, from_hr); // 搜索细粒度索引表 _fine_grain_regions，看看是否找到对应的PerRegionTable
   if (prt == NULL) { // 没找到这样一个PerRegionTable
-    MutexLockerEx x(_m, Mutex::_no_safepoint_check_flag);
+    MutexLockerEx x(_m, Mutex::_no_safepoint_check_flag); // 加锁，加锁可能会等待
     // Confirm that it's really not there...
     prt = find_region_table(ind, from_hr); // 加锁然后确认
     if (prt == NULL) { // 在细粒度索引中并没有找到
@@ -536,6 +543,7 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
              "Must be in range.");
       // 如果没有找到，并且我们enable了稀疏索引，那么就将这个region添加到稀疏索引中
       if (G1HRRSUseSparseTable &&  // G1HRRSUseSparseTable是是否使用稀疏索引的标志位
+          // 稀疏表中每一个Ref region对应的SparsePRTEntry所能存放的卡片数量是很少的，所以很可能overflow
           _sparse_table.add_card(from_hrm_ind, card_index)) { //  向稀疏PRT中添加卡片成功, 搜索 SparsePRT::add_card 查看方法的具体实现
           // add_card()返回true，说明添加成功，并没有overflow
         if (G1RecordHRRSOops) {
@@ -568,12 +576,13 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
            * 调用 OtherRegionsTable::delete_region_table，
            *    从细粒度索引的哈希表中删除一个PerRegionTable(当然，我们看方法的具体实现，会对应同步删除粗粒度表，具体细节不用关注)
            */
-        prt = delete_region_table();
+        prt = delete_region_table(); // delete的时候会同时负责将这个被删除的Region添加到粗粒度表中去
         // There is no need to clear the links to the 'all' list here:
         // prt will be reused immediately, i.e. remain in the 'all' list.
         prt->init(from_hr, false /* clear_links_to_all_list */);
       } else {// 细粒度的哈希索引还没有满，那么就重新申请一个PerRegionTable对象
-        prt = PerRegionTable::alloc(from_hr); // 为这个From HeapRegion分配一个PerRegionTable对象
+        prt = PerRegionTable::alloc(from_hr); // 为这个From HeapRegion申请并分配一个PerRegionTable对象
+        // 插入到 _last_all_fine_prts 链表的表头中
         link_to_all(prt); // 调用 OtherRegionsTable::link_to_all， 将这个 PerRegionTable 放入OtherRegionsTable所维护的PerRegionTable对象的双向链表中
       }
 
@@ -590,20 +599,22 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
       // zeroing becomes visible). This requires store ordering.
 
       /**
-       * 对 _fine_grain_regions 的分配允许 prt 开始同时使用。 除了 collision_list_next 必须可见（否则列表的并发解析（如果有）可能无法看到其他条目）之外，
+       * 对 _fine_grain_regions 的分配允许 prt 被并发使用。
+       * 除了 collision_list_next 必须可见（否则列表的并发解析（如果有）可能无法看到其他条目）之外，
        * prt 的内容也必须可见（否则例如某些标记位可能尚未清除或“ 当归零变得可见时，并发线程执行的后续更新可能会被撤消）。 这需要Store操作有序
        */
       OrderAccess::release_store_ptr((volatile PerRegionTable*)&_fine_grain_regions[ind], prt);
       _n_fine_entries++; // 细粒度的PRT数量加1
       // 将稀疏表的卡片移动到细粒度hash表中
       if (G1HRRSUseSparseTable) { // 如果使用稀疏表
-        // Transfer from sparse to fine-grain.
+        // 将稀疏表中的数据全部迁移到细粒度表
+        // 查找这个Region的SparsePRTEntry，在上面，肯定已经插入到稀疏表中了
         SparsePRTEntry *sprt_entry = _sparse_table.get_entry(from_hrm_ind);
         assert(sprt_entry != NULL, "There should have been an entry");
         for (int i = 0; i < SparsePRTEntry::cards_num(); i++) { // 遍历这个SparsePRTEntry对象的所有卡片
           CardIdx_t c = sprt_entry->card(i); //
           if (c != SparsePRTEntry::NullEntry) {
-            prt->add_card(c); // 不是一个空卡片，就把这个卡片添加到prt中
+            prt->add_card(c); // 不是一个空卡片，就把这个卡片(卡片索引)添加到prt中，每一个添加的c都代表这个卡片中的对象有指向当前HeapRegion的引用
           }
         }
         // Now we can delete the sparse entry.
@@ -611,14 +622,14 @@ void OtherRegionsTable::add_reference(OopOrNarrowOopStar from, int tid) {
         assert(res, "It should have been there.");
       }
     }
-    assert(prt != NULL && prt->hr() == from_hr, "consequence");
+    assert(prt != NULL && prt->hr() == from_hr, "consequence"); // 在这块代码中，由于加了锁，因此可以保证prt->hr() == from_hr
   }
   // Note that we can't assert "prt->hr() == from_hr", because of the
   // possibility of concurrent reuse.  But see head comment of
   // OtherRegionsTable for why this is OK.
-  assert(prt != NULL, "Inv");
+  assert(prt != NULL, "Inv"); // 在这里，由于没有了锁，因此无法保证并发场景下的 prt->hr() == from_hr
 
-  prt->add_reference(from); // 调用了PerRegionTable::add_reference
+  prt->add_reference(from); // 调用了 PerRegionTable::add_reference
 
   if (G1RecordHRRSOops) {
     HeapRegionRemSet::record(hr(), from);
@@ -655,7 +666,7 @@ OtherRegionsTable::find_region_table(size_t ind, HeapRegion* hr) const {
 jint OtherRegionsTable::_n_coarsenings = 0;
 
 /**
- * OtherRegionsTable中的方法，用来在_n_fine_entries == _max_fine_entries 从细粒度表的_fine_grain_regions删除一个PerRegionTable元素
+ * OtherRegionsTable中的方法，用来在 _n_fine_entries == _max_fine_entries 从细粒度表的_fine_grain_regions删除一个PerRegionTable元素
  * 删除以后，通过粗粒度表_coarse_map来记录这个引用关系
  * @return
  */
@@ -668,7 +679,7 @@ PerRegionTable* OtherRegionsTable::delete_region_table() {
   size_t max_ind;
 
   /**
-   * _fine_eviction_start是OtherRegionsTable对象维护的，因此每次调用delete_region_table()，都会从上一个位置开始
+   * _fine_eviction_start 是OtherRegionsTable对象维护的，因此每次调用delete_region_table()，都会从上一个位置开始
    */
   size_t i = _fine_eviction_start;
   for (size_t k = 0; k < _fine_eviction_sample_size; k++) {
@@ -676,16 +687,16 @@ PerRegionTable* OtherRegionsTable::delete_region_table() {
     // Make sure we get a non-NULL sample.
     while (_fine_grain_regions[ii] == NULL) { // 直到找到一个非空的元素，这个元素是一个PerRegionPRT*，指向了对应的PerRegionPRT对象
       ii++;
-      if (ii == _max_fine_entries) ii = 0;
+      if (ii == _max_fine_entries) ii = 0; // 循环从头遍历
       guarantee(ii != i, "We must find one.");
     }
     PerRegionTable** prev = &_fine_grain_regions[ii];
     PerRegionTable* cur = *prev;
     // 处理哈希表的ii位置的这个冲突链表(_fine_grain_regions使用链地址法解决冲突，因为每一个hash位置都挂在了一个冲突列表，列表的每一个元素都是一个PerRegionTable* )
     while (cur != NULL) { //
-      jint cur_occ = cur->occupied(); // 调用PerRegionTable::occupied方法
+      jint cur_occ = cur->occupied(); // 调用 PerRegionTable::occupied方法
       if (max == NULL || cur_occ > max_occ) { // 找出并记录occupied最大的PerRegionTable，记录在max中
-        max = cur;  // 记录这个occupied最大的PerRegionTable的地址
+        max = cur;  // 记录这个occupied最大的PerRegionTable的地址，max最终将作为结果返回
         max_prev = prev;
         max_ind = i; // 这个最大值所对应的细粒度哈希表的位置
         max_occ = cur_occ;
@@ -700,7 +711,7 @@ PerRegionTable* OtherRegionsTable::delete_region_table() {
   _fine_eviction_start++;
 
   if (_fine_eviction_start >= _n_fine_entries) {
-    _fine_eviction_start -= _n_fine_entries;
+    _fine_eviction_start -= _n_fine_entries; // 取模循环
   }
 
   guarantee(max != NULL, "Since _n_fine_entries > 0");
@@ -722,7 +733,7 @@ PerRegionTable* OtherRegionsTable::delete_region_table() {
   }
 
   // Unsplice.
-  *max_prev = max->collision_list_next();
+  *max_prev = max->collision_list_next(); // 更新这个冲突链的地址
   Atomic::inc(&_n_coarsenings); // 从上面的逻辑来看，这个_n_coarsenings并不是_coarse_map元素的个数(因为上面的逻辑中_coarse_map可能已经存在该region)
   _n_fine_entries--; // 整个哈希表中减少了一个PerRegionTable*元素，因此计数器_n_fine_entries减一
   return max; // 返回刚刚从细粒度哈希表中删除的元素
@@ -937,10 +948,11 @@ bool OtherRegionsTable::del_single_region_table(size_t ind,
 bool OtherRegionsTable::contains_reference(OopOrNarrowOopStar from) const {
   // Cast away const in this case.
   MutexLockerEx x((Mutex*)_m, Mutex::_no_safepoint_check_flag);
-  return contains_reference_locked(from);
+  return contains_reference_locked(from); // OtherRegionsTable::contains_reference_locked
 }
 
 /**
+ * contains_reference_locked方法，要求调用者必须已经加锁
  * 流程: 代码首先通过 coarse map 进行快速检查，如果没有找到相应记录，则查找更精细的区域表 (PerRegionTable) 或稀疏表 (sparse table)。
         目的: 这一系列检查确保了在垃圾回收过程中能够准确地找到和处理跨区域的引用。
         返回值: 如果引用 from 被记录在任何一个检查的表中，函数返回 true；否则返回 false。
@@ -955,10 +967,10 @@ bool OtherRegionsTable::contains_reference_locked(OopOrNarrowOopStar from) const
 
   PerRegionTable* prt = find_region_table(hr_ind & _mod_max_fine_entries_mask,
                                      hr);
-  if (prt != NULL) {
-    return prt->contains_reference(from);
+  if (prt != NULL) { // 先找到对应Region的PRT
+    return prt->contains_reference(from); // 再查看对应的PRT中是否包含这个from
 
-  } else {
+  } else { // 没有在细粒度哈希表中找到对应的HeapRegion,那么尝试从稀疏表中查找
     uintptr_t from_card =
       (uintptr_t(from) >> CardTableModRefBS::card_shift);
     uintptr_t hr_bot_card_index =
@@ -967,12 +979,12 @@ bool OtherRegionsTable::contains_reference_locked(OopOrNarrowOopStar from) const
     CardIdx_t card_index = from_card - hr_bot_card_index;
     assert(0 <= card_index && (size_t)card_index < HeapRegion::CardsPerRegion,
            "Must be in range.");
-    return _sparse_table.contains_card(hr_ind, card_index);
+    return _sparse_table.contains_card(hr_ind, card_index); // 在稀疏表中查找对应的HeapRegion和对应的卡片
   }
 }
 
 /**
- * OtherRegionsTable::do_cleanup_work会调用SparsePRT::do_cleanup_work方法
+ * OtherRegionsTable::do_cleanup_work会调用SparsePRT::do_cleanup_work方法，即对稀疏表进行清理，不清理细粒度表
  */
 void
 OtherRegionsTable::do_cleanup_work(HRRSCleanupTask* hrrs_cleanup_task) {
@@ -994,15 +1006,21 @@ HeapRegionRemSet::HeapRegionRemSet(G1BlockOffsetSharedArray* bosa,
   reset_for_par_iteration();
 }
 
+/**
+ * 这个方法设置稀疏表和细粒度表的大小
+ */
 void HeapRegionRemSet::setup_remset_size() {
   // Setup sparse and fine-grain tables sizes.
   // table_size = base * (log(region_size / 1M) + 1)
   const int LOG_M = 20;
   int region_size_log_mb = MAX2(HeapRegion::LogOfHRGrainBytes - LOG_M, 0);
-  if (FLAG_IS_DEFAULT(G1RSetSparseRegionEntries)) {
+  // region_size_log_mb + 1代表了一个Region的MB数
+  if (FLAG_IS_DEFAULT(G1RSetSparseRegionEntries)) { // 如果没有设置G1RSetSparseRegionEntries
+      // 每一个Region对应在稀疏表的SparsePRTEntry中的卡片数量
     G1RSetSparseRegionEntries = G1RSetSparseRegionEntriesBase * (region_size_log_mb + 1);
   }
-  if (FLAG_IS_DEFAULT(G1RSetRegionEntries)) {
+  if (FLAG_IS_DEFAULT(G1RSetRegionEntries)) {  // 如果没有设置 G1RSetRegionEntries
+      // 每一个Region对应在 OtherTableEntry中的PerRegionTable的数量
     G1RSetRegionEntries = G1RSetRegionEntriesBase * (region_size_log_mb + 1);
   }
   guarantee(G1RSetSparseRegionEntries > 0 && G1RSetRegionEntries > 0 , "Sanity");
@@ -1049,7 +1067,7 @@ void HeapRegionRemSet::print() {
 #endif
 
 void HeapRegionRemSet::cleanup() {
-  SparsePRT::cleanup_all();
+  SparsePRT::cleanup_all(); // 清除所有已经扩展过的稀疏表中的冗余数据(扩展以前的数据还没有清除)
 }
 
 void HeapRegionRemSet::clear() {
@@ -1180,21 +1198,24 @@ bool HeapRegionRemSetIterator::coarse_has_next(size_t& card_index) {
 }
 
 bool HeapRegionRemSetIterator::fine_has_next(size_t& card_index) {
-  if (fine_has_next()) {
+  if (fine_has_next()) { // 这个index是否已经到达了一个HeapRegion的卡片总量
+      // _cur_card_in_prt 代表当前迭代器在当前的PRT中的索引位置
+      // _fine_cur_prt 代表当前正在进行卡片迭代的哪个PRT
     _cur_card_in_prt =
-      _fine_cur_prt->_bm.get_next_one_offset(_cur_card_in_prt + 1);
+      _fine_cur_prt->_bm.get_next_one_offset(_cur_card_in_prt + 1); // 在这个PerRegionTable中的下一个卡片
   }
-  if (_cur_card_in_prt == HeapRegion::CardsPerRegion) {
+  if (_cur_card_in_prt == HeapRegion::CardsPerRegion) { // 已经是这个HeapRegion的最后一个卡片索引
     // _fine_cur_prt may still be NULL in case if there are not PRTs at all for
     // the remembered set.
-    if (_fine_cur_prt == NULL || _fine_cur_prt->next() == NULL) {
+    if (_fine_cur_prt == NULL || _fine_cur_prt->next() == NULL) { // 已经没有下一个ptr了
       return false;
     }
+    // 获取下一个PRT
     PerRegionTable* next_prt = _fine_cur_prt->next();
-    switch_to_prt(next_prt);
+    switch_to_prt(next_prt); // 将next_prt设置为_fine_cur_prt
     _cur_card_in_prt = _fine_cur_prt->_bm.get_next_one_offset(_cur_card_in_prt + 1);
   }
-
+  // 卡片的全局索引，等于卡片所在Region的bottom索引，加上卡片在Region内部的索引
   card_index = _cur_region_card_offset + _cur_card_in_prt;
   guarantee(_cur_card_in_prt < HeapRegion::CardsPerRegion,
             err_msg("Card index " SIZE_FORMAT " must be within the region", _cur_card_in_prt));
@@ -1205,12 +1226,16 @@ bool HeapRegionRemSetIterator::fine_has_next() {
   return _cur_card_in_prt != HeapRegion::CardsPerRegion;
 }
 
+/**
+ * 设置_fine_cur_prt为下一个prt
+ * @param prt
+ */
 void HeapRegionRemSetIterator::switch_to_prt(PerRegionTable* prt) {
   assert(prt != NULL, "Cannot switch to NULL prt");
-  _fine_cur_prt = prt;
+  _fine_cur_prt = prt; //
 
-  HeapWord* r_bot = _fine_cur_prt->hr()->bottom();
-  _cur_region_card_offset = _bosa->index_for(r_bot);
+  HeapWord* r_bot = _fine_cur_prt->hr()->bottom(); //  当前Region的bottom地址
+  _cur_region_card_offset = _bosa->index_for(r_bot); // 更新当前Region的索引
 
   // The bitmap scan for the PRT always scans from _cur_region_cur_card + 1.
   // To avoid special-casing this start case, and not miss the first bitmap
@@ -1225,27 +1250,27 @@ void HeapRegionRemSetIterator::switch_to_prt(PerRegionTable* prt) {
  */
 bool HeapRegionRemSetIterator::has_next(size_t& card_index) {
   switch (_is) { // 从构造函数可以看到，默认是Sparse
-  case Sparse: {
-    if (_sparse_iter.has_next(card_index)) { // RSHashTableIter::has_next
+  case Sparse: { // 稀疏表
+    if (_sparse_iter.has_next(card_index)) { // 稀疏表的卡片遍历
       _n_yielded_sparse++;
       return true;
     }
     // Otherwise, deliberate fall-through
-    _is = Fine;
+    _is = Fine; // 当且仅当稀疏表的遍历结束，才遍历细粒度表
     PerRegionTable* initial_fine_prt = _hrrs->_other_regions._first_all_fine_prts;
     if (initial_fine_prt != NULL) {
       switch_to_prt(_hrrs->_other_regions._first_all_fine_prts);
     }
   }
   case Fine:
-    if (fine_has_next(card_index)) {
+    if (fine_has_next(card_index)) { // 细粒度表的卡片遍历
       _n_yielded_fine++;
       return true;
     }
     // Otherwise, deliberate fall-through
-    _is = Coarse;
+    _is = Coarse; // 当且晋仅当细粒度表的遍历结束，才遍历粗粒度表
   case Coarse:
-    if (coarse_has_next(card_index)) {
+    if (coarse_has_next(card_index)) { // 粗粒度表的Region遍历
       _n_yielded_coarse++;
       return true;
     }

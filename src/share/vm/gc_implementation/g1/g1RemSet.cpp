@@ -73,7 +73,7 @@ void ct_freq_update_histo_and_reset() {
 G1RemSet::G1RemSet(G1CollectedHeap* g1, CardTableModRefBS* ct_bs)
   : _g1(g1), _conc_refine_cards(0),
     _ct_bs(ct_bs), _g1p(_g1->g1_policy()),
-    _cg1r(g1->concurrent_g1_refine()),
+    _cg1r(g1->concurrent_g1_refine()), // 一个JVM中只有一个G1RemSet，一个G1RemSet只有一个G1RemSet对象
     _cset_rs_update_cl(NULL),
     _cards_scanned(NULL), _total_cards_scanned(0),
     _prev_period_summary()
@@ -205,7 +205,7 @@ public:
 
   /**
    * ScanRSClosure::doHeapRegion
-   * 这里的HeapRegion一定是回收结合中的Region
+   * 这里的HeapRegion一定是回收结合中的 Region
    * 调用者 G1RemSet::scanRS
    * @param r
    * @return
@@ -393,10 +393,11 @@ public:
 void G1RemSet::updateRS(DirtyCardQueue* into_cset_dcq, uint worker_i) {
   G1GCParPhaseTimesTracker x(_g1p->phase_times(), G1GCPhaseTimes::UpdateRS, worker_i);
   // Apply the given closure to all remaining log entries.
-  // 使用RefineRecordRefsIntoCSCardTableEntryClosure 处理所有剩余的没有处理的DCQ
+  // 使用 RefineRecordRefsIntoCSCardTableEntryClosure 处理所有剩余的没有处理的DCQ
   RefineRecordRefsIntoCSCardTableEntryClosure into_cset_update_rs_cl(_g1, into_cset_dcq);
   /**
    * 具体实现查看 G1CollectedHeap::iterate_dirty_card_closure
+   * 主要是遍历JavaThread的全局DCQS链表中的BufferNode，去apply对应的 RefineRecordRefsIntoCSCardTableEntryClosure
    */
   _g1->iterate_dirty_card_closure(&into_cset_update_rs_cl, into_cset_dcq, false, worker_i);
 }
@@ -411,7 +412,7 @@ void G1RemSet::cleanupHRRS() {
 /**
  * 静态方法
  * 搜 G1RootProcessor::scan_remembered_sets 查看调用位置，而G1RootProcessor::scan_remembered_sets是在evacuate_root 中被调用的，
- *   即这个方法做的事情就是以转移专用记忆集合RSet为根进行扫描
+ *   即这个方法做的事情就是以RSet为根进行扫描
  */
 void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
                                            CodeBlobClosure* code_root_cl,
@@ -445,12 +446,14 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
         这个into_cset_dirty_card_queue_set 来恢复对应的RSet的过程
 
         创建一个全新的DCQ， 这个DCQ属于一个特殊的DCQS _into_cset_dirty_card_queue_set, 它存放的内容是所有指向了回收集合的DCQ
+        在updateRS(&into_cset_dcq, worker_i)中将会往into_cset_dirty_card_queue_set中添加数据
    */
   DirtyCardQueue into_cset_dcq(&_g1->into_cset_dirty_card_queue_set());
 
   assert((ParallelGCThreads > 0) || worker_i == 0, "invariant");
   /**
    * 搜索 void G1RemSet::updateRS
+   * 这里将会往 into_cset_dirty_card_queue_set 中添加数据
    */
   updateRS(&into_cset_dcq, worker_i);
   /**
@@ -465,21 +468,21 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
 void G1RemSet::prepare_for_oops_into_collection_set_do() {
   _g1->set_refine_cte_cl_concurrency(false);
   DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set();
-  dcqs.concatenate_logs();
+  dcqs.concatenate_logs(); // 遍历所有用户线程的不完整的logs以及全局的_shared_dirty_card_queue，将这些logs添加到全局的已完成的链表中去
 
   guarantee( _cards_scanned == NULL, "invariant" );
   _cards_scanned = NEW_C_HEAP_ARRAY(size_t, n_workers(), mtGC);
   for (uint i = 0; i < n_workers(); ++i) {
     _cards_scanned[i] = 0;
   }
-  _total_cards_scanned = 0;
+  _total_cards_scanned = 0; // 扫描数量清零，准备扫描
 }
 
 void G1RemSet::cleanup_after_oops_into_collection_set_do() {
   guarantee( _cards_scanned != NULL, "invariant" );
   _total_cards_scanned = 0;
   for (uint i = 0; i < n_workers(); ++i) {
-    _total_cards_scanned += _cards_scanned[i];
+    _total_cards_scanned += _cards_scanned[i]; //  统计每一个worker扫描的卡片数量
   }
   FREE_C_HEAP_ARRAY(size_t, _cards_scanned, mtGC);
   _cards_scanned = NULL;
@@ -575,7 +578,7 @@ G1UpdateRSOrPushRefOopClosure(G1CollectedHeap* g1h,
 // false otherwise.
 
 /**
- * 这个refine_card的处理目标一定只是针对脏卡片，通过Refine现成或者GC线程来调用处理脏卡片
+ * 这个refine_card的处理目标一定只是针对脏卡片，通过Refine线程或者GC线程来调用处理脏卡片
  * 对于GC线程，只有将脏卡片处理完毕(即，由于对象移动带来的卡片信息不一致的问题得到了修正)，才能开始对回收集合中的数据基于卡片进行根搜索
  * @param card_ptr
  * @param worker_i
@@ -598,10 +601,10 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
     // into the collection set.
     return false;
   }
-
-  // Construct the region representing the card.
+  // 确认了这张卡片是脏卡片
+  // 找到这个卡片对应的对象地址
   HeapWord* start = _ct_bs->addr_for(card_ptr);
-  // And find the region containing it.
+  // 找到这个卡片对应的HeapRegion地址
   HeapRegion* r = _g1->heap_region_containing(start);
 
   // Why do we have to check here whether a card is on a young region,
@@ -647,20 +650,22 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   //     which had some headroom),
   //   * a pointer to a "hot" card that was evicted from the "hot" cache.
   //
-
+  // 搜搜
   G1HotCardCache* hot_card_cache = _cg1r->hot_card_cache();
-  if (hot_card_cache->use_cache()) {
+  if (hot_card_cache->use_cache()) { // 默认使用cache
     assert(!check_for_refs_into_cset, "sanity");
     assert(!SafepointSynchronize::is_at_safepoint(), "sanity");
 
+    // 只有当缓存已经满了，或者卡片并不热，才会对卡片进行立刻refine，此时返回null
+    // 搜索 jbyte* G1HotCardCache::insert(jbyte* card_ptr)
     card_ptr = hot_card_cache->insert(card_ptr);
     if (card_ptr == NULL) {
       // There was no eviction. Nothing to do.
       return false;
     }
-
-    start = _ct_bs->addr_for(card_ptr);
-    r = _g1->heap_region_containing(start);
+    // 插入到热卡片缓存中返回非Null，说明需要进行立刻的Refine，这个返回的card并不一定就是参数card
+    start = _ct_bs->addr_for(card_ptr); // 弹出的car对应的Heap内存的地址
+    r = _g1->heap_region_containing(start);// 弹出的card 的 Region
 
     // Checking whether the region we got back from the cache
     // is young here is inappropriate. The region could have been
@@ -672,14 +677,14 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   // a card beyond the heap.  This is not safe without a perm
   // gen at the upper end of the heap.
   HeapWord* end   = start + CardTableModRefBS::card_size_in_words;
-  MemRegion dirtyRegion(start, end);
+  MemRegion dirtyRegion(start, end); // 创建一个代表这个脏卡片对应的对象的起始地址的MemRegion
 
 #if CARD_REPEAT_HISTO
   init_ct_freq_table(_g1->max_capacity());
   ct_freq_note_card(_ct_bs->index_for(start));
 #endif
 
-  G1ParPushHeapRSClosure* oops_in_heap_closure = NULL;
+  G1ParPushHeapRSClosure* oops_in_heap_closure = NULL; // 搜索 G1ParPushHeapRSClosure::do_oop_nv 可以看到，这个类的基本职责就是查看对象引用是否指向回收集合或者大对象，
   if (check_for_refs_into_cset) {
     // ConcurrentG1RefineThreads have worker numbers larger than what
     // _cset_rs_update_cl[] is set up to handle. But those threads should
@@ -690,10 +695,10 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   }
   G1UpdateRSOrPushRefOopClosure update_rs_oop_cl(_g1,
                                                  _g1->g1_rem_set(),
-                                                 oops_in_heap_closure,
+                                                 oops_in_heap_closure, // 如果check_for_refs_into_cset = false，oops_in_heap_closure为空
                                                  check_for_refs_into_cset,
                                                  worker_i);
-  update_rs_oop_cl.set_from(r);
+  update_rs_oop_cl.set_from(r); // 设置卡片来自于的HeapRegion
 
   G1TriggerClosure trigger_cl;
   FilterIntoCSClosure into_cs_cl(NULL, _g1, &trigger_cl);
@@ -704,7 +709,8 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
                         (check_for_refs_into_cset ?
                                 (OopClosure*)&mux :
                                 (OopClosure*)&update_rs_oop_cl));
-
+  // 这个卡片是刚刚从 Hotcache中弹出来的，尽管HotCache中插入卡片的时候都保证不是young region的卡片，
+  // 但是可能在弹出来的时候这个heapRegion已经在清理阶段被reallocated然后成为了young，因此还是需要进行check
   // The region for the current card may be a young region. The
   // current card may have been a card that was evicted from the
   // card cache. When the card was inserted into the cache, we had
@@ -719,11 +725,11 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   // filtering when it has been determined that there has been an actual
   // allocation in this region and making it safe to check the young type.
   bool filter_young = true;
-
+  // 搜索 HeapWord* HeapRegion::oops_on_card_seq_iterate_careful
   HeapWord* stop_point =
     r->oops_on_card_seq_iterate_careful(dirtyRegion,
                                         &filter_then_update_rs_oop_cl,
-                                        filter_young,
+                                        filter_young, // 是否filter out
                                         card_ptr);
 
   // If stop_point is non-null, then we encountered an unallocated region
@@ -748,7 +754,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
 
   // This gets set to true if the card being refined has
   // references that point into the collection set.
-  bool has_refs_into_cset = trigger_cl.triggered();
+  bool has_refs_into_cset = trigger_cl.triggered(); // 正在Refine的卡片是否有指向回收集合的引用
 
   // We should only be detecting that the card contains references
   // that point into the collection set if the current thread is

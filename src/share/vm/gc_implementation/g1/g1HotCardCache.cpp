@@ -56,14 +56,19 @@ G1HotCardCache::~G1HotCardCache() {
   }
 }
 
+/**
+ * 调用者 bool G1RemSet::refine_card
+ * 所返回的卡片将会被refine
+ */
 jbyte* G1HotCardCache::insert(jbyte* card_ptr) {
+  // 增加卡片的计数
   uint count = _card_counts.add_card_count(card_ptr);
-  if (!_card_counts.is_hot(count)) {
+  if (!_card_counts.is_hot(count)) { // 并不是热卡片
     // The card is not hot so do not store it in the cache;
     // return it for immediate refining.
     return card_ptr;
   }
-  // Otherwise, the card is hot.
+  // 这个卡片是一个热卡片
   size_t index = Atomic::add_ptr((intptr_t)1, (volatile intptr_t*)&_hot_cache_idx) - 1;
   size_t masked_index = index & (_hot_cache_size - 1);
   jbyte* current_ptr = _hot_cache[masked_index];
@@ -77,6 +82,7 @@ jbyte* G1HotCardCache::insert(jbyte* card_ptr) {
   jbyte* previous_ptr = (jbyte*)Atomic::cmpxchg_ptr(card_ptr,
                                                     &_hot_cache[masked_index],
                                                     current_ptr);
+  // 如果previous_ptr == current_ptr，代表插入成功，那么返回previous_ptr，如果插入失败，说明其他线程已经进行了插入，返回card_ptr
   return (previous_ptr == current_ptr) ? previous_ptr : card_ptr;
 }
 

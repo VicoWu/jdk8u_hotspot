@@ -40,6 +40,10 @@ public:
 };
 
 // A ptrQueue whose elements are "oops", pointers to object heads.
+/**
+ * 继承关系 DirtyCardQueueSet -> PtrQueueSet
+           DirtyCardQueue -> PtrQueue
+ */
 class DirtyCardQueue: public PtrQueue {
 public:
     /**
@@ -87,8 +91,8 @@ public:
 
 
 /**
- * DirtyCardQueueSet继承了DirtyCardQueueSet
- * DirtyCardQueue继承了PtrQueue
+ * 继承关系 DirtyCardQueueSet -> PtrQueueSet
+           DirtyCardQueue -> PtrQueue
  */
 class DirtyCardQueueSet: public PtrQueueSet {
   // The closure used in mut_process_buffer().

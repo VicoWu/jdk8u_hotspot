@@ -65,16 +65,16 @@ class CardTableModRefBS: public ModRefBarrierSet {
      * 这是因为一个卡片可能同时处于CardValues中的一个或者多个状态
      */
   enum CardValues {
-    clean_card                  = -1,
+    clean_card                  = -1, // 11111111
     // The mask contains zeros in places for all other values.
-    clean_card_mask             = clean_card - 31,
+    clean_card_mask             = clean_card - 31, // 计算: -1 - 31 = -32, 二进制位1110 0000
 
-    dirty_card                  =  0,
-    precleaned_card             =  1,
-    claimed_card                =  2,
-    deferred_card               =  4,
-    last_card                   =  8,
-    CT_MR_BS_last_reserved      = 16
+    dirty_card                  =  0, // 00000000
+    precleaned_card             =  1, // 00000001
+    claimed_card                =  2, // 00000010
+    deferred_card               =  4, // 00000100
+    last_card                   =  8, // 00001000
+    CT_MR_BS_last_reserved      = 16  // 00010000
   };
 
   // a word's worth (row) of clean card values
@@ -498,7 +498,7 @@ protected:
   bool card_may_have_been_dirty(jbyte cv);
 public:
   CardTableModRefBSForCTRS(MemRegion whole_heap,
-                           int max_covered_regions) :
+                           int max_covered_regions) : // 在子类G1SATBCardTableModRefBS中构造，传入的参数是2
     CardTableModRefBS(whole_heap, max_covered_regions) {}
 
   void set_CTRS(CardTableRS* rs) { _rs = rs; }

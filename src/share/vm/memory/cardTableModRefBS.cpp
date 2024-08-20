@@ -52,7 +52,11 @@ size_t CardTableModRefBS::compute_byte_map_size()
   const size_t granularity = os::vm_allocation_granularity();
   return align_size_up(_guard_index + 1, MAX2(_page_size, granularity));
 }
-
+/**
+ * 继承关系： G1SATBCardTableLoggingModRefBS -> G1SATBCardTableModRefBS -> CardTableModRefBSForCTRS -> CardTableModRefBS ->  ModRefBarrierSet -> BarrierSet
+ * @param whole_heap
+ * @param max_covered_regions
+ */
 CardTableModRefBS::CardTableModRefBS(MemRegion whole_heap,
                                      int max_covered_regions):
   ModRefBarrierSet(max_covered_regions),
@@ -86,7 +90,7 @@ CardTableModRefBS::CardTableModRefBS(MemRegion whole_heap,
   }
 }
 
-// G1GC中使用的是 G1SATBCardTableModRefBS的实现
+// G1GC中使用的是 G1SATBCardTableModRefBS 的实现
 void CardTableModRefBS::initialize() {
   _guard_index = cards_required(_whole_heap.word_size()) - 1;
   _last_valid_index = _guard_index - 1;
@@ -97,7 +101,7 @@ void CardTableModRefBS::initialize() {
   HeapWord* high_bound = _whole_heap.end();
 
   _cur_covered_regions = 0;
-  _committed = new MemRegion[_max_covered_regions];
+  _committed = new MemRegion[_max_covered_regions]; // 这里传入的是2
   if (_committed == NULL) {
     vm_exit_during_initialization("Could not allocate card table committed region set.");
   }

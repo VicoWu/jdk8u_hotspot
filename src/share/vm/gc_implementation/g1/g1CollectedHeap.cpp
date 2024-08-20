@@ -1532,7 +1532,7 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       // Make sure we'll choose a new allocation region afterwards.
       _allocator->release_mutator_alloc_region();
       _allocator->abandon_gc_alloc_regions();
-      g1_rem_set()->cleanupHRRS(); // 清空 HeapRegionRemSet
+      g1_rem_set()->cleanupHRRS(); // 清理HeapRegionRemSet，查看代码，可以看到这里是清空SparsePRT::cleanup()，这里并不是删除任何元素，而是将SparsePRT中的_cur清空，然后让_cur和_next设置为一致指向_next
 
       // We should call this after we retire any currently active alloc
       // regions so that all the ALLOC / RETIRE events are generated
@@ -2234,7 +2234,7 @@ jint G1CollectedHeap::initialize() {
 
   // Create the gen rem set (and barrier set) for the entire reserved region.
   // 创建整个Heap的RSet 搜索 CollectorPolicy::create_rem_set
-  _rem_set = collector_policy()->create_rem_set(_reserved, 2);// CardTableRS
+  _rem_set = collector_policy()->create_rem_set(_reserved, 2);// CardTableRS，搜索 CollectorPolicy::create_rem_set
   //  搜索 CardTableRS::CardTableRS 的构造方法，看到_barrier_set是 G1SATBCardTableLoggingModRefBS
   set_barrier_set(rem_set()->bs()); // 设置BarrierSet的实现类，可以看到，BarrierSet的实现类来自于RSet
   if (!barrier_set()->is_a(BarrierSet::G1SATBCTLogging)) {
@@ -2565,7 +2565,7 @@ void G1CollectedHeap::iterate_dirty_card_closure(CardTableEntryClosure* cl, //�
   // 在这个全局的DCQS上应用 RefineRecordRefsIntoCSCardTableEntryClosure
   /**
    * 查看具体实现 DirtyCardQueueSet::apply_closure_to_completed_buffer
-   * 只要成功就不断循环，其实就是不断从DCQS中取出_completed_buffers_head链表的头结点来处理，直到处理完，返回false，循环退出
+   * 只要成功就不断循环，其实就是不断从DCQS中取出_completed_buffers_head 链表的头结点来处理，直到处理完，返回false，循环退出
    * 查看RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，把当前DCQS中的所有的void **buf中指向回收集合的条目添加到into_cset_dcq中去
    */
   while (dcqs.apply_closure_to_completed_buffer(cl, worker_i, 0, true)) {
@@ -2840,7 +2840,7 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
           retry_gc = op.should_retry_gc(); // 读取op的_should_retry标记，获取是否需要重试，在while循环中会判断retry_gc。对于大对象分配，不需要retry
         } else {
             /***
-             *  _old_marking_cycles_started已经发生了变化，说明刚刚发生了一次full gc,不用重试了
+             *  _old_marking_cycles_started 已经发生了变化，说明刚刚发生了一次full gc,不用重试了
              */
           // A Full GC happened while we were trying to schedule the
           // initial-mark GC. No point in starting a new cycle given
@@ -5347,7 +5347,7 @@ public:
       ReferenceProcessor*             rp = _g1h->ref_processor_stw();
       /**
        * PSS队列中存放了那些根可达、并且子对象又在CSet中的对象
-       * 可以看到，每一个Workder都会创建一个G1ParScanThreadState对象，负责维护这个worker在进行垃圾回收期间的一些引用状态等信息
+       * 可以看到，每一个Worker都会创建一个G1ParScanThreadState对象，负责维护这个worker在进行垃圾回收期间的一些引用状态等信息
        */
       G1ParScanThreadState            pss(_g1h, worker_id, rp);
       G1ParScanHeapEvacFailureClosure evac_failure_cl(_g1h, &pss, rp);
@@ -6512,7 +6512,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
 
   // Should G1EvacuationFailureALot be in effect for this GC?
   NOT_PRODUCT(set_evacuation_failure_alot_for_current_gc();)
-
+  // 搜索 void G1RemSet::prepare_for_oops_into_collection_set_do()
   g1_rem_set()->prepare_for_oops_into_collection_set_do();
 
   // Disable the hot card cache.
@@ -6527,7 +6527,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
     set_par_threads(n_workers);
 
   init_for_evac_failure(NULL);
-
+  // 设置更年轻一代的Region的卡片值
   rem_set()->prepare_for_younger_refs_iterate(true);
 
   assert(dirty_card_queue_set().completed_buffers_num() == 0, "Should be empty");
@@ -6551,7 +6551,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
 
     /**
      * 是否并行执行
-     * 可以看到，这个use_parallel_gc_threads方法既用来决定是否并行执行，比如在ConcurrentMark::calc_parallel_marking_threads中
+     * 可以看到，这个 use_parallel_gc_threads方法既用来决定是否并行执行，比如在ConcurrentMark::calc_parallel_marking_threads中
      *      也用来决定是否并发执行，比如在这里
      */
     if (G1CollectedHeap::use_parallel_gc_threads()) {
@@ -6562,7 +6562,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
              workers()->active_workers() == workers()->total_workers(),
              "If not dynamic should be using all the  workers");
       /*
-       * workers()返回当前的全局的 FlexibleWorkGang对象指针, 这个FlexibleWorkGang的构造是在 SharedHeap::SharedHeap的构造函数中进行创建并初始化了它负责的所有的GangWorker
+       * workers()返回当前的全局的 FlexibleWorkGang 对象指针, 这个FlexibleWorkGang的构造是在 SharedHeap::SharedHeap的构造函数中进行创建并初始化了它负责的所有的GangWorker
        * run_task的实现，搜索 void FlexibleWorkGang::run_task
        * 以STW并行的方式执行g1_par_task
        */
@@ -6608,7 +6608,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
     double fixup_time_ms = (os::elapsedTime() - fixup_start) * 1000.0;
     phase_times->record_string_dedup_fixup_time(fixup_time_ms);
   }
-  // 删除当前的_gc_alloc_regions，将其保存在_retained_old_gc_alloc_region中
+  // 删除当前的_gc_alloc_regions，将其保存在 _retained_old_gc_alloc_region 中
   _allocator->release_gc_alloc_regions(n_workers, evacuation_info);
   /**
    * void G1RemSet::cleanup_after_oops_into_collection_set_do()

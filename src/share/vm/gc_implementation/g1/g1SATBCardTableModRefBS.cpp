@@ -31,9 +31,14 @@
 #include "runtime/orderAccess.inline.hpp"
 #include "runtime/thread.inline.hpp"
 
+/**
+ * 继承关系： G1SATBCardTableLoggingModRefBS -> G1SATBCardTableModRefBS -> CardTableModRefBSForCTRS -> CardTableModRefBS
+ * @param whole_heap
+ * @param max_covered_regions
+ */
 G1SATBCardTableModRefBS::G1SATBCardTableModRefBS(MemRegion whole_heap,
                                                  int max_covered_regions) :
-    CardTableModRefBSForCTRS(whole_heap, max_covered_regions)
+    CardTableModRefBSForCTRS(whole_heap, max_covered_regions) // 在 G1SATBCardTableLoggingModRefBS::G1SATBCardTableLoggingModRefBS 中传入的是2
 {
   _kind = G1SATBCT;
 }
@@ -156,9 +161,14 @@ void G1SATBCardTableLoggingModRefBSChangedListener::on_commit(uint start_idx, si
   _card_table->clear(mr);
 }
 
+/**
+ * 继承关系： G1SATBCardTableLoggingModRefBS -> G1SATBCardTableModRefBS -> CardTableModRefBSForCTRS -> CardTableModRefBS
+ * @param whole_heap
+ * @param max_covered_regions
+ */
 G1SATBCardTableLoggingModRefBS::
 G1SATBCardTableLoggingModRefBS(MemRegion whole_heap,
-                               int max_covered_regions) :
+                               int max_covered_regions) : // CardTableRS::CardTableRS中传入的是2
   G1SATBCardTableModRefBS(whole_heap, max_covered_regions),
   _dcqs(JavaThread::dirty_card_queue_set()),
   _listener()

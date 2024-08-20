@@ -319,7 +319,7 @@ void Generation::oop_iterate(ExtendedOopClosure* cl) {
 void Generation::younger_refs_in_space_iterate(Space* sp,
                                                OopsInGenClosure* cl) {
   GenRemSet* rs = SharedHeap::heap()->rem_set();
-  rs->younger_refs_in_space_iterate(sp, cl);
+  rs->younger_refs_in_space_iterate(sp, cl); // 查看 CardTableRS::younger_refs_in_space_iterate
 }
 
 class GenerationObjIterateClosure : public SpaceClosure {

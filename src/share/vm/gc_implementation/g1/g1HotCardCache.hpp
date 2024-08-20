@@ -83,7 +83,7 @@ class G1HotCardCache: public CHeapObj<mtGC> {
   static const int ClaimChunkSize = 32;
 
   bool default_use_cache() const {
-    return (G1ConcRSLogCacheSize > 0);
+    return (G1ConcRSLogCacheSize > 0); // 默认是10
   }
 
  public:

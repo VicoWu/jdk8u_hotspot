@@ -854,6 +854,7 @@ protected:
   void evacuate_collection_set(EvacuationInfo& evacuation_info);
 
   // The g1 remembered set of the heap.
+  // 就是G1RemSet对象实例， _g1_rem_set = new G1RemSet(this, g1_barrier_set());
   G1RemSet* _g1_rem_set;
 
   // A set of cards that cover the objects for which the Rsets should be updated

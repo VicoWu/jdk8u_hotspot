@@ -418,17 +418,17 @@ HeapRegion::object_iterate_mem_careful(MemRegion mr,
  * @param card_ptr
  * @return
  */
-HeapWord*
-HeapRegion::
-oops_on_card_seq_iterate_careful(MemRegion mr,
+HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
                                  FilterOutOfRegionClosure* cl,
                                  bool filter_young,
                                  jbyte* card_ptr) {
   // Currently, we should only have to clean the card if filter_young
   // is true and vice versa.
+  // 当 filter_young = true，card_ptr必须不为空
   if (filter_young) {
     assert(card_ptr != NULL, "pre-condition");
   } else {
+      // 当 filter_young = false，card_ptr必须为空
     assert(card_ptr == NULL, "pre-condition");
   }
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
@@ -437,7 +437,7 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
   // GC alloc region that extends onto a GC LAB, which may not be
   // parseable.  Stop such at the "scan_top" of the region.
   if (g1h->is_gc_active()) {
-    mr = mr.intersection(MemRegion(bottom(), scan_top()));
+    mr = mr.intersection(MemRegion(bottom(), scan_top())); //  将传入的HeapRegion同 [bottom(), scan_top()]进行交集操作
   } else {
     mr = mr.intersection(used_region());
   }
@@ -460,7 +460,7 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
   // the card is not young. And we only clean the card if we have been
   // asked to (i.e., card_ptr != NULL).
   if (card_ptr != NULL) {
-    *card_ptr = CardTableModRefBS::clean_card_val();
+    *card_ptr = CardTableModRefBS::clean_card_val(); // 把卡片的值变成一张干净的卡片
     // We must complete this write before we do any of the reads below.
     OrderAccess::storeload();
   }

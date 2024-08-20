@@ -45,7 +45,7 @@ class KlassRemSet {
   bool mod_union_is_clear();
   void clear_mod_union();
 };
-
+// 继承关系 CardTableRS -> GenRemSet
 class GenRemSet: public CHeapObj<mtGC> {
   friend class Generation;
 
