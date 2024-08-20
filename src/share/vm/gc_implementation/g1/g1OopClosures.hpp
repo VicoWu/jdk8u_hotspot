@@ -51,7 +51,7 @@ public:
 class G1ParClosureSuper : public OopsInHeapRegionClosure {
 protected:
   G1CollectedHeap* _g1;
-  G1ParScanThreadState* _par_scan_state;
+  G1ParScanThreadState* _par_scan_state; // 每一个回收线程都有一个G1ParScanThreadState，保存当前回收线程的状态
   uint _worker_id;
 public:
   // Initializes the instance, leaving _par_scan_state uninitialized. Must be done
@@ -181,7 +181,7 @@ class FilterOutOfRegionClosure: public ExtendedOopClosure {
 public:
   FilterOutOfRegionClosure(HeapRegion* r, OopClosure* oc);
   template <class T> void do_oop_nv(T* p);
-  virtual void do_oop(oop* p) { do_oop_nv(p); }
+  virtual void do_oop(oop* p) { do_oop_nv(p); } // do_oop 实际上调用 do_oop_nv
   virtual void do_oop(narrowOop* p) { do_oop_nv(p); }
   bool apply_to_weak_ref_discovered_field() { return true; }
 };

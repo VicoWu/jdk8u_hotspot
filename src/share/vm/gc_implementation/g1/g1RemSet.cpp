@@ -683,32 +683,34 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
   init_ct_freq_table(_g1->max_capacity());
   ct_freq_note_card(_ct_bs->index_for(start));
 #endif
-
+  // 查看 inline void G1ParPushHeapRSClosure::do_oop_nv(T* p)
   G1ParPushHeapRSClosure* oops_in_heap_closure = NULL; // 搜索 G1ParPushHeapRSClosure::do_oop_nv 可以看到，这个类的基本职责就是查看对象引用是否指向回收集合或者大对象，
-  if (check_for_refs_into_cset) {
+  if (check_for_refs_into_cset) { // 如果需要检查into collection set，那么，我们
     // ConcurrentG1RefineThreads have worker numbers larger than what
     // _cset_rs_update_cl[] is set up to handle. But those threads should
     // only be active outside of a collection which means that when they
     // reach here they should have check_for_refs_into_cset == false.
     assert((size_t)worker_i < n_workers(), "index of worker larger than _cset_rs_update_cl[].length");
-    oops_in_heap_closure = _cset_rs_update_cl[worker_i];
+    oops_in_heap_closure = _cset_rs_update_cl[worker_i]; // 获取当前的worker thread 的 G1ParPushHeapRSClosure， 每一个 worker thread都有自己的 worker thread
   }
+  // check_for_refs_into_cset = false，搜索 G1UpdateRSOrPushRefOopClosure::do_oop_nv
   G1UpdateRSOrPushRefOopClosure update_rs_oop_cl(_g1,
                                                  _g1->g1_rem_set(),
                                                  oops_in_heap_closure, // 如果check_for_refs_into_cset = false，oops_in_heap_closure为空
-                                                 check_for_refs_into_cset,
+                                                 check_for_refs_into_cset, // 如果是GC引起的，那么check_for_refs_into_cset=true
                                                  worker_i);
   update_rs_oop_cl.set_from(r); // 设置卡片来自于的HeapRegion
 
-  G1TriggerClosure trigger_cl;
-  FilterIntoCSClosure into_cs_cl(NULL, _g1, &trigger_cl);
-  G1InvokeIfNotTriggeredClosure invoke_cl(&trigger_cl, &into_cs_cl);
-  G1Mux2Closure mux(&invoke_cl, &update_rs_oop_cl);
-
+  G1TriggerClosure trigger_cl; // inline void G1TriggerClosure::do_oop_nv(T* p)
+  FilterIntoCSClosure into_cs_cl(NULL, _g1, &trigger_cl); // FilterIntoCSClosure::do_oop_nv(T* p),如果对象的确在回收集合中或者是大对象，那么设置trigger_cl 为triggered
+  G1InvokeIfNotTriggeredClosure invoke_cl(&trigger_cl, &into_cs_cl);  // G1InvokeIfNotTriggeredClosure::do_oop_nv(T* p)
+  G1Mux2Closure mux(&invoke_cl, &update_rs_oop_cl); // check_for_refs_into_cset = true， 搜搜 G1Mux2Closure::do_oop_nv
+  // 搜索 FilterOutOfRegionClosure::FilterOutOfRegionClosure
+  // 为true和为false的唯一区别是是否执行 invoke_cl
   FilterOutOfRegionClosure filter_then_update_rs_oop_cl(r,
                         (check_for_refs_into_cset ?
-                                (OopClosure*)&mux :
-                                (OopClosure*)&update_rs_oop_cl));
+                                (OopClosure*)&mux : // check_for_refs_into_cset = true
+                                (OopClosure*)&update_rs_oop_cl)); // check_for_refs_into_cset = false  inline void FilterOutOfRegionClosure::do_oop_nv
   // 这个卡片是刚刚从 Hotcache中弹出来的，尽管HotCache中插入卡片的时候都保证不是young region的卡片，
   // 但是可能在弹出来的时候这个heapRegion已经在清理阶段被reallocated然后成为了young，因此还是需要进行check
   // The region for the current card may be a young region. The

@@ -42,8 +42,8 @@
 
 template <class T>
 inline void FilterIntoCSClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p);
-  if (!oopDesc::is_null(heap_oop) &&
+  T heap_oop = oopDesc::load_heap_oop(p);  // 加载这个field所指向的对象的对象指针
+  if (!oopDesc::is_null(heap_oop) && // 指针不为空，并且这个对象在回收集合中，或者是一个大对象
       _g1->is_in_cset_or_humongous(oopDesc::decode_heap_oop_not_null(heap_oop))) {
     _oc->do_oop(p);
   }
@@ -51,8 +51,8 @@ inline void FilterIntoCSClosure::do_oop_nv(T* p) {
 
 template <class T>
 inline void FilterOutOfRegionClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p);
-  if (!oopDesc::is_null(heap_oop)) {
+  T heap_oop = oopDesc::load_heap_oop(p); // 加载field p所指向的对象，返回这个对象对应的oopDesc*
+  if (!oopDesc::is_null(heap_oop)) { // 不是一个空指针，即这个field不是指向一个空的对象
     HeapWord* obj_hw = (HeapWord*)oopDesc::decode_heap_oop_not_null(heap_oop);
     if (obj_hw < _r_bottom || obj_hw >= _r_end) {
       _oc->do_oop(p);
@@ -108,7 +108,7 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
  */
 template <class T>
 inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p); // 从指针 p 所指向的内存位置加载一个堆对象指针，即指针p指向的位置存放了一个指针q，q指向了堆内存
+  T heap_oop = oopDesc::load_heap_oop(p); // 从指针 p(即一个指向Field的指针) 所指向的内存位置加载一个堆对象指针，即指针p指向的位置存放了一个field，这个field指向了堆内存中的另一个对象
 
   if (!oopDesc::is_null(heap_oop)) { // 如果指针不为空，表示指针指向了一个有效的堆对象
       /**
@@ -130,7 +130,7 @@ inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
       Prefetch::read(obj->mark_addr(), (HeapWordSize*2));
 
       // Place on the references queue
-      // 将指针 p 放入引用队列中，以便后续的扫描操作
+      // 将指针 p(一个指向field的指针) 放入引用队列中，以便后续的扫描操作
       _par_scan_state->push_on_queue(p);
     } else {
       assert(!_g1->obj_in_cs(obj), "checking");
@@ -179,6 +179,7 @@ inline void G1RootRegionScanClosure::do_oop_nv(T* p) {
   }
 }
 
+// check_for_refs_into_cset = true，在 G1RemSet::refine_card中调用
 template <class T>
 inline void G1Mux2Closure::do_oop_nv(T* p) {
   // Apply first closure; then apply the second.
@@ -194,11 +195,13 @@ inline void G1TriggerClosure::do_oop_nv(T* p) {
 
 template <class T>
 inline void G1InvokeIfNotTriggeredClosure::do_oop_nv(T* p) {
-  if (!_trigger_cl->triggered()) {
+  if (!_trigger_cl->triggered()) {// 如果还没trigger
     _oop_cl->do_oop(p);
   }
 }
 
+// 无论check_for_refs_into_cset = false/true, 这个Closure都会调用。
+// 在 G1RemSet::refine_card中调用
 template <class T>
 inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
   oop obj = oopDesc::load_decode_heap_oop(p);
@@ -238,6 +241,11 @@ inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
   //    set in the event of an evacuation failure (when deferred
   //    updates are enabled).
 
+    // 在Evacuation Pause期间的RSet更新阶段_record_refs_into_cset = true。在其他所有情况下，它为假：
+    //1. 在一次完全GC之后重建Remembered Set。
+    //2. 在并发优化期间。
+    //3. 在发生撤离失败时（当启用了延迟更新时）更新收集集中区域的Remembered Set。
+  // 如果需要检查into_cset，并且对象的确在cst中
   if (_record_refs_into_cset && to->in_collection_set()) {
     // We are recording references that point into the collection
     // set and this particular reference does exactly that...
@@ -245,25 +253,29 @@ inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
     // to itself, we are handling an evacuation failure and
     // we have already visited/tried to copy this object
     // there is no need to retry.
+    // 我们正在记录指向收集集的引用，而这个引用正好是这样的引用……
+    //  而如果被引用的对象是自转发的(self-forwarded)，我们正在处理一次撤离失败，并且我们已经访问过/尝试过复制这个对象，因此不需要重试。
     if (!self_forwarded(obj)) {
       assert(_push_ref_cl != NULL, "should not be null");
       // Push the reference in the refs queue of the G1ParScanThreadState
       // instance for this worker thread.
-      _push_ref_cl->do_oop(p);
+      _push_ref_cl->do_oop(p); // 将这个对象push到当前的worker的state对象中。inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
      }
 
     // Deferred updates to the CSet are either discarded (in the normal case),
     // or processed (if an evacuation failure occurs) at the end
     // of the collection.
     // See G1RemSet::cleanup_after_oops_into_collection_set_do().
-  } else {
+    // 对CSet的延迟更新要么在正常情况下被丢弃，要么在收集结束时（如果发生撤离失败）进行处理。查看 G1RemSet::cleanup_after_oops_into_collection_set_do().
+  } else { // 如果不需要检查cset，或者需要检查但是field指向的obj并不在cset中
     // We either don't care about pushing references that point into the
     // collection set (i.e. we're not during an evacuation pause) _or_
     // the reference doesn't point into the collection set. Either way
     // we add the reference directly to the RSet of the region containing
     // the referenced object.
     assert(to->rem_set() != NULL, "Need per-region 'into' remsets.");
-    to->rem_set()->add_reference(p, _worker_i);
+    // 我们要么不关心推送指向收集集的引用（即我们不在撤离暂停期间），要么该引用不指向收集集。不管是哪种情况，我们都会将引用直接添加到包含被引用对象的区域的RSet中。
+    to->rem_set()->add_reference(p, _worker_i); // 将这个引用关系记录到目标对象的HeapRegion的OtherRegionTable中去
   }
 }
 

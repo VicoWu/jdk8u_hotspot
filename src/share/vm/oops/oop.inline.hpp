@@ -82,7 +82,7 @@ inline Klass* oopDesc::klass_or_null() const volatile {
   if (UseCompressedClassPointers) {
     return Klass::decode_klass(_metadata._compressed_klass);
   } else {
-    return _metadata._klass;
+    return _metadata._klass; // 返回这个oopDesc的_klass
   }
 }
 
@@ -759,6 +759,7 @@ inline int oopDesc::oop_iterate(OopClosureType* blk) {                     \
   SpecializationStats::record_call();                                      \
   /**
  *  搜索 int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure)
+ *  klass()返回这个对象的InstanceKlass对象，然后在上面调用宏 oop_oop_iterate##nv_suffix
  */
   return klass()->oop_oop_iterate##nv_suffix(this, blk);               \
 }                                                                          \

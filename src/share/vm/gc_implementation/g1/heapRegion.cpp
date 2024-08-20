@@ -411,7 +411,7 @@ HeapRegion::object_iterate_mem_careful(MemRegion mr,
 }
 
 /**
- * 在G1RemSet::refine_card中被调用
+ * 在 G1RemSet::refine_card 中被调用，返回一个地址HeapWord* stop_point
  * @param mr
  * @param cl
  * @param filter_young
@@ -419,7 +419,7 @@ HeapRegion::object_iterate_mem_careful(MemRegion mr,
  * @return
  */
 HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
-                                 FilterOutOfRegionClosure* cl,
+                                 FilterOutOfRegionClosure* cl, //  FilterOutOfRegionClosure
                                  bool filter_young,
                                  jbyte* card_ptr) {
   // Currently, we should only have to clean the card if filter_young
@@ -441,7 +441,7 @@ HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
   } else {
     mr = mr.intersection(used_region());
   }
-  if (mr.is_empty()) return NULL;
+  if (mr.is_empty()) return NULL; // 没有交叉区域，比如，当前的HeapRegion就是当前正在进行的GC的GC Alloc Region，那么是不接受扫描的
   // Otherwise, find the obj that extends onto mr.start().
 
   // The intersection of the incoming mr (for the card) and the
@@ -499,8 +499,8 @@ HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
       return cur;
     }
     // Otherwise...
-    next = cur + block_size(cur); // 一个对象一个对象地往后移动
-  } while (next <= start); //一直从start对应的block_start的位置遍历到start的位置
+    next = cur + block_size(cur); // 一个对象一个对象地往后移动，一直
+  } while (next <= start); // 一直从start对应的block_start的位置遍历到start的位置
 
   // If we finish the above loop...We have a parseable object that
   // begins on or before the start of the memory region, and ends
@@ -509,16 +509,17 @@ HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
   assert(obj->klass_or_null() != NULL, "Loop postcondition");
   /**
    * 执行到这里，cur + block_size(cur) 一定是 > start的值，即我们找到了这样一个[cur, cur + block_size(cur)]区间，使得addr处于这个区间内
-   * 然后接着往下开始遍历，一直遍历到  cur >= end，
+   * 然后接着往下开始遍历，一直遍历到  cur >= end，或者遇到一个对象
    * 对中间的每一个地址，在上面apply对应的closure
    */
 
   do {
-    obj = oop(cur);
+    obj = oop(cur); // 将HeapWord* 转换成 oopDesc *，即转换成一个对象指针
     assert((cur + block_size(cur)) > (HeapWord*)obj, "Loop invariant");
+    // 搜索 Klass* oopDesc::klass_or_null()
     if (obj->klass_or_null() == NULL) { // 如果是KLass，则返回对应的KLass*，否则返回null
-      // Ran into an unparseable point.
-      return cur;
+      // 遇到一个无法解析的指针，不是对象指针，退出，因为显然，遇到这样的对象是无法直到它的block size，因此无法往后继续的
+      return cur; // 返回cur 作为stop_at
     }
 
     // Advance the current pointer. "obj" still points to the object to iterate.
@@ -529,15 +530,16 @@ HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
       // always need to iterate over them in full.
       // We only iterate over object arrays in full if they are completely contained
       // in the memory region.
+      // 如果这个对象不是一个array，或者，尽管是一个array，但是这个array是在start和end之间，那么对这个obj apply FilterOutOfRegionClosure
       if (!obj->is_objArray() || (((HeapWord*)obj) >= start && cur <= end)) {
-        obj->oop_iterate(cl);
+        obj->oop_iterate(cl); // 搜索 inline int oopDesc::oop_iterate, 实际上会apply FilterOutOfRegionClosure::do_oop_nv
       } else {
-        obj->oop_iterate(cl, mr);
+        obj->oop_iterate(cl, mr); // 如果这个对象是obj Array，并且 (obj < start 或者  cur > end)
       }
     }
   } while (cur < end); // 一直遍历到 cur >= end
 
-  return NULL;
+  return NULL; // 返回空地址，代表已经完成了
 }
 
 // Code roots support
@@ -1107,7 +1109,7 @@ void HeapRegion::verify_rem_set() const {
 
 void G1OffsetTableContigSpace::clear(bool mangle_space) {
   set_top(bottom());
-  _scan_top = bottom();
+  _scan_top = bottom(); // 整个region目前不可扫描
   CompactibleSpace::clear(mangle_space);
   reset_bot();
 }
@@ -1145,9 +1147,9 @@ HeapWord* G1OffsetTableContigSpace::scan_top() const {
   OrderAccess::loadload();
   const unsigned local_time_stamp = _gc_time_stamp;
   assert(local_time_stamp <= g1h->get_gc_time_stamp(), "invariant");
-  if (local_time_stamp < g1h->get_gc_time_stamp()) {
+  if (local_time_stamp < g1h->get_gc_time_stamp()) { // 如果这个HeapRegion中保存的local_time_stamp是前面的某一次gc时间，那么，整个HeapRegion都可以扫描
     return local_top;
-  } else {
+  } else { // 这个HeapRegion是当前GC alloc Region，那么，只可以最多扫描到_scan_top的位置(对于本轮的gc alloc region，_scan_top就是bottom)，高于这个位置
     return _scan_top;
   }
 }
@@ -1172,7 +1174,7 @@ void G1OffsetTableContigSpace::record_timestamp() {
 void G1OffsetTableContigSpace::record_retained_region() {
   // scan_top is the maximum address where it's safe for the next gc to
   // scan this region.
-  _scan_top = top();
+  _scan_top = top(); // 更新可扫描区域的最高地址
 }
 
 void G1OffsetTableContigSpace::safe_object_iterate(ObjectClosure* blk) {

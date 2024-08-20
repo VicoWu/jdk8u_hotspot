@@ -120,8 +120,9 @@ public:
 // evacuation pauses between two cleanups, which is _highly_ unlikely.
 /**
  * 在 G1 收集器中，为了确保安全扫描每个HeapRegion的对象，需要跟踪每个HeapRegion中可以安全扫描对象的最高地址，这只是跟GC-Alloc region相关，所以，我们记录了一个时间戳，用来判断这个HeapRegion是否是一个在当前GC期间分配的Region
- * 如果某个Region在当前垃圾回收周期中分配了内存，其时间戳将更新。如果时间戳是最新的，那么系统将返回一个 scan_top 值，这个值在前一次垃圾回收结束时保存，表示这个区域内对象可以安全扫描的最高地址。
- * 对于新分配的区域，scan_top 通常等于区域的底部（即最初分配的位置）。
+ * 如果某个Region在当前垃圾回收周期中分配了内存，其时间戳将更新。
+ * 如果时间戳是最新的，那么系统将返回一个 scan_top 值，这个值在前一次垃圾回收结束时保存，表示这个区域内对象可以安全扫描的最高地址。
+ * 对于新分配的区域，scan_top 通常等于区域的底部（即最初分配的位置），代表这个区域是当前GC分配的Region，不接受扫描。
  */
 /**
  * 由于G1OffsetTableContigSpace是HeapRegion的父类，因此这里的构造函数在HeapRegion中构造（搜索 G1OffsetTableContigSpace）
@@ -129,7 +130,7 @@ public:
 class G1OffsetTableContigSpace: public CompactibleSpace {
   friend class VMStructs;
   HeapWord* _top;
-  HeapWord* volatile _scan_top;
+  HeapWord* volatile _scan_top; // 可以供卡片扫描的最高地址
  protected:
     /**
      * 构造一个G1BlockOffsetArrayContigSpace对象，用于维护这个HeapRegion的块偏移表
