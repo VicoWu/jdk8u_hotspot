@@ -113,6 +113,7 @@ protected:
   typedef NOT_LP64(uint16_t) LP64_ONLY(uint32_t) idx_t;
 
   // The first free element after the last one pushed (mod N).
+  // _bottom 表示队列的底部索引，指示队列的插入位置（即下一次 push 操作将放置元素的位置）。
   volatile uint _bottom;
 
   enum { MOD_N_MASK = N - 1 };
@@ -125,7 +126,7 @@ protected:
 
     Age   get()        const volatile { return _data; }
     void  set(Age age) volatile       { _data = age._data; }
-
+    // top 指示队列的读取位置（即下一次 pop 操作将移除元素的位置）。pop 操作从 _top 所指的位置移除元素，然后更新 _top。
     idx_t top()        const volatile { return _fields._top; }
     idx_t tag()        const volatile { return _fields._tag; }
 
@@ -296,15 +297,18 @@ public:
   void initialize();
 
   // Push the task "t" on the queue.  Returns "false" iff the queue is full.
+  // 将任务 t 推入队列。仅当队列已满时返回 false。
   inline bool push(E t);
 
   // Attempts to claim a task from the "local" end of the queue (the most
   // recently pushed).  If successful, returns true and sets t to the task;
   // otherwise, returns false (the queue is empty).
+  // 尝试从队列的“本地”端（即最近推入的元素）获取一个任务。如果成功，返回 true 并将 t 设置为该任务；否则，返回 false（表示队列为空）。
   inline bool pop_local(volatile E& t);
 
   // Like pop_local(), but uses the "global" end of the queue (the least
   // recently pushed).
+  // 与 pop_local() 类似，但使用队列的“全局”端（即最早推入的元素）。
   bool pop_global(volatile E& t);
 
   // Delete any resource associated with the queue.
@@ -345,10 +349,55 @@ void GenericTaskQueue<E, F, N>::oops_do(OopClosure* f) {
   // tty->print_cr("END OopTaskQueue::oops_do");
 }
 
+template<class E, MEMFLAGS F, unsigned int N> inline bool
+GenericTaskQueue<E, F, N>::push(E t) {
+    uint localBot = _bottom;
+    assert(localBot < N, "_bottom out of range.");
+    idx_t top = _age.top(); // 队列的顶部
+    uint dirty_n_elems = dirty_size(localBot, top); // 返回一个[0,N-1]之间的值(左闭右闭)代表队列当前的元素数量，如果返回N-1,应该翻译成0
+    assert(dirty_n_elems < N, "n_elems out of range.");
+    if (dirty_n_elems < max_elems()) { // max_elems() = N - 2 , 即当dirty_n_elems最大为N-3的时候执行 快路径
+        // g++ complains if the volatile result of the assignment is
+        // unused, so we cast the volatile away.  We cannot cast directly
+        // to void, because gcc treats that as not using the result of the
+        // assignment.  However, casting to E& means that we trigger an
+        // unused-value warning.  So, we cast the E& to void.
+        (void) const_cast<E&>(_elems[localBot] = t); // 往_bottom的位置插入元素
+        OrderAccess::release_store(&_bottom, increment_index(localBot)); // 增加队列的_bottom
+        TASKQUEUE_STATS_ONLY(stats.record_push());
+        return true; // 成功
+    } else { // 如果 dirty_n_elems >= N-2， 即 dirty_n_elems = N-2 或者 dirty_n_elems = N-1
+        return push_slow(t, dirty_n_elems);
+    }
+}
+
+
+template<class E, MEMFLAGS F, unsigned int N> inline bool
+GenericTaskQueue<E, F, N>::push(E t) {
+    uint localBot = _bottom;
+    assert(localBot < N, "_bottom out of range.");
+    idx_t top = _age.top(); // 队列的顶部
+    uint dirty_n_elems = dirty_size(localBot, top); // 返回一个[0,N-1]之间的值(左闭右闭)代表队列当前的元素数量，如果返回N-1,应该翻译成0
+    assert(dirty_n_elems < N, "n_elems out of range.");
+    if (dirty_n_elems < max_elems() || dirty_n_elems == N-1) { // max_elems() = N - 2 , 即当dirty_n_elems最大为N-3的时候执行 快路径
+        // g++ complains if the volatile result of the assignment is
+        // unused, so we cast the volatile away.  We cannot cast directly
+        // to void, because gcc treats that as not using the result of the
+        // assignment.  However, casting to E& means that we trigger an
+        // unused-value warning.  So, we cast the E& to void.
+        (void) const_cast<E&>(_elems[localBot] = t); // 往_bottom的位置插入元素
+        OrderAccess::release_store(&_bottom, increment_index(localBot)); // 增加队列的_bottom
+        TASKQUEUE_STATS_ONLY(stats.record_push());
+        return true; // 成功
+    } else { // 如果 dirty_n_elems >= N-2， 即 dirty_n_elems = N-2 或者 dirty_n_elems = N-1
+        return false
+    }
+}
+
 template<class E, MEMFLAGS F, unsigned int N>
 bool GenericTaskQueue<E, F, N>::push_slow(E t, uint dirty_n_elems) {
   if (dirty_n_elems == N - 1) {
-    // Actually means 0, so do the push.
+    // Actually means 0, so do the push. 实际上意味着0，所以进行push操作
     uint localBot = _bottom;
     // g++ complains if the volatile result of the assignment is
     // unused, so we cast the volatile away.  We cannot cast directly
@@ -356,7 +405,7 @@ bool GenericTaskQueue<E, F, N>::push_slow(E t, uint dirty_n_elems) {
     // assignment.  However, casting to E& means that we trigger an
     // unused-value warning.  So, we cast the E& to void.
     (void)const_cast<E&>(_elems[localBot] = t);
-    OrderAccess::release_store(&_bottom, increment_index(localBot));
+    OrderAccess::release_store(&_bottom, increment_index(localBot)); // 增加队列的_bottom
     TASKQUEUE_STATS_ONLY(stats.record_push());
     return true;
   }
@@ -422,9 +471,9 @@ bool GenericTaskQueue<E, F, N>::pop_global(volatile E& t) {
   // to void, because gcc treats that as not using the result of the
   // assignment.  However, casting to E& means that we trigger an
   // unused-value warning.  So, we cast the E& to void.
-  (void) const_cast<E&>(t = _elems[oldAge.top()]);
+  (void) const_cast<E&>(t = _elems[oldAge.top()]); // 从age的top位置开始pop
   Age newAge(oldAge);
-  newAge.increment();
+  newAge.increment(); // _top加1
   Age resAge = _age.cmpxchg(newAge, oldAge);
 
   // Note that using "_bottom" here might fail, since a pop_local might
@@ -449,6 +498,7 @@ GenericTaskQueue<E, F, N>::~GenericTaskQueue() {
 // Note that size() is not hidden--it returns the number of elements in the
 // TaskQueue, and does not include the size of the overflow stack.  This
 // simplifies replacement of GenericTaskQueues with OverflowTaskQueues.
+// #define TASKQUEUE_SIZE (NOT_LP64(1<<14) LP64_ONLY(1<<17))
 template<class E, MEMFLAGS F, unsigned int N = TASKQUEUE_SIZE>
 class OverflowTaskQueue: public GenericTaskQueue<E, F, N>
 {
@@ -482,8 +532,8 @@ private:
 template <class E, MEMFLAGS F, unsigned int N>
 bool OverflowTaskQueue<E, F, N>::push(E t)
 {
-  if (!taskqueue_t::push(t)) {
-    overflow_stack()->push(t);
+  if (!taskqueue_t::push(t)) {// 先Push到taskqueue_t, 搜索 GenericTaskQueue<E, F, N>::push(E t)
+    overflow_stack()->push(t); // 如果失败，则push到overflow_stack
     TASKQUEUE_STATS_ONLY(stats.record_overflow(overflow_stack()->size()));
   }
   return true;
@@ -666,28 +716,6 @@ public:
 #endif
 };
 
-template<class E, MEMFLAGS F, unsigned int N> inline bool
-GenericTaskQueue<E, F, N>::push(E t) {
-  uint localBot = _bottom;
-  assert(localBot < N, "_bottom out of range.");
-  idx_t top = _age.top();
-  uint dirty_n_elems = dirty_size(localBot, top);
-  assert(dirty_n_elems < N, "n_elems out of range.");
-  if (dirty_n_elems < max_elems()) {
-    // g++ complains if the volatile result of the assignment is
-    // unused, so we cast the volatile away.  We cannot cast directly
-    // to void, because gcc treats that as not using the result of the
-    // assignment.  However, casting to E& means that we trigger an
-    // unused-value warning.  So, we cast the E& to void.
-    (void) const_cast<E&>(_elems[localBot] = t);
-    OrderAccess::release_store(&_bottom, increment_index(localBot));
-    TASKQUEUE_STATS_ONLY(stats.record_push());
-    return true;
-  } else {
-    return push_slow(t, dirty_n_elems);
-  }
-}
-
 /**
  * 从本地队列中弹出元素，如果本地队列中有元素，则返回true，并将元素赋值给参数 t；如果队列为空，则返回false。
  */
@@ -701,8 +729,8 @@ GenericTaskQueue<E, F, N>::pop_local(volatile E& t) {
   uint dirty_n_elems = dirty_size(localBot, _age.top());
   assert(dirty_n_elems != N - 1, "Shouldn't be possible...");
   if (dirty_n_elems == 0) return false;
-  localBot = decrement_index(localBot);
-  _bottom = localBot;
+  localBot = decrement_index(localBot); // 减少队列的底部
+  _bottom = localBot; // 减少队列的底部
   // This is necessary to prevent any read below from being reordered
   // before the store just above.
   OrderAccess::fence();

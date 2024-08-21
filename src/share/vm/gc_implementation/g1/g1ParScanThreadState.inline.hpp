@@ -31,14 +31,14 @@
 
 /**
  * 调用者是 G1ParScanThreadState::deal_with_reference
- * 在这里，指针p对应的位置存放了一个指针，指向了回收集合中的某个对象
+ * 在这里，指针p指向一个Field，这个field指向一个对象，因此，指针P的位置存放的就是这个目标对象的地址
  * 当这个对象转移到survivor区域以后，就需要在这个位置写入对象的新地址
  *
- * 对比 G1ParScanThreadState::do_oop_evac和G1ParCopyClosure<barrier, do_mark_object>::do_oop_work，
- *    二者调用了copy_to_survivor_space
+ * 对比 G1ParScanThreadState::do_oop_evac 和 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work，
+ *    二者都调用了 copy_to_survivor_space
  * @tparam T
- * @param p
- * @param from
+ * @param p 指向对应field的指针
+ * @param from 对应的field所在的HeapRegion
  */
 template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from) {
   assert(!oopDesc::is_null(oopDesc::load_decode_heap_oop(p)),
@@ -46,7 +46,7 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
   /**
    * typedef class oopDesc*  oop;
    * oop 是一个typedef，是一个oopDesc* 类型
-   * 获取指针p对应的位置 所指向的对象
+   * p是指向field的指针，获取指针p对应的位置的值，这个值就是对象地址，因此,obj就是对象的指针
    */
   oop obj = oopDesc::load_decode_heap_oop_not_null(p);
 
@@ -72,7 +72,7 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
       forwardee = copy_to_survivor_space(in_cset_state, obj, m); //
     }
     oopDesc::encode_store_heap_oop(p, forwardee);// 使用转发以后的地址更新引用者所引用该对象的地址
-  } else if (in_cset_state.is_humongous()) { // 是大对象
+  } else if (in_cset_state.is_humongous()) { // 是大对象，大对象被标记是通过特殊方法 set_humongous_is_live进行的，而不是直接使用obj->mark方法
     _g1h->set_humongous_is_live(obj); // 搜索 inline void G1CollectedHeap::set_humongous_is_live(oop obj)
   } else {
     assert(!in_cset_state.is_in_cset_or_humongous(),
@@ -80,7 +80,8 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
   }
 
   assert(obj != NULL, "Must be");
-  update_rs(from, p, queue_num());// 更新RSet
+  // 执行到这里，field已经指向了新的对象
+  update_rs(from, p, queue_num());// 对象移动以后，需要更新引用关系。搜索 template <class T> void update_rs(HeapRegion* from, T* p, int tid) 查看引用关系
 }
 
 inline void G1ParScanThreadState::do_oop_partial_array(oop* p) {
@@ -136,29 +137,35 @@ inline void G1ParScanThreadState::do_oop_partial_array(oop* p) {
  * 搜索 G1ParPushHeapRSClosure::do_oop_nv， 可以看到往_refs中插入堆指针的条件是:
  *      这个对指针指向的位置能够加载出一个对象指针，并且这个对象指针指向了回收集合或者大对象
  * @tparam T
- * @param ref_to_scan
+ * @param ref_to_scan 指向field的指针，这个field指向了一个处于cset中的对象。
  */
 template <class T> inline void G1ParScanThreadState::deal_with_reference(T* ref_to_scan) {
   if (!has_partial_array_mask(ref_to_scan)) { // 通过确定这个引用是否具有部分数组掩码，来确定这个引用是否是一个指向部分数组的引用
     // Note: we can use "raw" versions of "region_containing" because
     // "obj_to_scan" is definitely in the heap, and is not in a
     // humongous region.
-    HeapRegion* r = _g1h->heap_region_containing_raw(ref_to_scan);
+    HeapRegion* r = _g1h->heap_region_containing_raw(ref_to_scan); // 这里的ref_to_scan指的是指向一个field的指针，r指的是这个field本身所在的Region
     /**
      * 搜索 G1ParScanThreadState::do_oop_evac
      */
-    do_oop_evac(ref_to_scan, r);
+    do_oop_evac(ref_to_scan, r); // r 代表这个field本身所处的HeapRegion，而不是对象所处的HeapRegion
   } else {
     do_oop_partial_array((oop*)ref_to_scan);
   }
 }
 
+/**
+ * 内联方法，根据从ParScanThreasState中取出的任务(这些任务来自对脏卡片的扫描所发现的引用关系)，对这些引用进行处理
+ * @param ref
+ */
 inline void G1ParScanThreadState::dispatch_reference(StarTask ref) {
   assert(verify_task(ref), "sanity");
   if (ref.is_narrow()) { // deal_with_reference是一个重载函数，可以接收窄应用和宽引用
-    deal_with_reference((narrowOop*)ref);
+      // 将StarTask转换成一个 narrowOop*
+    deal_with_reference((narrowOop*)ref); // G1ParScanThreadState::deal_with_reference
   } else {
-    deal_with_reference((oop*)ref);
+      // 将StarTask转换成一个 oop*
+    deal_with_reference((oop*)ref); // G1ParScanThreadState::deal_with_reference
   }
 }
 

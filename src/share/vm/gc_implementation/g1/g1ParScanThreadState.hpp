@@ -41,9 +41,9 @@ class outputStream;
 class G1ParScanThreadState : public StackObj {
  private:
   G1CollectedHeap* _g1h;
-  /**
-   * 这是一个 OverflowTaskQueue 对象
-   * 搜索 push_on_queue 可以看到往这里添加引用的过程，搜索 G1ParScanThreadState::trim_queue，可以看到从queue中弹出引用进行处理的过程
+  /** typedef OverflowTaskQueue<StarTask, mtGC>         RefToScanQueue;
+   *  这是一个 RefToScanQueue 对象，本质上是一个TaskQueue对象
+   *  搜索 push_on_queue 可以看到往这里添加引用的过程，搜索 G1ParScanThreadState::trim_queue，可以看到从queue中弹出引用进行处理的过程
    */
   RefToScanQueue*  _refs;
   DirtyCardQueue   _dcq;
@@ -135,7 +135,7 @@ class G1ParScanThreadState : public StackObj {
   /**
    * 这是 G1ParScanThreadState::update_rs
    * 注意，一个G1ParTask会有一个G1ParScanThreadState对象
-   * 搜索 _par_scan_state->update_rs 查看调用位置
+   * 搜索 _par_scan_state->update_rs 和 G1ParScanThreadState::do_oop_evac 查看调用位置
    * p 代表了对象的原始地址，
    * @tparam T
    * @param from 对象原始所在的region
@@ -146,8 +146,9 @@ class G1ParScanThreadState : public StackObj {
     // If the new value of the field points to the same region or
     // is the to-space, we don't need to include it in the Rset updates.
     /**
-     * oopDesc::load_decode_heap_oop(p) 是取出指针p所指向的地址上存放的值
-     * 因此,from代表原来的地址，oopDesc::load_decode_heap_oop(p)代表转移到的新的地址,两个地址不可以相同，不然更新卡片没有任何意义
+     * oopDesc::load_decode_heap_oop(p) 是取出指针p所指向的地址上存放的值，这个指是对应的回收集合中的对象的指针
+     * 因此,from代表field所在的地址，oopDesc::load_decode_heap_oop(p)代表field所指向的对象的地址，两个地址不可以相同，不然更新卡片没有任何意义
+     * 当且仅当对象本身不在from 中，并且，from不是survivor region的时候，才需要处理rset
      */
     if (!from->is_in_reserved(oopDesc::load_decode_heap_oop(p)) && !from->is_survivor()) {
       size_t card_index = ctbs()->index_for(p); // 对象原始地址对应的卡片索引, 搜索 size_t index_for(void* p) 查看具体实现
@@ -160,6 +161,7 @@ class G1ParScanThreadState : public StackObj {
           /**
            * dirty_card_queue() 返回的是当前的G1ParScanThreadState的DCQ
            * 将源对象地址存入到这个回收线程本地的转移专用记忆集合日志中，后续会有Refine线程来进行处理
+           * 所以，脏卡片队列中的脏卡片可能来自用户代码中的引用更新，也可能来自gc线程的转移操作
            * ctbs()->byte_for_index(card_index) 返回了这个卡片索引在卡片数组中的真实偏移量
            */
         dirty_card_queue().enqueue((jbyte*)ctbs()->byte_for_index(card_index));

@@ -108,6 +108,7 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
  */
 template <class T>
 inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
+    // 将指向field的指针的field值解析出来，成为指向这个Field所指向的对象的指针
   T heap_oop = oopDesc::load_heap_oop(p); // 从指针 p(即一个指向Field的指针) 所指向的内存位置加载一个堆对象指针，即指针p指向的位置存放了一个field，这个field指向了堆内存中的另一个对象
 
   if (!oopDesc::is_null(heap_oop)) { // 如果指针不为空，表示指针指向了一个有效的堆对象
@@ -130,7 +131,8 @@ inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
       Prefetch::read(obj->mark_addr(), (HeapWordSize*2));
 
       // Place on the references queue
-      // 将指针 p(一个指向field的指针) 放入引用队列中，以便后续的扫描操作
+      // 将指针 p(一个指向field的指针) 放入到当前worker的引用队列G1ParScanThreadState的RefToScanQueue中，以便后续的扫描操作，
+      // template <class T> void push_on_queue(T* ref)
       _par_scan_state->push_on_queue(p);
     } else {
       assert(!_g1->obj_in_cs(obj), "checking");
@@ -202,6 +204,9 @@ inline void G1InvokeIfNotTriggeredClosure::do_oop_nv(T* p) {
 
 // 无论check_for_refs_into_cset = false/true, 这个Closure都会调用。
 // 在 G1RemSet::refine_card中调用
+// 总而言之，如果无论check_for_refs_into_cset = true 则会将这个对象push到对应的worker线程的 G1ParScanThreadState的引用队列 中
+// 而如果 check_for_refs_into_cset = false，则是将这个field的应用关系更新到目标对象的HeapRegion的RSet中
+// 在 bool G1RemSet::refine_card 中被调用
 template <class T>
 inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
   oop obj = oopDesc::load_decode_heap_oop(p);
@@ -259,6 +264,7 @@ inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
       assert(_push_ref_cl != NULL, "should not be null");
       // Push the reference in the refs queue of the G1ParScanThreadState
       // instance for this worker thread.
+      // 将这个对象push到对应的worker线程的 G1ParScanThreadState的引用队列 中
       _push_ref_cl->do_oop(p); // 将这个对象push到当前的worker的state对象中。inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
      }
 

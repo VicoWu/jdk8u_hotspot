@@ -240,7 +240,7 @@ apply_closure_to_completed_buffer_helper(CardTableEntryClosure* cl,
     void **buf = BufferNode::make_buffer_from_node(nd); //
     size_t index = nd->index(); // 在**buf中的索引，当前的索引位置。前面说过，往一个buf中写入数据是从 _nd一直向0写数据，所以当前的有效数据位于[index, _sz]之间
     bool b =
-            // 调用静态方法DirtyCardQueue::apply_closure_to_buffer， 对于这个buf，去apply对应的 CardTableEntryClosure
+            // 调用静态方法 DirtyCardQueue::apply_closure_to_buffer， 对于这个buf，去apply对应的 CardTableEntryClosure
       DirtyCardQueue::apply_closure_to_buffer(cl, buf,
                                               index, _sz,
                                               true, worker_i);

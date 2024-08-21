@@ -337,7 +337,9 @@ void G1RemSet::scanRS(G1ParPushHeapRSClosure* oc,
 // point into the collection set. Only called during an
 // evacuation pause.
 
-
+/**
+ * 这个closure是在GC线程中，对 卡片对应的内存进行扫描，如果这个卡片对应的内存对象中有志向CSet的引用，那么就将这个添加到 当前worker线程的 G1ParScanThreadState的引用队列 中
+ */
 class RefineRecordRefsIntoCSCardTableEntryClosure: public CardTableEntryClosure {
   G1RemSet* _g1rs;
   DirtyCardQueue* _into_cset_dcq;
@@ -347,6 +349,7 @@ public:
     _g1rs(g1h->g1_rem_set()), _into_cset_dcq(into_cset_dcq)
   {}
     /**
+     * RefineRecordRefsIntoCSCardTableEntryClosure::do_card_ptr
      * 调用者搜索 DirtyCardQueue::apply_closure_to_buffer
      * 对比 ConcurrentG1RefineThread 在更新RS的时候使用的Closure RefineCardTableEntryClosure的bool do_card_ptr方法
      */
@@ -361,6 +364,7 @@ public:
     /**
      * 实现 搜索 G1RemSet::refine_card
      * 我们唯一关心包含指向回收集合的引用的卡片是在回收暂停期间的 RSet 更新期间。 在这种情况下，worker_i 应该是 GC 工作线程的 id。
+     * 这个过程中，如果是GC挑起的 (check_for_refs_into_cset=true)，会将查询到的跨region的field添加到对应的worker thread的 G1ParScanThreadState 的引用队列中
      */
     if (_g1rs->refine_card(card_ptr, worker_i, true)) { // 返回true，说明对应的卡片的确有指向回收集合的引用
         /**
@@ -374,7 +378,7 @@ public:
       // Enqueue the card
       /**
        * 如果卡片的确有指向回收集合的引用，那么我们需要将这个卡片加入到_into_cset_dcq
-       *    (由于_into_cset_dcq是基于G1CollectedHeap::into_cset_dirty_card_queue_set()构建的，因此实际上是加入到into_cset_dirty_card_queue_set中去了)
+       * (由于_into_cset_dcq是基于G1CollectedHeap::into_cset_dirty_card_queue_set()构建的，因此实际上是加入到into_cset_dirty_card_queue_set中去了)
        */
       _into_cset_dcq->enqueue(card_ptr); // 记录这个包含有指向回收集合的卡片，加入到into_cset_dirty_card_queue_set
     }
@@ -579,6 +583,8 @@ G1UpdateRSOrPushRefOopClosure(G1CollectedHeap* g1h,
 
 /**
  * 这个refine_card的处理目标一定只是针对脏卡片，通过Refine线程或者GC线程来调用处理脏卡片
+ * 处理脏卡片的基本原理是，如果是脏卡片(GC中要求脏卡片并且对应的field指向cset)，那么选择对这个脏卡片中的引用关系更新到对应的目标Region的RSet中，
+ * 或者，如果是GC线程，则更新到worker线程的 G1ParScanThreadState的引用队列 中
  * 对于GC线程，只有将脏卡片处理完毕(即，由于对象移动带来的卡片信息不一致的问题得到了修正)，才能开始对回收集合中的数据基于卡片进行根搜索
  * @param card_ptr
  * @param worker_i
@@ -595,7 +601,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
                  _g1->addr_to_region(_ct_bs->addr_for(card_ptr))));
 
   // If the card is no longer dirty, nothing to do.
-  // refine_card 只处理脏卡片
+  // refine_card 只处理脏卡片，如果不是脏卡片则跳过
   if (*card_ptr != CardTableModRefBS::dirty_card_val()) {
     // No need to return that this card contains refs that point
     // into the collection set.
@@ -638,7 +644,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
    /**
    * 假如a.field = b，b在回收集合中，a在回收集合中，那么是不必处理a中的卡片的
    */
-  if (r->in_collection_set()) { //我们不处理回收集合中的卡片，因为这些卡片对应的对象即将被转移，即这些卡片即将失效
+  if (r->in_collection_set()) { //我们不处理回收集合中的卡片，因为回收集合肯定会被扫描的，只处理非回收集合，我们关系的是 非回收集合的 field是否指向回收集合中的对象
     return false;
   }
 

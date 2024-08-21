@@ -32,7 +32,7 @@
 
 G1ParScanThreadState::G1ParScanThreadState(G1CollectedHeap* g1h, uint queue_num, ReferenceProcessor* rp)
   : _g1h(g1h),
-    _refs(g1h->task_queue(queue_num)),
+    _refs(g1h->task_queue(queue_num)), // 这个_refs 是由G1CollectedHeap负责构造并初始化的，每一个worker都有一个，搜索 inline RefToScanQueue* G1CollectedHeap::task_queue(int i)
     _dcq(&g1h->dirty_card_queue_set()),
     _ct_bs(g1h->g1_barrier_set()),
     _g1_rem(g1h->g1_rem_set()),
@@ -147,26 +147,27 @@ bool G1ParScanThreadState::verify_task(StarTask ref) const {
 
 /**
  * 调用方法为 G1ParEvacuateFollowersClosure::do_void()
- * 查看 G1ParPushHeapRSClosure::do_oop_nv 可以看到往_refs中插入元素的过程
- * _refs中的元素是在根扫描的时候插入进来的
+ * 查看 G1ParPushHeapRSClosure::do_oop_nv 可以看到往 _refs 中插入元素的过程,即处理了脏卡片以后，将脏卡片对应的引用关系插入到这个RefToScanQueue中
+ * _refs中的元素是在根扫描的时候插入进来的，在这个方法中，开始对插入进来的这些脏卡片涉及到的引用进行处理
  */
 void G1ParScanThreadState::trim_queue() {
   assert(_evac_failure_cl != NULL, "not set");
 
   StarTask ref;
   do { // 不断循环，直到_refs中的ref被全部处理完
+    // 先试图清空overflow stack，然后再试图清空local queue
     // Drain the overflow stack first, so other threads can steal.
     while (_refs->pop_overflow(ref)) { //不断取出队列中的每一个对象引用，放入到ref中，直到_ref为空
       if (!_refs->try_push_to_taskqueue(ref)) { // 把ref 给 push到这个_ref对应的taskqueue中
           /**
-           * 对这个对象引用进行处理，会对ref对应的对象进行转移操作，
+           * 如果插入到Task Queue失败了，就直接对这个对象引用进行处理，会对ref对应的对象进行转移操作，
            * 搜索 G1ParScanThreadState::dispatch_reference -> G1ParScanThreadState::deal_with_reference
            */
-        dispatch_reference(ref); //
+        dispatch_reference(ref);
       }
     }
-
-    while (_refs->pop_local(ref)) {
+    // 已经完全取完了overflow 的任务，开始获取 主队列的任务
+    while (_refs->pop_local(ref)) { // 从任务的'推入端'来获取任务
       dispatch_reference(ref); // 对这个对象引用进行处理，会对ref对应的对象进行转移操作
     }
   } while (!_refs->is_empty());

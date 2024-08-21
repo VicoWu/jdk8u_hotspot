@@ -896,6 +896,7 @@ protected:
   ConcurrentG1Refine* _cg1r;
 
   // The parallel task queues
+  // typedef GenericTaskQueueSet<RefToScanQueue, mtGC> RefToScanQueueSet;
   RefToScanQueueSet *_task_queues;
 
   // True iff a evacuation has failed in the current collection.

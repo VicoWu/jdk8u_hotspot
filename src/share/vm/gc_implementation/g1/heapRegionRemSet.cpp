@@ -468,7 +468,7 @@ void OtherRegionsTable::print_from_card_cache() {
 }
 
  /**
-  * 在RSet中维护引用关系
+  * 在RSet中维护引用关系。在 inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) 中调用
   * @param from from region的region id
   * @param tid 当前的线程ID，作为在FromCardCache中进行查找的一个key，避免线程冲突
   */

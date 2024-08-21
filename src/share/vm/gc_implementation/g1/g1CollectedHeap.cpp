@@ -2126,7 +2126,8 @@ G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
   _humongous_object_threshold_in_words = HeapRegion::GrainWords / 2;
 
   int n_queues = MAX2((int)ParallelGCThreads, 1);
-  _task_queues = new RefToScanQueueSet(n_queues);
+  // typedef GenericTaskQueueSet<RefToScanQueue, mtGC> RefToScanQueueSet;
+  _task_queues = new RefToScanQueueSet(n_queues); // 每一个GC线程会有一个独立的task queue，因此，RefToScanQueueSet中RefToScanQueue的大小是GC线程并发数决定的
 
   uint n_rem_sets = HeapRegionRemSet::num_par_rem_sets();
   assert(n_rem_sets > 0, "Invariant.");
@@ -2134,7 +2135,9 @@ G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
   _worker_cset_start_region = NEW_C_HEAP_ARRAY(HeapRegion*, n_queues, mtGC);
   _worker_cset_start_region_time_stamp = NEW_C_HEAP_ARRAY(uint, n_queues, mtGC);
   _evacuation_failed_info_array = NEW_C_HEAP_ARRAY(EvacuationFailedInfo, n_queues, mtGC);
-
+  // 构造 RefToScanQueue
+  // typedef OverflowTaskQueue<StarTask, mtGC>         RefToScanQueue;
+  // typedef GenericTaskQueueSet<RefToScanQueue, mtGC> RefToScanQueueSet;
   for (int i = 0; i < n_queues; i++) {
     RefToScanQueue* q = new RefToScanQueue();
     q->initialize();
@@ -2566,7 +2569,7 @@ void G1CollectedHeap::iterate_dirty_card_closure(CardTableEntryClosure* cl, //�
   /**
    * 查看具体实现 DirtyCardQueueSet::apply_closure_to_completed_buffer
    * 只要成功就不断循环，其实就是不断从DCQS中取出_completed_buffers_head 链表的头结点来处理，直到处理完，返回false，循环退出
-   * 查看RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，把当前DCQS中的所有的void **buf中指向回收集合的条目添加到into_cset_dcq中去
+   * 查看 RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，把当前DCQS中的所有的void **buf中指向回收集合的条目添加到into_cset_dcq中去
    */
   while (dcqs.apply_closure_to_completed_buffer(cl, worker_i, 0, true)) {
     n_completed_buffers++; // 计数器加1
@@ -5515,7 +5518,7 @@ public:
       {
         double start = os::elapsedTime();
         /**
-         *  开始进行转移处理，G1ParEvacuateFollowersClosure传入了G1ParScanThreadState 对象 pss，
+         *  开始进行转移处理，G1ParEvacuateFollowersClosure 传入了 G1ParScanThreadState 对象 pss，
          *  因为pss中存放了根可达并且目标在回收集合中的对象
          *  工作方法 搜索 G1ParEvacuateFollowersClosure::do_void
          *  通过  G1ParScanThreadState::trim_queue() ，不断从pss中取出对象，进行递归扫描
