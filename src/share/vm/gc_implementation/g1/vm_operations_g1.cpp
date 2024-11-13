@@ -54,7 +54,7 @@ VM_G1CollectForAllocation::VM_G1CollectForAllocation(uint gc_count_before,
 void VM_G1CollectForAllocation::doit() {
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
   GCCauseSetter x(g1h, _gc_cause);
-  // 调用G1CollectedHeap::satisfy_failed_allocation,要求调用线程必须是 VM_Thread
+  // 调用G1CollectedHeap::satisfy_failed_allocation, 由于是VM_G1CollectForAllocation，因此当前调用线程必须是VMThread
   _result = g1h->satisfy_failed_allocation(_word_size, allocation_context(), &_pause_succeeded);
   assert(_result == NULL || _pause_succeeded,
          "if we get back a result, the pause should have succeeded");
@@ -124,7 +124,7 @@ bool VM_G1IncCollectionPause::doit_prologue() {
   return res;
 }
 /**
- * 在 G1CollectedHeap::collect中调用
+ * 在 G1CollectedHeap::collect 中调用
  * 这里会在stw的环境中尝试进行分配，如果分配失败，就在stw的环境下进行一次回收，然后再尝试进行分配
  * VM_G1IncCollectionPause是一个VM_Operation，因此是在VMThread中执行
  * 并发full gc的操作类，所以需要跟VM_G1CollectForAllocation::doit()区别开

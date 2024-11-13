@@ -301,7 +301,7 @@ unsigned int Abstract_VM_Version::nof_parallel_worker_threads(
                                                       unsigned int num,
                                                       unsigned int den,
                                                       unsigned int switch_pt) {
-  if (FLAG_IS_DEFAULT(ParallelGCThreads)) {
+  if (FLAG_IS_DEFAULT(ParallelGCThreads)) { // 用户没有设置
     assert(ParallelGCThreads == 0, "Default ParallelGCThreads is not 0");
     // For very large machines, there are diminishing returns
     // for large numbers of worker threads.  Instead of
@@ -309,12 +309,12 @@ unsigned int Abstract_VM_Version::nof_parallel_worker_threads(
     // processor after the first 8.  For example, on a 72 cpu machine
     // and a chosen fraction of 5/8
     // use 8 + (72 - 8) * (5/8) == 48 worker threads.
-    unsigned int ncpus = (unsigned int) os::initial_active_processor_count();
-    return (ncpus <= switch_pt) ?
+    unsigned int ncpus = (unsigned int) os::initial_active_processor_count(); // 系统的处理器核心数
+    return (ncpus <= switch_pt) ? // 如果系统的核心数小于 switch_pt， 则直接使用系统核心数作为并发数
            ncpus :
-          (switch_pt + ((ncpus - switch_pt) * num) / den);
+          (switch_pt + ((ncpus - switch_pt) * num) / den); // 如果系统核心数比较多(> switch_pt)， 则超出的部分使用分数 (num/den) 来调整这些处理器的线程数。
   } else {
-    return ParallelGCThreads;
+    return ParallelGCThreads; // 用户设置了，则使用用户的设置值
   }
 }
 

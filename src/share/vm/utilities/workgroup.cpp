@@ -36,8 +36,8 @@ AbstractWorkGang::AbstractWorkGang(const char* name,
                                    bool  are_GC_task_threads,
                                    bool  are_ConcurrentGC_threads) :
   _name(name),
-  _are_GC_task_threads(are_GC_task_threads),
-  _are_ConcurrentGC_threads(are_ConcurrentGC_threads) {
+  _are_GC_task_threads(are_GC_task_threads), // 是否是来自GC线程，比如G1CollectedHeap，这些Task的执行需要STW
+  _are_ConcurrentGC_threads(are_ConcurrentGC_threads) { // 是否是来自并发GC线程，并发GC任务的执行不需要STW
 
   assert(!(are_GC_task_threads && are_ConcurrentGC_threads),
          "They cannot both be STW GC and Concurrent threads" );
@@ -85,7 +85,7 @@ bool WorkGang::initialize_workers() {
     return false;
   }
   os::ThreadType worker_type;
-  if (are_ConcurrentGC_threads()) {
+  if (are_ConcurrentGC_threads()) { // 这里的区别仅仅是线程类型的差别
     worker_type = os::cgc_thread;
   } else {
     worker_type = os::pgc_thread;
@@ -94,6 +94,7 @@ bool WorkGang::initialize_workers() {
     GangWorker* new_worker = allocate_worker(worker);
     assert(new_worker != NULL, "Failed to allocate GangWorker");
     _gang_workers[worker] = new_worker;
+    // 按照不同的worker_type，创建对应的操作系统线程
     if (new_worker == NULL || !os::create_thread(new_worker, worker_type)) {
       vm_exit_out_of_memory(0, OOM_MALLOC_ERROR,
               "Cannot create worker GC thread. Out of system resources.");
@@ -128,6 +129,10 @@ GangWorker* AbstractWorkGang::gang_worker(uint i) const {
   return result;
 }
 
+/**
+ * 提交任务
+ * @param task
+ */
 void WorkGang::run_task(AbstractGangTask* task) {
   run_task(task, total_workers());
 }
@@ -193,7 +198,7 @@ void FlexibleWorkGang::run_task(AbstractGangTask* task) {
   // work (as opposed to all those that just check that the
   // task is not null).
   /**
-   * 这些task会有不用的GangWorker::GangWorker来执行，搜索 void GangWorker::run()，而 active_workers就是GangWorker的数量
+   * 这些task会有不同的GangWorker::GangWorker来执行，搜索 void GangWorker::run()，而 active_workers就是GangWorker的数量
    */
 
   WorkGang::run_task(task, (uint) active_workers());
@@ -220,11 +225,9 @@ void AbstractWorkGang::stop() {
 void AbstractWorkGang::internal_worker_poll(WorkData* data) const {
   assert(monitor()->owned_by_self(), "worker_poll is an internal method");
   assert(data != NULL, "worker data is null");
-  data->set_terminate(terminate());
-  data->set_task(task());
-  /**
-   * 这里的_sequence_number是跟一轮调用相关的，即一轮调用的AbstractWorkGang的所有GangWorker的sequence_number都是相同的
-   */
+  data->set_terminate(terminate()); // 设置终止执行的信号，默认是false
+  data->set_task(task()); // 设置这一轮任务执行的Task信息
+  // 这里的_sequence_number是跟一轮调用相关的，即一轮调用的AbstractWorkGang的所有GangWorker的sequence_number都是相同的
   data->set_sequence_number(sequence_number());
 }
 
@@ -233,6 +236,9 @@ void AbstractWorkGang::internal_note_start() {
   _started_workers += 1;
 }
 
+/**
+ * 在WorkGang中提交了一个任务，会通过_finished_workers变量以确认所有的GangWorker完成任务
+ */
 void AbstractWorkGang::internal_note_finish() {
   assert(monitor()->owned_by_self(), "note_finish is an internal method");
   _finished_workers += 1;
@@ -290,17 +296,20 @@ void GangWorker::initialize() {
  */
 void GangWorker::loop() {
   int previous_sequence_number = 0;
-  Monitor* gang_monitor = gang()->monitor(); // 获取全局的 FlexibleWorkGang的全局锁
+  Monitor* gang_monitor = gang()->monitor(); // 获取全局的 FlexibleWorkGang的监视器变量
   for ( ; /* !terminate() */; ) {
     WorkData data;
     int part;  // Initialized below.
     {
       // Grab the gang mutex.
-      MutexLocker ml(gang_monitor); // 获取了全局锁
+      MutexLocker ml(gang_monitor); // 基于WorkGang的监视器变量，获取全局排它锁
       // Wait for so
       // Polling outside the while { wait } avoids missed notifies
       // in the outer loop.
-      gang()->internal_worker_poll(&data); // 调用的是全局的WorkGang，领取任务，任务放入WorkData中
+        // 调用的是全局的WorkGang，领取任务，任务放入WorkData中
+        // 从 WorkGang 中获取任务，并将任务信息存储在 data（WorkData）对象中。
+        // 这个 data 包含了任务的具体信息，比如是否需要终止、任务的序列号、以及需要执行的任务（data.task()）。
+      gang()->internal_worker_poll(&data);
       if (TraceWorkGang) {
         tty->print("Polled outside for work in gang %s worker %d",
                    gang()->name(), id());
@@ -317,23 +326,29 @@ void GangWorker::loop() {
       }
       for ( ; /* break or return */; ) {
         // Terminate if requested.
-        if (data.terminate()) {
+        // 如果 data.terminate() 返回 true，则表示线程收到了终止信号。此时，线程通过 gang()->internal_note_finish()
+        // 通知 WorkGang，然后通过 gang_monitor->notify_all() 通知其他线程，并返回以结束当前线程的执行。
+        if (data.terminate()) { // 如果发现WorkGang请求终止
           gang()->internal_note_finish();
           gang_monitor->notify_all();
           return;
         }
-        // Check for new work.
+        // data.task() 是否为 NULL，以及任务的序列号（data.sequence_number()）是否与上一次的不同，这两个条件用来确认当前 是否有新的任务可以执行。
         if ((data.task() != NULL) &&
-            (data.sequence_number() != previous_sequence_number)) {
-          if (gang()->needs_more_workers()) {
-            gang()->internal_note_start();
-            gang_monitor->notify_all();
+            (data.sequence_number() != previous_sequence_number)) { // 说明来了一个新的任务，而并不依然是当前任务
+          if (gang()->needs_more_workers()) { // 如果需要更多的worker，即当前启动的worker小于active_worker，对于FlexibleWorkGang，activeWorker的数量是可以动态设定的
+              // 如果有新任务且需要更多的工作线程（gang()->needs_more_workers()），则更新任务状态并解锁，
+              // 以允许其他线程也可以领取任务。然后通过 break 退出当前循环，准备执行领取到的任务。
+            gang()->internal_note_start(); // 启动的worker数量加1
+            gang_monitor->notify_all(); // 在监视器上通知所有的Worker
             part = gang()->started_workers() - 1;
-            break;
+            break; // 跳出循环
           }
         }
-        // Nothing to do.
+        // 如果当前没有任务需要执行，线程会通过 gang_monitor->wait() 等待新的任务通知。
+        // 当有任务被分配时，再次调用 gang()->internal_worker_poll(&data) 来检查是否有新的任务。
         gang_monitor->wait(/* no_safepoint_check */ true);
+          // 再次获取任务数据，进行下一次判定
         gang()->internal_worker_poll(&data);
         if (TraceWorkGang) {
           tty->print("Polled inside for work in gang %s worker %d",
@@ -351,17 +366,18 @@ void GangWorker::loop() {
         }
       }
       // Drop gang mutex.
-    }
+    } // The for loop
+    // 退出了for循环，说明需要开始一轮新的任务了，因此准备启动这个GangTask
     if (TraceWorkGang) {
       tty->print("Work for work gang %s id %d task %s part %d",
                  gang()->name(), id(), data.task()->name(), part);
     }
     assert(data.task() != NULL, "Got null task");
     /**
-     * data.task就是返回当前的 AbstractGangTask的实现类的work方法
+     * data.task就是返回当前的 AbstractGangTask 的实现类的work方法
      * 比如，G1ParTask::work()方法
     **/
-    data.task()->work(part);
+    data.task()->work(part); // 搜索 void work(uint worker_id) 查看所有的work方法实现
     {
       if (TraceWorkGang) {
         tty->print("Finish for work gang %s id %d task %s part %d",
@@ -369,19 +385,25 @@ void GangWorker::loop() {
       }
       // Grab the gang mutex.
       MutexLocker ml(gang_monitor);
-      gang()->internal_note_finish();
+      gang()->internal_note_finish(); // 任务执行完成后，线程再次加锁并调用 gang()->internal_note_finish()，通知 WorkGang 任务已完成
       // Tell the gang you are done.
-      gang_monitor->notify_all();
+      gang_monitor->notify_all(); // 通过 gang_monitor->notify_all() 通知其他线程
       // Drop the gang mutex.
     }
-    previous_sequence_number = data.sequence_number();
+    previous_sequence_number = data.sequence_number(); // 更新这一轮任务的序列号到当前的GangWorker中
   }
 }
 
-bool GangWorker::is_GC_task_thread() const {
+/**
+ * 当前的GangWorker是否是 GC_task_thread，就是看这个GangWorker所属的WorkGang是否是GC_task_thread
+ */
+bool GangWorker::is_GC_task_thread() const { // 是需要在STW状态下执行的线程
   return gang()->are_GC_task_threads();
 }
 
+/**
+ * 一个GangWorker是否是is_ConcurrentGC_thread，就看这个GangWorker对应的WorkGang是否是ConcurrentGC_threads
+ */
 bool GangWorker::is_ConcurrentGC_thread() const {
   return gang()->are_ConcurrentGC_threads();
 }

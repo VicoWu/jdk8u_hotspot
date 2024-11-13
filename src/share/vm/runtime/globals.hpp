@@ -1961,7 +1961,11 @@ class CommandLineFlags {
   manageable(intx, CMSTriggerInterval, -1,                                  \
           "Commence a CMS collection cycle (at least) every so many "       \
           "milliseconds (0 permanently, -1 disabled)")                      \
-                                                                            \
+
+  // 是否只在JVM初始化的时候使用 CMSInitiatingOccupancyFraction。默认是False，
+   // 即只是在JVM启动的时候使用CMSInitiatingOccupancyFraction，其他时候进行自动判断。
+          // 所以，如果UseCMSInitiatingOccupancyOnly被显式设置为True，那么CMSInitiatingOccupancyFraction
+          // 就会影响到CMS后续的整个
   product(bool, UseCMSInitiatingOccupancyOnly, false,                       \
           "Only use occupancy as a criterion for starting a CMS collection")\
                                                                             \

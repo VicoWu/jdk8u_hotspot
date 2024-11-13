@@ -463,7 +463,8 @@ class Thread: public ThreadShadow {
 
   // VM operation support
   int vm_operation_ticket()                      { return ++_vm_operation_started_count; }
-  int vm_operation_completed_count()             { return _vm_operation_completed_count; }
+  int vm_operation_completed_count()             { return _vm_operation_completed_count; } // 对于需要串行执行的VMOperation，
+    // 需要通过_vm_operation_started_count和_vm_operation_completed_count实现依次执行
   void increment_vm_operation_completed_count()  { _vm_operation_completed_count++; }
 
   // For tracking the heavyweight monitor the thread is pending on.

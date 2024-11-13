@@ -96,10 +96,11 @@ public:
  */
 class DirtyCardQueueSet: public PtrQueueSet {
   // The closure used in mut_process_buffer().
-  CardTableEntryClosure* _mut_process_closure;
+  //  // 对于JavaThread::DirtyCardQueueSet，这里是 _refine_cte_cl = new RefineCardTableEntryClosure();
+  CardTableEntryClosure* _mut_process_closure; // 如果由用户的Mutator线程直接处理，那么需要apply的closure
 
   /**
-   * _shared_dirty_card_queue也是一个PrtQueue，但是它比较特殊，是属于DirtyCardQueueSet的特殊的一个全局的PrtQueue
+   * _shared_dirty_card_queue 也是一个PrtQueue，但是它比较特殊，是属于DirtyCardQueueSet的特殊的一个全局的PrtQueue
    *    只有这个变量才会设置lock变量，代表自己是一个属于DircyCardQueueSet的全局的PrtQueue，因此可能存在多线程竞争关系
    */
   DirtyCardQueue _shared_dirty_card_queue;

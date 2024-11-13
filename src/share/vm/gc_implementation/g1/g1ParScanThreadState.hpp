@@ -46,7 +46,7 @@ class G1ParScanThreadState : public StackObj {
    *  搜索 push_on_queue 可以看到往这里添加引用的过程，搜索 G1ParScanThreadState::trim_queue，可以看到从queue中弹出引用进行处理的过程
    */
   RefToScanQueue*  _refs;
-  DirtyCardQueue   _dcq;
+  DirtyCardQueue   _dcq; // 来自G1CollectedHeap的全局dcqs
   G1SATBCardTableModRefBS* _ct_bs;
   G1RemSet* _g1_rem;
 
@@ -133,13 +133,14 @@ class G1ParScanThreadState : public StackObj {
   }
 
   /**
+   * in book
    * 这是 G1ParScanThreadState::update_rs
    * 注意，一个G1ParTask会有一个G1ParScanThreadState对象
    * 搜索 _par_scan_state->update_rs 和 G1ParScanThreadState::do_oop_evac 查看调用位置
    * p 代表了对象的原始地址，
    * @tparam T
-   * @param from 对象原始所在的region
-   * @param p 指向移动前的指针，目前这个位置已经更新为对象的新地址
+   * @param from field所在的region
+   * @param p 刚刚发生了对象移动的field指针，即指向一个field的指针，现在这个field指向的对象已经发生了移动。
    * @param tid
    */
   template <class T> void update_rs(HeapRegion* from, T* p, int tid) {
@@ -147,19 +148,20 @@ class G1ParScanThreadState : public StackObj {
     // is the to-space, we don't need to include it in the Rset updates.
     /**
      * oopDesc::load_decode_heap_oop(p) 是取出指针p所指向的地址上存放的值，这个指是对应的回收集合中的对象的指针
-     * 因此,from代表field所在的地址，oopDesc::load_decode_heap_oop(p)代表field所指向的对象的地址，两个地址不可以相同，不然更新卡片没有任何意义
+     * 因此,from代表field所在的HeapRegion，oopDesc::load_decode_heap_oop(p)代表field所指向的对象的地址，两个地址不可以相同，不然更新卡片没有任何意义
      * 当且仅当对象本身不在from 中，并且，from不是survivor region的时候，才需要处理rset
      */
     if (!from->is_in_reserved(oopDesc::load_decode_heap_oop(p)) && !from->is_survivor()) {
-      size_t card_index = ctbs()->index_for(p); // 对象原始地址对应的卡片索引, 搜索 size_t index_for(void* p) 查看具体实现
+      size_t card_index = ctbs()->index_for(p); // 对应的field的卡片的卡片索引, 搜索 size_t index_for(void* p) 查看具体实现
       // If the card hasn't been added to the buffer, do it.
       /**
-       * 检查当前卡片是否已经变更为deferred，变更为deferred的卡片意味着需要进行后续的相应更新操作
-       * 搜索 bool G1SATBCardTableModRefBS::mark_card_deferred 查看具体实现
+       * 检查这个field的卡片是否还需要后续的处理。比如，如果卡片已经被标记为延迟处理，或者卡片已经被其他线程claim了，说明其它GC线程已经将其添加到DCQS了，这里不需要重复添加
+       * 如果卡片当前是clean的，那么说明当前线程是第一个处理它的， 因此，当前线程会处理它，将其加入到全局的_dirty_card_queue_set中
        */
       if (ctbs()->mark_card_deferred(card_index)) {
           /**
-           * dirty_card_queue() 返回的是当前的G1ParScanThreadState的DCQ
+           * dirty_card_queue() 返回的是当前的G1ParScanThreadState的DCQ，所有的G1ParScanThreadState对象的dcq都是共享于G1CollectedHeap的_dirty_card_queue_set
+           * 现在看到，迁移导致的脏卡片只是用来在redirty(数据恢复)的时候使用
            * 将源对象地址存入到这个回收线程本地的转移专用记忆集合日志中，后续会有Refine线程来进行处理
            * 所以，脏卡片队列中的脏卡片可能来自用户代码中的引用更新，也可能来自gc线程的转移操作
            * ctbs()->byte_for_index(card_index) 返回了这个卡片索引在卡片数组中的真实偏移量

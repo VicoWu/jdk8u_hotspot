@@ -97,7 +97,7 @@ static bool timeout_error_printed = false;
 
 // Roll all threads forward to a safepoint and suspend them all
 /**
- * 在 VMThread::loop()中调用
+ * 在 VMThread::loop() 中调用
  * 用来设置安全点标记，这样其他线程都会检查这个标记并且进入安全点
  */
 void SafepointSynchronize::begin() {
@@ -116,7 +116,7 @@ void SafepointSynchronize::begin() {
     // more-general mechanism below.  DLD (01/05).
     ConcurrentMarkSweepThread::synchronize(false);
   } else if (UseG1GC) {
-    SuspendibleThreadSet::synchronize();
+    SuspendibleThreadSet::synchronize(); // 进入安全点的时候，需要一直等到加入SuspendibleThreadSet的线程全部暂停
   }
 #endif // INCLUDE_ALL_GCS
 
@@ -497,7 +497,7 @@ void SafepointSynchronize::end() {
   if (UseConcMarkSweepGC) {
     ConcurrentMarkSweepThread::desynchronize(false);
   } else if (UseG1GC) {
-    SuspendibleThreadSet::desynchronize();
+    SuspendibleThreadSet::desynchronize(); // 离开安全点了，那些suspend的线程可以不用再suspend了
   }
 #endif // INCLUDE_ALL_GCS
   // record this time so VMThread can keep track how much time has elasped

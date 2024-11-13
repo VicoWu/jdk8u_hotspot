@@ -922,10 +922,12 @@ bool Thread::owns_locks_but_compiled_lock() const {
 // no threads which allow_vm_block's are held
 void Thread::check_for_valid_safepoint_state(bool potential_vm_operation) {
     // Check if current thread is allowed to block at a safepoint
-    if (!(_allow_safepoint_count == 0))
-      fatal("Possible safepoint reached by thread that does not allow it");
+    if (!(_allow_safepoint_count == 0)) // 检查当前线程是否允许进入 safepoint
+      fatal("Possible safepoint reached by thread that does not allow it"); // 如果不为 0，说明当前线程不应该进入 safepoint，但它正在尝试进入，这会导致 JVM 立即抛出致命错误。
     if (is_Java_thread() && ((JavaThread*)this)->thread_state() != _thread_in_vm) {
       fatal("LEAF method calling lock?");
+      // 检查当前线程是否是 Java 线程，并确保线程的状态是 _thread_in_vm（即线程处于执行 Java 虚拟机代码的状态）。
+      // 如果线程不处于这个状态，但仍然调用了锁或尝试进入 safepoint，也会抛出致命错误。
     }
 
 #ifdef ASSERT
@@ -3301,12 +3303,12 @@ void Threads::threads_do(ThreadClosure* tc) {
   assert_locked_or_safepoint(Threads_lock);
   // ALL_JAVA_THREADS iterates through all JavaThreads
   ALL_JAVA_THREADS(p) {
-    tc->do_thread(p);
+    tc->do_thread(p); // apply到java线程中
   }
   // Someday we could have a table or list of all non-JavaThreads.
   // For now, just manually iterate through them.
-  tc->do_thread(VMThread::vm_thread());
-  Universe::heap()->gc_threads_do(tc);
+  tc->do_thread(VMThread::vm_thread()); // apply到vm线程中
+  Universe::heap()->gc_threads_do(tc); // apply到gc线程中，调用 G1CollectedHeap::gc_threads_do
   WatcherThread *wt = WatcherThread::watcher_thread();
   // Strictly speaking, the following NULL check isn't sufficient to make sure
   // the data for WatcherThread is still valid upon being examined. However,
@@ -3321,6 +3323,12 @@ void Threads::threads_do(ThreadClosure* tc) {
   // If CompilerThreads ever become non-JavaThreads, add them here
 }
 
+/**
+ * 在宏定义 _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_CreateJavaVM(JavaVM **vm, void **penv, void *args) {中调用了该方法，该方法中会创建唯一的VMThread
+ * @param args
+ * @param canTryAgain
+ * @return
+ */
 jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
 
   extern void JDK_Version_init();
@@ -3459,8 +3467,8 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
 
   // Create the VMThread
   { TraceTime timer("Start VMThread", TraceStartupTime);
-    VMThread::create();
-    Thread* vmthread = VMThread::vm_thread();
+    VMThread::create(); // 创建VMThread
+    Thread* vmthread = VMThread::vm_thread(); // 获取刚刚创建的VMThread
 
     if (!os::create_thread(vmthread, os::vm_thread))
       vm_exit_during_initialization("Cannot create VM thread. Out of system resources.");

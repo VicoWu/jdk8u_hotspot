@@ -65,7 +65,7 @@ void PtrQueue::flush_impl() {
 
 /**
  * 将对象放入到一个已知是active的DCQ中去。这个DCQ可能已经满了，这时候就需要把DCQ添加到DCQS中，并申请新的DCQ
- * 查看调用者 void enqueue(void* ptr)
+ * 查看调用者 PtrQueue::enqueue() 方法
  */
 void PtrQueue::enqueue_known_active(void* ptr) {
   assert(0 <= _index && _index <= _sz, "Invariant.");
@@ -236,6 +236,12 @@ void PtrQueue::handle_zero_index() {
   assert(0 <= _index && _index <= _sz, "Invariant.");
 }
 
+/**
+ * 如果当前的线程是java线程，并且completed queue满了，那么会在java线程中直接进行refine尝试
+ * 如果java线程没有成功refine，那么还是为加入到公共队列集合中，由Refine线程随后处理
+ * @param buf
+ * @return
+ */
 bool PtrQueueSet::process_or_enqueue_complete_buffer(void** buf) {
   if (Thread::current()->is_Java_thread()) { // 对于Java线程，如果当前已经完成的buffer超过了一定限度
     // We don't lock. It is fine to be epsilon-precise here.
@@ -244,15 +250,17 @@ bool PtrQueueSet::process_or_enqueue_complete_buffer(void** buf) {
      /**
       * 我们发现当前已经添加到DCQS中的buffer的数量已经大于_max_completed_queue + _completed_queue_padding， 那么这时候只能自己处理这个buf了
       * Mutator线程自己处理这个buffer，其实就是同步处理这个buf，而不是交给DCQS去异步处理，
-      *     就是调用方法DirtyCardQueueSet::mut_process_buffer(void** buf)
+      *     就是调用方法 DirtyCardQueueSet::mut_process_buffer(void** buf)
       */
       bool b = mut_process_buffer(buf);
-      if (b) {
+      if (b) { // 成功
         // True here means that the buffer hasn't been deallocated and the caller may reuse it.
         return true;
       }
     }
   }
+  // 如果当前线程不是JavaThread，或者，虽然是JavaThread，但是completed buffer没有满，
+  // 或者虽然满了但是Javathread处理失败了，那么还是需要enqueue到公共buffer由refine线程直接处理
   // The buffer will be enqueued. The caller will have to get a new one.
   enqueue_complete_buffer(buf);
   return false;
@@ -318,9 +326,13 @@ void PtrQueueSet::set_buffer_size(size_t sz) {
   _sz = sz * oopSize; // 用户
 }
 
+
 // Merge lists of buffers. Notify the processing threads.
 // The source queue is emptied as a result. The queues
 // must share the monitor.
+/**
+ *  将src（源队列）的缓冲区列表合并到当前实例 _completed_buffers 中。合并后的缓冲区列表将会在当前实例中使用。
+ */
 void PtrQueueSet::merge_bufferlists(PtrQueueSet *src) {
   assert(_cbl_mon == src->_cbl_mon, "Should share the same lock");
   MutexLockerEx x(_cbl_mon, Mutex::_no_safepoint_check_flag);

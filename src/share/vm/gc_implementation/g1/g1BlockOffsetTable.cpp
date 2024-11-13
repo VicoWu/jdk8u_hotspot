@@ -485,17 +485,18 @@ void G1BlockOffsetArray::alloc_block_work2(HeapWord** threshold_, size_t* index_
 bool
 G1BlockOffsetArray::verify_for_object(HeapWord* obj_start,
                                       size_t word_size) const {
-  size_t first_card = _array->index_for(obj_start);
-  size_t last_card = _array->index_for(obj_start + word_size - 1);
+  size_t first_card = _array->index_for(obj_start); // 这个对象的起始位置
+  size_t last_card = _array->index_for(obj_start + word_size - 1); // 这个对象的终止位置
   if (!_array->is_card_boundary(obj_start)) {
     // If the object is not on a card boundary the BOT entry of the
     // first card should point to another object so we should not
     // check that one.
     first_card += 1;
   }
+  // 遍历这个对象所跨越的一个(或者多个卡片)的起始卡片和终止卡片，检查每一个卡片对应的内存地址中记录的对象起始地址是不是就是对象的起始地址
   for (size_t card = first_card; card <= last_card; card += 1) {
-    HeapWord* card_addr = _array->address_for_index(card);
-    HeapWord* block_start = block_start_const(card_addr);
+    HeapWord* card_addr = _array->address_for_index(card); //这个卡片对应的内存区域的起始位置
+    HeapWord* block_start = block_start_const(card_addr); // 这个位置对应的block的起始位置
     if (block_start != obj_start) {
       gclog_or_tty->print_cr("block start: " PTR_FORMAT " is incorrect - "
                              "card index: " SIZE_FORMAT " "

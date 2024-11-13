@@ -262,6 +262,12 @@ public:
 // practice of parallel programming (PPoPP 2013), 69-80
 //
 
+/**
+ *
+ * @tparam E
+ * @tparam F
+ * @tparam N  根据操作系统的位数，32位操作系统大小为16k，64位操作系统大小为128K
+ */
 template <class E, MEMFLAGS F, unsigned int N = TASKQUEUE_SIZE>
 class GenericTaskQueue: public TaskQueueSuper<N, F> {
   ArrayAllocator<E, F> _array_allocator;

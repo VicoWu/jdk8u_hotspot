@@ -134,7 +134,7 @@ void CardTableModRefBS::initialize() {
   _guard_region = MemRegion((HeapWord*)guard_page, _page_size);
   os::commit_memory_or_exit((char*)guard_page, _page_size, _page_size,
                             !ExecMem, "card table last card");
-  *guard_card = last_card;
+  *guard_card = last_card; // 将固定的last_card值赋值给最后一个卡片
 
   _lowest_non_clean =
     NEW_C_HEAP_ARRAY(CardArr, _max_covered_regions, mtGC);

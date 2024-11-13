@@ -61,15 +61,15 @@ class CardTableRS: public GenRemSet {
   void verify_space(Space* s, HeapWord* gen_start);
 
   enum ExtendedCardValue {
-    youngergen_card   = CardTableModRefBS::CT_MR_BS_last_reserved + 1,  // 00010001
+    youngergen_card   = CardTableModRefBS::CT_MR_BS_last_reserved + 1,  // 00010001 17
     // These are for parallel collection.
     // There are three P (parallel) youngergen card values.  In general, this
     // needs to be more than the number of generations (including the perm
     // gen) that might have younger_refs_do invoked on them separately.  So
     // if we add more gens, we have to add more values.
-    youngergenP1_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 2,  // 00010010
-    youngergenP2_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 3,  // 00010011
-    youngergenP3_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 4,  // 00010100
+    youngergenP1_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 2,  // 00010010 18
+    youngergenP2_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 3,  // 00010011 19
+    youngergenP3_card  = CardTableModRefBS::CT_MR_BS_last_reserved + 4,  // 00010100 20
     cur_youngergen_and_prev_nonclean_card = // 当前年轻代和以前的年轻代（或非干净）的对象
       CardTableModRefBS::CT_MR_BS_last_reserved + 5 // // 00010101
   };
@@ -79,12 +79,14 @@ class CardTableRS: public GenRemSet {
   // portion of the table.  (The perm gen is index 0; other gens are at
   // their level plus 1.  They youngest gen is in the table, but will
   // always have the value "clean_card".)
+  // 这个数组记录了每一个gen，我们当做current value的哪个值，perm gen的索引是0，其它的gen是他们的level + 1。最年轻的gen也在表中，但是他们的卡片总是干净的
   jbyte* _last_cur_val_in_gen;
 
-  jbyte _cur_youngergen_card_val;
+  jbyte _cur_youngergen_card_val; // 当前使用的指向更年轻代卡片的值
 
-  int _regions_to_iterate;
+  int _regions_to_iterate; // 迭代的Region的数量，这里的region指的是gen，而不是G1GC中的HeapRegion
 
+  // 当前使用的指向更年轻代卡片的值
   jbyte cur_youngergen_card_val() {
     return _cur_youngergen_card_val;
   }

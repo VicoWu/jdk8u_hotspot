@@ -60,6 +60,7 @@ class CardTableModRefBS: public ModRefBarrierSet {
  protected:
 
     /**
+     * in book
      * 卡片状态值，用每一位的1表示对应的状态
      * enum CardValues使用二进制的某一个位是否为1来标记当前的卡片的状态是否为该为的对应状态
      * 这是因为一个卡片可能同时处于CardValues中的一个或者多个状态
@@ -378,8 +379,8 @@ public:
 
   // Return true if "p" is at the start of a card.
   bool is_card_aligned(HeapWord* p) {
-    jbyte* pcard = byte_for(p);
-    return (addr_for(pcard) == p);
+    jbyte* pcard = byte_for(p); // 输入一个地址，返回指向这个p所在卡片的卡表的指针，这是一个char*
+    return (addr_for(pcard) == p); // p是否刚好是对应的卡片区域的第一个地址
   }
 
   HeapWord* align_to_card_boundary(HeapWord* p) {

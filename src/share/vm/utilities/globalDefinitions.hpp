@@ -81,18 +81,6 @@ const int LogBytesPerInt     = 2;
 #ifdef _LP64
 const int LogBytesPerWord    = 3;
 #else
-const int LogBytesPerWord    = 2;
-#endif
-const int LogBytesPerLong    = 3;
-
-const int BytesPerShort      = 1 << LogBytesPerShort;
-const int BytesPerInt        = 1 << LogBytesPerInt;
-const int BytesPerWord       = 1 << LogBytesPerWord;
-const int BytesPerLong       = 1 << LogBytesPerLong;
-
-const int LogBitsPerByte     = 3;
-const int LogBitsPerShort    = LogBitsPerByte + LogBytesPerShort;
-const int LogBitsPerInt      = LogBitsPerByte + LogBytesPerInt;
 const int LogBitsPerWord     = LogBitsPerByte + LogBytesPerWord;
 const int LogBitsPerLong     = LogBitsPerByte + LogBytesPerLong;
 

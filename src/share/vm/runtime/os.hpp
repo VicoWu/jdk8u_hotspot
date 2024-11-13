@@ -209,7 +209,11 @@ class os: AllStatic {
   static bool supports_vtime();
   static bool enable_vtime();
   static bool vtime_enabled();
+  // vtime 是指线程的虚拟时间，即线程实际运行的时间，它衡量了一个线程在处理器上执行的时间，而不是线程从创建到终止的墙钟时间（wall clock time）。
+  // vtime 不包括线程在等待资源、阻塞或休眠时所消耗的时间。
+  // 在并行和多线程的应用中，vtime 是用来追踪线程实际消耗的 CPU 时间，而不是它从开始运行到现在经过的总时间。这种机制对于了解线程的 CPU 使用效率，以及进行性能调优非常有用。
   static double elapsedVTime();
+
 
   // Return current local time in a string (YYYY-MM-DD HH:MM:SS).
   // It is MT safe, but not async-safe, as reading time zone

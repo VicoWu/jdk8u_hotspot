@@ -98,8 +98,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   bool _defer_initial_card_mark;
 
  protected:
-  MemRegion _reserved;
-  BarrierSet* _barrier_set;
+  MemRegion _reserved; //整个HeapRegion的逻辑地址区域
+  BarrierSet* _barrier_set; // 在CardTableRS::CardTableRS中设置，G1SATBCardTableLoggingModRefBS
   bool _is_gc_active;
   uint _n_par_threads;
 

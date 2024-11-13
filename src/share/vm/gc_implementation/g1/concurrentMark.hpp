@@ -411,6 +411,7 @@ protected:
   double                _sleep_factor; // how much we have to sleep, with
                                        // respect to the work we just did, to
                                        // meet the marking overhead goal
+  // 这里的逻辑是，先计算出 _marking_task_overhead，然后根据_marking_task_overhead，计算出sleep_factor，sleep_factor是实际可操作的控制开销的方式
   double                _marking_task_overhead; // marking target overhead for
                                                 // a single task
 
@@ -438,7 +439,7 @@ protected:
 
   // For gray objects
   /**
-   * 在_finger后面的灰色对象
+   * 在_finger 后面的灰色对象
    */
   CMMarkStack             _markStack; // Grey objects behind global finger.
   // _cm的全局finger，区别开CMTask的局部_finger
@@ -449,7 +450,7 @@ protected:
   // marking tasks
   uint                    _max_worker_id;// maximum worker id
   uint                    _active_tasks; // task num currently active
-  CMTask**                _tasks;        // task queue array (max_worker_id len)
+  CMTask**                _tasks;        // task queue array (max_worker_id len) 一个TaskQueue的数组，即一个CMTask的二维数组
   CMTaskQueueSet*         _task_queues;  // task queue set
   ParallelTaskTerminator  _terminator;   // for termination
 
@@ -536,12 +537,12 @@ protected:
 
   // accessor methods
   /**
-   * ConcGCThreads决定的并发执行的并发度
+   * ConcGCThreads 决定的并发执行的并发度
    * @return
    */
   uint parallel_marking_threads() const     { return _parallel_marking_threads; }
   /**
-   * 最大并行标记线程数量，这是由 ConcGCThreads决定 的
+   * 最大并行标记线程数量，这是由 ConcGCThreads 决定 的
    * @return
    */
   uint max_parallel_marking_threads() const { return _max_parallel_marking_threads;}
@@ -591,6 +592,7 @@ protected:
   bool        out_of_regions() { return _finger >= _heap_end; } // 全局的_finger是否已经在堆内存的后面了
 
   // Returns the task with the given id
+  // 调用者搜索  CMTask* the_task = _cm->task(worker_id) ，即 CMConcurrentMarkingTask::work()方法会取出对应的Task
   CMTask* task(int id) {
     assert(0 <= id && id < (int) _active_tasks,
            "task id not within active bounds");
@@ -601,7 +603,7 @@ protected:
   CMTaskQueue* task_queue(int id) {
     assert(0 <= id && id < (int) _active_tasks,
            "task queue id not within active bounds");
-    return (CMTaskQueue*) _task_queues->queue(id);
+    return (CMTaskQueue*) _task_queues->queue(id); // 从全局的CMTaskQueueSet中取出对应的CMTaskQueue
   }
 
   // Returns the task queue set
@@ -654,6 +656,7 @@ protected:
 
   // Used to record the number of marked live bytes
   // (for each region, by worker thread).
+  // 记录每一个标记的worker在每一个HeapRegion上已经标记的字节数
   size_t** _count_marked_bytes;
 
   // Card index of the bottom of the G1 heap. Used for biasing indices into
@@ -681,7 +684,7 @@ public:
   bool mark_stack_push(oop* arr, int n) {
     _markStack.par_push_arr(arr, n);
     if (_markStack.overflow()) {
-      set_has_overflown();
+      set_has_overflown(); // 设置ConcurrentMark的_has_overflown标记位
       return false;
     }
     return true;
@@ -853,7 +856,10 @@ public:
 
   inline bool do_yield_check(uint worker_i = 0);
 
-  // Called to abort the marking cycle after a Full GC takes palce.
+  // Called to abort the marking cycle after a Full GC takes place.
+  /**
+   * 搜索 concurrent_mark()->abort()
+   */
   void abort();
 
   bool has_aborted()      { return _has_aborted; }
@@ -917,6 +923,11 @@ public:
 
   // Returns the array containing the marked bytes for each region,
   // for the given worker or task id.
+  /**
+   * 返回一个数组，这个数组记录了这个worker对每一个HeapRegion已经标记的字节数
+   * @param worker_id
+   * @return
+   */
   size_t* count_marked_bytes_array_for(uint worker_id) {
     assert(0 <= worker_id && worker_id < _max_worker_id, "oob");
     assert(_count_marked_bytes != NULL, "uninitialized");
@@ -1007,15 +1018,15 @@ private:
   uint                        _worker_id;
   G1CollectedHeap*            _g1h;
   ConcurrentMark*             _cm;
-  CMBitMap*                   _nextMarkBitMap;
+  CMBitMap*                   _nextMarkBitMap; // 其实是指向全局的 _nextMarkBitMap
   // the task queue of this task
-  CMTaskQueue*                _task_queue;
+  CMTaskQueue*                _task_queue;  //和这个CMTask绑定的、属于这个CMTask的任务队列
 private:
   // the task queue set---needed for stealing
-  CMTaskQueueSet*             _task_queues;
+  CMTaskQueueSet*             _task_queues; // 全局的CMTaskQueueSet
   // indicates whether the task has been claimed---this is only  for
   // debugging purposes
-  bool                        _claimed;
+  bool                        _claimed; // 这个CMTask是否已经被认领
 
   // number of calls to this task
   int                         _calls;
@@ -1030,9 +1041,9 @@ private:
   G1CMOopClosure*             _cm_oop_closure;
 
   // the region this task is scanning, NULL if we're not scanning any
-  HeapRegion*                 _curr_region;
+  HeapRegion*                 _curr_region; // 当前的CMTask正在扫描的HeapRegion
   // the local finger of this task, NULL if we're not scanning a region
-  HeapWord*                   _finger; // 当前CMTask的本地_finger
+  HeapWord*                   _finger; // 当前CMTask的本地 _finger
   // limit of the region this task is scanning, NULL if we're not scanning one
   HeapWord*                   _region_limit;
 
@@ -1082,7 +1093,7 @@ private:
   // in the remark phase (so, in the latter case, we do not have to
   // check all the things that we have to check during the concurrent
   // phase, i.e. SATB buffer availability...)
-  bool                        _concurrent;
+  bool                        _concurrent; // 指示当前的 Task是处于并发阶段还是出于remark阶段
 
   TruncatedSeq                _marking_step_diffs_ms;
 

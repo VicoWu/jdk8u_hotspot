@@ -93,6 +93,7 @@ public:
   /**
    * 这是 PtrQueue::enqueue
    * 调用类查看 G1SATBCardTableLoggingModRefBS::write_ref_field_work
+   * PtrQueue::enqueue() 方法
    */
   // Enqueues the given "obj".
   void enqueue(void* ptr) { // 将对象放入到DCQ中
@@ -130,7 +131,7 @@ public:
   // Set the "active" property of the queue to "b".  An enqueue to an
   // inactive thread is a no-op.  Setting a queue to inactive resets its
   // log to the empty state.
-  void set_active(bool b) {
+  void set_active(bool b) { // 设置当前的 PtrQueue为inactive，处于inactive状态的PtrQueue不会有元素enqueue进来
     _active = b;
     if (!b && _buf != NULL) {
       _index = _sz;

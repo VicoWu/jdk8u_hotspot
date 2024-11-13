@@ -112,18 +112,26 @@ VM_Operation* VMOperationQueue::queue_remove_front(int prio) {
   return r;
 }
 
+/**
+ * 搜索 enum Priorities 查看 queue_drain的prio参数
+ * 该参数返回一个 VM_Operation ,其实是对应的priority的VM_Operation链表的头结点，通过next指针获取这个链表中的所有VM_Operation
+ * @param prio
+ * @return
+ */
 VM_Operation* VMOperationQueue::queue_drain(int prio) {
-  if (queue_empty(prio)) return NULL;
+  if (queue_empty(prio)) return NULL; // 指定优先级的队列是否为空。如果队列为空，则直接返回 NULL，表示没有可供处理的操作。
   DEBUG_ONLY(int length = _queue_length[prio];);
   assert(length >= 0, "sanity check");
   _queue_length[prio] = 0;
+    // 从队列中获取第一个操作对象 r，即通过 next() 方法获取 _queue[prio] 的下一个元素。
+  // 此处 _queue[prio] 是队列的基准元素（基准节点），确保它不会作为普通的操作对象被移除。
   VM_Operation* r = _queue[prio]->next();
   assert(r != _queue[prio], "cannot remove base element");
   // remove links to base element from head and tail
-  r->set_prev(NULL);
-  _queue[prio]->prev()->set_next(NULL);
+  r->set_prev(NULL); // 将第一个操作对象的前驱指针设置为 NULL，断开其与基准节点的连接。
+  _queue[prio]->prev()->set_next(NULL); // 将队列末尾的操作对象的 next() 指针也设置为 NULL，断开尾部与基准节点的连接
   // restore queue to empty state
-  _queue[prio]->set_next(_queue[prio]);
+  _queue[prio]->set_next(_queue[prio]); // 将 _queue[prio]（即基准节点）的 next() 和 prev() 指针都重新指向自身，表示队列现在为空。
   _queue[prio]->set_prev(_queue[prio]);
   assert(queue_empty(prio), "drain corrupted queue");
 #ifdef ASSERT
@@ -167,12 +175,12 @@ bool VMOperationQueue::add(VM_Operation *op) {
 
   // Encapsulates VM queue policy. Currently, that
   // only involves putting them on the right list
-  if (op->evaluate_at_safepoint()) {
-    queue_add_back(SafepointPriority, op);
+  if (op->evaluate_at_safepoint()) { // 需要在safepoint模式下执行
+    queue_add_back(SafepointPriority, op); // 以SafepointPriority添加这个VMOperation
     return true;
   }
 
-  queue_add_back(MediumPriority, op);
+  queue_add_back(MediumPriority, op); // 以普通Priority添加Operation
   return true;
 }
 
@@ -216,7 +224,10 @@ VM_Operation*     VMThread::_cur_vm_operation   = NULL;
 VMOperationQueue* VMThread::_vm_queue           = NULL;
 PerfCounter*      VMThread::_perf_accumulated_vm_operation_time = NULL;
 
-
+/**
+ * 创建VMThread对象
+ * 在Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain)中调用
+ */
 void VMThread::create() {
   assert(vm_thread() == NULL, "we can only allocate one VMThread");
   _vm_thread = new VMThread();
@@ -249,7 +260,7 @@ void VMThread::destroy() {
 }
 
 /**
- * 查看 Threads::create_vm() ;
+ * 查看 Threads::create_vm ;
  * search:  Thread* vmthread = VMThread::vm_thread();
  */
 void VMThread::run() {
@@ -363,6 +374,10 @@ void VMThread::print_on(outputStream* st) const {
   st->cr();
 }
 
+/**
+ * 这里会执行对应的VMOperation的evaluate()方法
+ * @param op
+ */
 void VMThread::evaluate_operation(VM_Operation* op) {
   ResourceMark rm;
 
@@ -407,7 +422,7 @@ void VMThread::evaluate_operation(VM_Operation* op) {
   bool c_heap_allocated = op->is_cheap_allocated();
 
   // Mark as completed
-  if (!op->evaluate_concurrently()) {
+  if (!op->evaluate_concurrently()) { // 只有当非concurrent的VMOperation才需要在执行完成的时候增加_vm_operation_completed_count以实现non-concurrent任务的同步
     op->calling_thread()->increment_vm_operation_completed_count();
   }
   // It is unsafe to access the _cur_vm_operation after the 'increment_vm_operation_completed_count' call,
@@ -418,7 +433,7 @@ void VMThread::evaluate_operation(VM_Operation* op) {
 }
 
 /**
- * 执行对应的VM_Operation，执行的时候会进行安全点的检查，
+ * 执行对应的VM_Operation，执行的时候会进行安全点的检查
  *  如果需要进入安全点，那么就通过调用SafepointSynchronize::begin()进入安全点（其实是设置安全点标记，其他线程检测到标记会进入安全点）
  *      设置了安全点标记以后，其他各种线程(编译线程，执行线程，native代码，G1GC的3个线程，都会进行各自不同的进入安全点的方式，但是都是被动检查安全点标记，然后进入安全点)
  *  执行结束，就离开安全点SafepointSynchronize::end()
@@ -452,7 +467,7 @@ void VMThread::loop() {
         // wait with a timeout to guarantee safepoints at regular intervals
         bool timedout =
           VMOperationQueue_lock->wait(Mutex::_no_safepoint_check_flag,
-                                      GuaranteedSafepointInterval);
+                                      GuaranteedSafepointInterval); // 有新的VMOperation插入到队列，结束等待
 
         // Support for self destruction
         if ((SelfDestructTimer != 0) && !is_error_reported() &&
@@ -475,21 +490,22 @@ void VMThread::loop() {
           #endif
           SafepointSynchronize::end();
         }
-        _cur_vm_operation = _vm_queue->remove_next();
+
+        _cur_vm_operation = _vm_queue->remove_next(); // 提取一个vm_thread
 
         // If we are at a safepoint we will evaluate all the operations that
         // follow that also require a safepoint
         if (_cur_vm_operation != NULL &&
             _cur_vm_operation->evaluate_at_safepoint()) {
-          safepoint_ops = _vm_queue->drain_at_safepoint_priority();
+          safepoint_ops = _vm_queue->drain_at_safepoint_priority(); // 获取 SafepointPriority 中的所有Operation
         }
-      }
+      } // 退出循环，说明 _cur_vm_operation  ！= null了，说明有其他的thread通过VMThread::execute()方法进行了提交
 
       if (should_terminate()) break;
     } // Release mu_queue_lock
 
     //
-    // Execute VM operation
+    // 开始执行这个VMOperation
     //
     { HandleMark hm(VMThread::vm_thread());
 
@@ -505,12 +521,13 @@ void VMThread::loop() {
 
       // If we are at a safepoint we will evaluate all the operations that
       // follow that also require a safepoint
+      // 如果当前的VMOperation是一个safepoint 的 VMOperation，那么干脆将所有的safepoint的VMOperation全部取出来执行
       if (_cur_vm_operation->evaluate_at_safepoint()) { // 这是一个需要在安全点执行的VM_Operation
 
         _vm_queue->set_drain_list(safepoint_ops); // ensure ops can be scanned
 
         SafepointSynchronize::begin(); // 开启安全点，是由对应的VMThread负责的
-        evaluate_operation(_cur_vm_operation);
+        evaluate_operation(_cur_vm_operation); // 执行这个VMOperation
         // now process all queued safepoint ops, iteratively draining
         // the queue until there are none left
         /**
@@ -524,7 +541,7 @@ void VMThread::loop() {
               // evaluate_operation deletes the op object so we have
               // to grab the next op now
               VM_Operation* next = _cur_vm_operation->next();
-              _vm_queue->set_drain_list(next);
+              _vm_queue->set_drain_list(next); // 将drain list指针移动到下一个节点
               evaluate_operation(_cur_vm_operation);// 为什么在execute()静态方法中也会执行？
               _cur_vm_operation = next; // 下一个VM_Operation
               if (PrintSafepointStatistics) {
@@ -542,11 +559,11 @@ void VMThread::loop() {
           // that simply means the op will wait for the next major cycle of the
           // VMThread - just as it would if the GC thread lost the race for
           // the lock.
-          if (_vm_queue->peek_at_safepoint_priority()) {
+          if (_vm_queue->peek_at_safepoint_priority()) { // 如果队列中还有safepoint优先级的操作
             // must hold lock while draining queue
             MutexLockerEx mu_queue(VMOperationQueue_lock,
                                      Mutex::_no_safepoint_check_flag);
-            safepoint_ops = _vm_queue->drain_at_safepoint_priority();
+            safepoint_ops = _vm_queue->drain_at_safepoint_priority(); // 取出所有的safepoint优先级的vmoperation
           } else {
             safepoint_ops = NULL;
           }
@@ -571,7 +588,7 @@ void VMThread::loop() {
             tty->print_cr("vm %s: %3.7f secs]", _cur_vm_operation->name(), secs);
           }
         } else {
-          evaluate_operation(_cur_vm_operation);
+          evaluate_operation(_cur_vm_operation); // 执行这个非Safepoint Operation
         }
 
         _cur_vm_operation = NULL;
@@ -608,7 +625,7 @@ void VMThread::loop() {
  * 才会执行doit_prologue()和doit_epilogue()
  *
     这两个分支处理了不同类型的线程，确保了适当的逻辑被执行。
-        在第一个分支中，通过检查线程类型，进行了一些初始化操作，并且将VM操作添加到VM操作队列中。
+        在第一个分支中，通过检查线程类型，进行了一些初始化操作，并且将VM操作添加到VM操作队列中。4
         在第二个分支中，直接执行VM操作。
     看下面的代码会发现，如果当前线程不是VM_Thread，那么是加入到队列中异步执行的，如果是VM_thread，那么是直接执行的
 
@@ -633,7 +650,7 @@ void VMThread::execute(VM_Operation* op) {
     // 因为他们的evaluation_mode都是safepoint，即加锁和安全点都同时需要满足
     bool concurrent = op->evaluate_concurrently();
     // only blocking VM operations need to verify the call111er's safepoint state:
-    if (!concurrent) {
+    if (!concurrent) { // 只有当VM_Operation为 非并发模式的时候，我们需要校验safepoint状态
       t->check_for_valid_safepoint_state(true);
     }
 
@@ -647,20 +664,20 @@ void VMThread::execute(VM_Operation* op) {
     }
 
     // Setup VM_operations for execution
-    op->set_calling_thread(t, Thread::get_priority(t));
+    op->set_calling_thread(t, Thread::get_priority(t)); // 将当前的VMThread设置到VMOperation中
 
     // It does not make sense to execute the epilogue, if the VM operation object is getting
     // deallocated by the VM thread.
     bool execute_epilog = !op->is_cheap_allocated(); // 大部分的gc线程的is_cheap_allocated()都是false，除了VM_ForceAsyncSafepoint和VM_ThreadStop两个特殊operation
     /**
      * 这里的意思是不可能出现concurrent==true，但是op->is_cheap_allocated()==false
-     * 即如果是concurrent，那么一定是cheap_allocated
+     * 即如果是concurrent，那么一定是 cheap_allocated
      */
     assert(!concurrent || op->is_cheap_allocated(), "concurrent => cheap_allocated");
 
     // Get ticket number for non-concurrent VM operations
     int ticket = 0;
-    if (!concurrent) { // 如果不是并发，比如Mode._no_safepoint或者Mode._safepoint，那么所有的operation一定要串行执行
+    if (!concurrent) { // 如果不是并发，比如Mode._no_safepoint或者Mode._safepoint，那么所有的operation一定要串行获取结果
       ticket = t->vm_operation_ticket();
     }
 
@@ -675,7 +692,7 @@ void VMThread::execute(VM_Operation* op) {
        */
       bool ok = _vm_queue->add(op);
       op->set_timestamp(os::javaTimeMillis());
-      VMOperationQueue_lock->notify();
+      VMOperationQueue_lock->notify(); // 在VMOperationQueue上进行通知，便于在这个队列上等待获取新的VMOperation的循环从block waiting状态唤醒
       VMOperationQueue_lock->unlock();
       // VM_Operation got skipped
       if (!ok) {
@@ -690,6 +707,8 @@ void VMThread::execute(VM_Operation* op) {
       // Note: only a JavaThread triggers the safepoint check when locking
       MutexLocker mu(VMOperationRequest_lock);
       while(t->vm_operation_completed_count() < ticket) { // 串行等待一共ticket个操作执行完毕
+          // 当t是java线程，wait(false)表示不能跳过safepoint检查，即需要进行safepoint检查
+          // 当t不是java线程，wait(true)表示跳过safepoint检查
         VMOperationRequest_lock->wait(!t->is_Java_thread()); // 搜索Monitor::wait
       }
     }
@@ -701,7 +720,7 @@ void VMThread::execute(VM_Operation* op) {
     // invoked by VM thread; usually nested VM operation
     // 当前线程是VM现成，因此大多数情况下都是一个嵌套的VM操作
     assert(t->is_VM_thread(), "must be a VM thread");
-    VM_Operation* prev_vm_operation = vm_operation(); //取出上一个VM_Operation
+    VM_Operation* prev_vm_operation = vm_operation(); //取出当前的VM_Operation,即_cur_vm_operation
     if (prev_vm_operation != NULL) {
       // Check the VM operation allows nested VM operation. This normally not the case, e.g., the compiler
       // does not allow nested scavenges or compiles.
@@ -717,7 +736,7 @@ void VMThread::execute(VM_Operation* op) {
 
     // Release all internal handles after operation is evaluated
     HandleMark hm(t);
-    _cur_vm_operation = op;
+    _cur_vm_operation = op; // 更新 _cur_vm_operation
     // 如果当前线程需要进入safepoint，但是并不在safepoint中
     if (op->evaluate_at_safepoint() && !SafepointSynchronize::is_at_safepoint()) {
       SafepointSynchronize::begin();

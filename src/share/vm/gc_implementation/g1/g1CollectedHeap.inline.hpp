@@ -159,6 +159,7 @@ inline bool G1CollectedHeap::obj_in_cs(oop obj) {
 }
 
 /**
+ * in book
  * 这个方法不会负责大对象的分配，大对象的分配由方法attempt_allocation_humongous()负责
  * 由于取出的是mutator_alloc_region，因此可见这个方法只负责给用户层面进行内存分配
  * 注意将该方法与 G1AllocRegion::attempt_allocation()区分，两个方法同名，但是处于不同的层次
@@ -180,7 +181,7 @@ inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
   // 进行一次非TLAB的内存分配
   AllocationContext_t context = AllocationContext::current();
   // 这里的_allocator实现是G1DefaultAllocator，因此多态地调用了G1DefaultAllocator->mutator_alloc_region()
-  // mutator_alloc_region是专门用来给用户线程分配内存的方法，即在eden去分配内存的方法
+  // mutator_alloc_region是专门用来给用户线程分配内存的方法，即在eden区分配内存的方法
   // 在GC过程中，还会在其他区域比如survivor区域分配，也会在old区域分配，分别使用的方式是survivor_gc_alloc_region(), old_gc_alloc_region()
   HeapWord* result = _allocator
           ->mutator_alloc_region(context) // 返回MutatorAllocRegion对象
@@ -203,6 +204,7 @@ inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
 }
 
 /**
+ * in book
  * 调用者 G1CollectedHeap::par_allocate_during_gc
  * 是在尝试了PLAB或者TLAB以后直接在堆中进行分配
  * @param word_size
@@ -314,8 +316,9 @@ InCSetState G1CollectedHeap::in_cset_state(const oop obj) {
   return _in_cset_fast_test.at((HeapWord*)obj);
 }
 
+
 void G1CollectedHeap::register_humongous_region_with_in_cset_fast_test(uint index) {
-  _in_cset_fast_test.set_humongous(index);
+  _in_cset_fast_test.set_humongous(index); // void set_humongous(uintptr_t index) {
 }
 
 #ifndef PRODUCT
@@ -457,11 +460,14 @@ inline bool G1CollectedHeap::is_obj_ill(const oop obj) const {
   return is_obj_ill(obj, heap_region_containing(obj));
 }
 
+// 将这个HeapRegion标记位巨型对象回收候选的HeapRegion,
+// 通过方法 is_humongous_reclaim_candidate()查询对应HeapRegion是否已经被设置为巨型对象回收候选HeapRegion
 inline void G1CollectedHeap::set_humongous_reclaim_candidate(uint region, bool value) {
   assert(_hrm.at(region)->startsHumongous(), "Must start a humongous object");
   _humongous_reclaim_candidates.set_candidate(region, value);
 }
 
+// 查询对应HeapRegion是否已经被设置为巨型对象回收候选HeapRegion
 inline bool G1CollectedHeap::is_humongous_reclaim_candidate(uint region) {
   assert(_hrm.at(region)->startsHumongous(), "Must start a humongous object");
   return _humongous_reclaim_candidates.is_candidate(region);

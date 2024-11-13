@@ -37,6 +37,7 @@
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
 #endif // INCLUDE_ALL_GCS
 // 继承关系 CardTableRS -> GenRemSet
+// 构造方法的调用在 CollectorPolicy::create_rem_set
 CardTableRS::CardTableRS(MemRegion whole_heap,
                          int max_covered_regions) : // 在G1CollectedHeap中max_covered_regions=2
   GenRemSet(),
@@ -55,7 +56,7 @@ CardTableRS::CardTableRS(MemRegion whole_heap,
 #endif
   _ct_bs->initialize();
   set_bs(_ct_bs); // 将barrierset设置为 G1SATBCardTableLoggingModRefBS
-  // _last_cur_val_in_gen数组中的每一个元素记录每一代（generation）中的最后一个年轻代卡值
+  // _last_cur_val_in_gen数组中的每一个元素记录上一次GC的每一代（generation）中的最后一个年轻代卡值
   _last_cur_val_in_gen = NEW_C_HEAP_ARRAY3(jbyte, GenCollectedHeap::max_gens + 1, // 长度是11的数组
                          mtGC, CURRENT_PC, AllocFailStrategy::RETURN_NULL);
   if (_last_cur_val_in_gen == NULL) {
@@ -93,6 +94,7 @@ jbyte CardTableRS::find_unused_youngergenP_card_value() {
     bool seen = false;
     /**
      * 内部的嵌套循环检查这个值 v 是否已经被用于任何代（generation）的标识。如果 _last_cur_val_in_gen[g] == v 为 true，则表示该值已经在使用，因此将 seen 标志设为 true 并跳出内部循环。
+     * 默认两个gen，因此_regions_to_iterate = 1
      */
     for (int g = 0; g < _regions_to_iterate; g++) { //
       if (_last_cur_val_in_gen[g] == v) { // 遍历每一个gen使用的值
@@ -109,6 +111,7 @@ jbyte CardTableRS::find_unused_youngergenP_card_value() {
 
 /**
  * 遍历 更年轻代 引用做准备。这个方法可以在并行或顺序的情况下运行，根据传入的参数 parallel 来决定不同的行为。
+ * 设置了当前使用的 _cur_youngergen_card_val，通过方法 cur_youngergen_card_val()可以获取到设置的值，主要给 younger_refs_iterate()使用
  * @param parallel
  */
 void CardTableRS::prepare_for_younger_refs_iterate(bool parallel) {

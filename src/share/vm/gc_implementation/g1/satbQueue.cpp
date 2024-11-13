@@ -98,6 +98,7 @@ inline bool requires_marking(const void* entry, G1CollectedHeap* heap) {
 // they require marking and are not already marked. Retained entries
 // are compacted toward the top of the buffer.
 /**
+ * in book
  * 此方法从 SATB 缓冲区中删除对并发标记线程无用的条目。
  * 如果条目需要标记且尚未标记，则条目将被保留。 保留的条目被压缩到缓冲区的顶部。
  */
@@ -115,31 +116,35 @@ void ObjPtrQueue::filter() {
   debug_only(size_t entries = 0; size_t retained = 0;)
 
   size_t i = sz;
-  size_t new_index = sz;
-
-  while (i > _index) {
+  size_t new_index = sz; //最开始，nex_index = sz,然后nex_index逐渐减小
+  // 循环开始的时候，i和new_index都是sz
+  while (i > _index) { // 这里i不断往前遍历，_index指向最后一个元素
     assert(i > 0, "we should have at least one more entry to process");
     i -= oopSize;
     debug_only(entries += 1;)
+
+    // byte_index_to_index((int) i)是将字节偏移量（i）转换为指针数组中的索引
+    // 然后buf[byte_index_to_index((int) i)]就是获取buf数组中对应位置的值，显然，数组中的值是指向field的地址，是一个 void*
+    // &buf[byte_index_to_index((int) i)]就是取这个值的地址，是一个void**
     void** p = &buf[byte_index_to_index((int) i)];
-    void* entry = *p;
+    void* entry = *p;// entry 就是一个指向某个对象的指针
     // NULL the entry so that unused parts of the buffer contain NULLs
     // at the end. If we are going to retain it we will copy it to its
     // final place. If we have retained all entries we have visited so
     // far, we'll just end up copying it to the same place.
     *p = NULL;
-
+    // 如果当前对象(entry是一个指向对象的指针)需要标记但是尚未标记，那么这个条目应该保留
     if (requires_marking(entry, g1h) && !g1h->isMarkedNext((oop)entry)) {
       assert(new_index > 0, "we should not have already filled up the buffer");
-      new_index -= oopSize;
+      new_index -= oopSize; // 获取新的位置(这只是字节偏移量，还需要转换成内存地址)
       assert(new_index >= i,
              "new_index should never be below i, as we alwaysr compact 'up'");
-      void** new_p = &buf[byte_index_to_index((int) new_index)];
+      void** new_p = &buf[byte_index_to_index((int) new_index)]; // 获取这个被保留条目的新的内存地址
       assert(new_p >= p, "the destination location should never be below "
              "the source as we always compact 'up'");
       assert(*new_p == NULL,
              "we should have already cleared the destination location");
-      *new_p = entry;
+      *new_p = entry; // 将条目复制到新的位置
       debug_only(retained += 1;)
     }
   }
@@ -153,7 +158,7 @@ void ObjPtrQueue::filter() {
          "should match the number of retained entries we calculated");
 #endif // ASSERT
 
-  _index = new_index;
+  _index = new_index; // 更新index的值
 }
 
 // This method will first apply the above filtering to the buffer. If
@@ -173,12 +178,13 @@ bool ObjPtrQueue::should_enqueue_buffer() {
   assert(_index == 0, "pre-condition");
   assert(_buf != NULL, "pre-condition");
 
-  filter();
+  filter(); // 调用 filter() 来过滤缓冲区中的数据。过滤的目的是清理掉不再需要的对象指针。
 
   size_t sz = _sz;
   size_t all_entries = sz / oopSize;
-  size_t retained_entries = (sz - _index) / oopSize;
+  size_t retained_entries = (sz - _index) / oopSize; // 因为是从后往前写，因此sz - _index 就是过滤以后需要保留的
   size_t perc = retained_entries * 100 / all_entries;
+  // 这个参数的值是 60，这意味着当缓冲区经过过滤后，保留条目的百分比超过 60% 时，缓冲区将被放入队列以便进一步处理。
   bool should_enqueue = perc > (size_t) G1SATBBufferEnqueueingThresholdPercent;
   return should_enqueue;
 }
@@ -267,6 +273,9 @@ void SATBMarkQueueSet::verify_active_states(bool expected_active) {
 }
 #endif // ASSERT
 
+/**
+ * 将所有的PtrQueue设置为active，只有active的prt queue才能执行enqueue操作
+ */
 void SATBMarkQueueSet::set_active_all_threads(bool active, bool expected_active) {
   assert(SafepointSynchronize::is_at_safepoint(), "Must be at safepoint.");
 #ifdef ASSERT
@@ -274,9 +283,9 @@ void SATBMarkQueueSet::set_active_all_threads(bool active, bool expected_active)
 #endif // ASSERT
   _all_active = active;
   for (JavaThread* t = Threads::first(); t; t = t->next()) {
-    t->satb_mark_queue().set_active(active);
+    t->satb_mark_queue().set_active(active); // 将对应的ptrq设置为active
   }
-  shared_satb_queue()->set_active(active);
+  shared_satb_queue()->set_active(active);// PtrQueueSet对应的共享PtrQueue设置为active/inactive状态
 }
 
 void SATBMarkQueueSet::filter_thread_buffers() {

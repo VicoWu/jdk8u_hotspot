@@ -36,7 +36,7 @@ void G1HotCardCache::initialize(G1RegionToSpaceMapper* card_counts_storage) {
   if (default_use_cache()) {
     _use_cache = true;
 
-    _hot_cache_size = (size_t)1 << G1ConcRSLogCacheSize;
+    _hot_cache_size = (size_t)1 << G1ConcRSLogCacheSize; //热卡片缓存数组在的大小的对数值
     _hot_cache = NEW_C_HEAP_ARRAY(jbyte*, _hot_cache_size, mtGC);
 
     reset_hot_cache_internal();
@@ -68,10 +68,10 @@ jbyte* G1HotCardCache::insert(jbyte* card_ptr) {
     // return it for immediate refining.
     return card_ptr;
   }
-  // 这个卡片是一个热卡片
+  // 这个卡片是一个热卡片，
   size_t index = Atomic::add_ptr((intptr_t)1, (volatile intptr_t*)&_hot_cache_idx) - 1;
   size_t masked_index = index & (_hot_cache_size - 1);
-  jbyte* current_ptr = _hot_cache[masked_index];
+  jbyte* current_ptr = _hot_cache[masked_index]; // 记录一下更新之前这个位置的值
 
   // Try to store the new card pointer into the cache. Compare-and-swap to guard
   // against the unlikely event of a race resulting in another card pointer to
@@ -86,6 +86,12 @@ jbyte* G1HotCardCache::insert(jbyte* card_ptr) {
   return (previous_ptr == current_ptr) ? previous_ptr : card_ptr;
 }
 
+/**
+ * 清空 G1 Hot Card Cache，并将缓存中的卡片进行Refine处理。
+ * @param worker_i
+ * @param g1rs
+ * @param into_cset_dcq
+ */
 void G1HotCardCache::drain(uint worker_i,
                            G1RemSet* g1rs,
                            DirtyCardQueue* into_cset_dcq) {
@@ -97,6 +103,8 @@ void G1HotCardCache::drain(uint worker_i,
   assert(_hot_cache != NULL, "Logic");
   assert(!use_cache(), "cache should be disabled");
   while (_hot_cache_par_claimed_idx < _hot_cache_size) {
+      // 该函数原子地将 _hot_cache_par_chunk_size 添加到 _hot_cache_par_claimed_idx 上，并将结果存储在 _hot_cache_par_claimed_idx 中。
+      // 它保证了在更新 _hot_cache_par_claimed_idx 时不会有其他线程对其进行干扰，从而避免了竞争。
     size_t end_idx = Atomic::add_ptr((intptr_t)_hot_cache_par_chunk_size,
                                      (volatile intptr_t*)&_hot_cache_par_claimed_idx);
     size_t start_idx = end_idx - _hot_cache_par_chunk_size;
@@ -119,7 +127,7 @@ void G1HotCardCache::drain(uint worker_i,
           assert(worker_i < ParallelGCThreads,
                  err_msg("incorrect worker id: %u", worker_i));
 
-          into_cset_dcq->enqueue(card_ptr);
+          into_cset_dcq->enqueue(card_ptr); // 如果regine成功，则将对应卡片添加到对应的dcq中去
         }
       } else {
         break;

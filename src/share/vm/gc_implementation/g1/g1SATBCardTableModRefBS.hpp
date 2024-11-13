@@ -45,7 +45,7 @@ class G1SATBCardTableLoggingModRefBS;
 class G1SATBCardTableModRefBS: public CardTableModRefBSForCTRS {
 protected:
   enum G1CardValues {
-    g1_young_gen = CT_MR_BS_last_reserved << 1
+    g1_young_gen = CT_MR_BS_last_reserved << 1 // g1_young_region = 11000000
   };
 
 public:
@@ -159,8 +159,10 @@ class G1SATBCardTableLoggingModRefBS: public G1SATBCardTableModRefBS {
   G1SATBCardTableLoggingModRefBSChangedListener _listener;
   DirtyCardQueueSet& _dcqs; // 所有的脏卡片被记录在 DirtyCardQueueSet中
  public:
+    // G1SATBCardTableLoggingModRefBS::compute_size
   static size_t compute_size(size_t mem_region_size_in_words) {
-    size_t number_of_slots = (mem_region_size_in_words / card_size_in_words);
+        // mem_region_size_in_words是整个堆内存的大小(以HeapWord为单位)， card_size_in_words代表一张卡片对应的HeapWord数量
+    size_t number_of_slots = (mem_region_size_in_words / card_size_in_words); // 需要的卡片数量，即slot数量
     return ReservedSpace::allocation_align_size_up(number_of_slots);
   }
 

@@ -844,7 +844,8 @@ protected:
   // thread. It returns false if it is unable to do the collection due
   // to the GC locker being active, true otherwise
   /**
-   * 增量的回收暂停，必须是vm_trhread执行
+   * 增量的回收暂停，必须是vm_thread执行
+   * 注意，这个方法是在VMThread中由对应的 VMOperation( VM_G1IncCollectionPause 或者 VM_CollectForMetadataAllocation )执行的，并且JVM全局只会有一个VMThread。涉及到具体的并发任务的时候，会有另外的GangWorker去执行，这个GangWorker不是VMThread
    * 如果当前处于临界区，无法进行回收，那么返回false，否则，进行回收，返回true
    */
 
@@ -1087,6 +1088,9 @@ public:
   RefToScanQueue *task_queue(int i) const;
 
   // A set of cards where updates happened during the GC
+  // 这是来自G1CollectedHeap的dcqs，这个dcqs会被共享给所有的 G1ParScanThreadState。搜索 G1ParScanThreadState::G1ParScanThreadState
+  // 在GC过程中，通过方法G1ParScanThreadState::update_rs 添加到这个共享的dcqs中
+  //
   DirtyCardQueueSet& dirty_card_queue_set() { return _dirty_card_queue_set; }
 
   // A DirtyCardQueueSet that is used to hold cards that contain

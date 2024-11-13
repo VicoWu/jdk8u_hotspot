@@ -68,7 +68,7 @@ void ConcurrentG1RefineThread::initialize() {
     // A thread deactivates once the number of buffer reached a deactivation threshold
     _deactivation_threshold = MAX2<int>(_threshold - cg1r()->thread_threshold_step(), cg1r()->green_zone());
   } else {
-    set_active(true);
+    set_active(true); // 这是设置当前的Refine线程为active，不是设置对应的PtrQueue为active
   }
 }
 
@@ -94,8 +94,8 @@ void ConcurrentG1RefineThread::sample_young_list_rs_lengths() {
 
       // we try to yield every time we visit 10 regions
       if (regions_visited == 10) { // 每处理10个region，尝试让出cpu时间，避免干扰用户线程的正常执行
-        if (sts.should_yield()) {
-          sts.yield();
+        if (sts.should_yield()) { // 当前有vm thread企图进行stw的pause操作
+          sts.yield(); // 终止执行
           // we just abandon the iteration
           break;
         }
@@ -154,7 +154,7 @@ void ConcurrentG1RefineThread::activate() {
       gclog_or_tty->print_cr("G1-Refine-activated worker %d, on threshold %d, current %d",
                              _worker_id, _threshold, (int)dcqs.completed_buffers_num());
     }
-    set_active(true); // 当前线程状态设置为active
+    set_active(true); // 当前线程状态设置为active，只有active状态的PrtQueue才会开始接受enqueue操作
   } else { // 如果是0号线程
     DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set();// 获取全局的DCQS
     dcqs.set_process_completed(true);
@@ -170,7 +170,7 @@ void ConcurrentG1RefineThread::deactivate() {
       gclog_or_tty->print_cr("G1-Refine-deactivated worker %d, off threshold %d, current %d",
                              _worker_id, _deactivation_threshold, (int)dcqs.completed_buffers_num());
     }
-    set_active(false);
+    set_active(false);// 这是设置当前的Refine线程为deactive，而不是设置PtrQueue为deactive
   } else {
     DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set();
     dcqs.set_process_completed(false);

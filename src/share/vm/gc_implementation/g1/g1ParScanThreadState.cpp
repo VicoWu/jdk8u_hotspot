@@ -33,7 +33,7 @@
 G1ParScanThreadState::G1ParScanThreadState(G1CollectedHeap* g1h, uint queue_num, ReferenceProcessor* rp)
   : _g1h(g1h),
     _refs(g1h->task_queue(queue_num)), // 这个_refs 是由G1CollectedHeap负责构造并初始化的，每一个worker都有一个，搜索 inline RefToScanQueue* G1CollectedHeap::task_queue(int i)
-    _dcq(&g1h->dirty_card_queue_set()),
+    _dcq(&g1h->dirty_card_queue_set()), // G1CollectedHeap的全局唯一的dcqs
     _ct_bs(g1h->g1_barrier_set()),
     _g1_rem(g1h->g1_rem_set()),
     _hash_seed(17), _queue_num(queue_num),

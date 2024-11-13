@@ -45,7 +45,7 @@ G1SATBCardTableModRefBS::G1SATBCardTableModRefBS(MemRegion whole_heap,
 
 /**
  * 通过写屏障拦截用户的写操作，然后向SATB队列中插入元素
- * 对应的，RSet的G1SATBCardTableLoggingModRefBS::write_ref_field_work 则是通过写屏障拦截用户的写操作，然后修改对应的RSet
+ * 对应的，RSet的 G1SATBCardTableLoggingModRefBS::write_ref_field_work 则是通过写屏障拦截用户的写操作，然后修改对应的RSet
  * @param pre_val
  */
 void G1SATBCardTableModRefBS::enqueue(oop pre_val) {
@@ -88,19 +88,20 @@ void G1SATBCardTableModRefBS::write_ref_array_pre(narrowOop* dst, int count, boo
     write_ref_array_pre_work(dst, count);
   }
 }
-
+// in book
 bool G1SATBCardTableModRefBS::mark_card_deferred(size_t card_index) {
   jbyte val = _byte_map[card_index];
   // It's already processed
   /**
    * 检查当前卡是否已经被标记为延迟标记。
         如果卡已经被标记为延迟标记，则直接返回 false，表示不需要重复处理。
+        这里需要与clean_card_mask_val()，是为了排除卡片处于clean的状态，因为clean的状态码是11111111
    */
   if ((val & (clean_card_mask_val() | deferred_card_val())) == deferred_card_val()) {
     return false;
   }
   /**
-   * 检查当前卡是否属于年轻代（young generation）。
+   * 检查当前卡是否属于年轻代（young generation， eden or survivor）。
         如果是年轻代的卡，则不需要记录所有指向年轻代区域的指针，直接返回 false。
    */
   if  (val == g1_young_gen) {
@@ -112,17 +113,17 @@ bool G1SATBCardTableModRefBS::mark_card_deferred(size_t card_index) {
   jbyte new_val = val;
   /**
    * 检查当前卡是否为干净卡（clean card）。
-        如果是干净卡，则将其标记为延迟标记。
+        如果是干净卡，则将其标记为延迟标记。由于clean card 是11111111，因此不能通过逻辑或的方式进行状态处理
    */
   if (val == clean_card_val()) {
     new_val = (jbyte)deferred_card_val();
   } else {
       /**
        * 如果不是干净卡，则检查当前卡是否为已声明卡（claimed card）。
-            如果是已声明卡，则将其标记为延迟标记。
+            如果是已声明卡，则添加延迟处理标记。
        */
     if (val & claimed_card_val()) {
-      new_val = val | (jbyte)deferred_card_val();
+      new_val = val | (jbyte)deferred_card_val();  // 添加延迟处理标记,保留claimed标记
     }
   }
   if (new_val != val) {
@@ -133,7 +134,7 @@ bool G1SATBCardTableModRefBS::mark_card_deferred(size_t card_index) {
   }
   return true;
 }
-
+// in book
 void G1SATBCardTableModRefBS::g1_mark_as_young(const MemRegion& mr) {
   jbyte *const first = byte_for(mr.start());
   jbyte *const last = byte_after(mr.last());
@@ -177,6 +178,10 @@ G1SATBCardTableLoggingModRefBS(MemRegion whole_heap,
   _listener.set_card_table(this);
 }
 
+/**
+ * 搜索 _ct_bs = new G1SATBCardTableLoggingModRefBS(whole_heap,
+ * @param mapper
+ */
 void G1SATBCardTableLoggingModRefBS::initialize(G1RegionToSpaceMapper* mapper) {
   mapper->set_mapping_changed_listener(&_listener);
 
@@ -245,7 +250,7 @@ G1SATBCardTableLoggingModRefBS::write_ref_field_work(void* field,
        * 对于这个 dcq的处理，搜索 DirtyCardQueueSet::iterate_closure_all_threads
        */
       jt->dirty_card_queue().enqueue(byte);
-    } else { // 不是Java线程，就使用公共的_shared_dirty_card_queue中
+    } else { // 不是Java线程，就使用公共的 _shared_dirty_card_queue 中
       MutexLockerEx x(Shared_DirtyCardQ_lock,
                       Mutex::_no_safepoint_check_flag);
       _dcqs.shared_dirty_card_queue()->enqueue(byte); // 如果不是Java线程，那么就放到DCQS的对应的_shared_dirty_card_queue()中

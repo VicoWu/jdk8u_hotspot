@@ -88,12 +88,16 @@ size_t G1CollectedHeap::_humongous_object_threshold_in_words = 0;
 
 // Local to this file.
 
+/**
+ * in book
+ */
 class RefineCardTableEntryClosure: public CardTableEntryClosure {
   bool _concurrent;
 public:
   RefineCardTableEntryClosure() : _concurrent(true) { }
 
   bool do_card_ptr(jbyte* card_ptr, uint worker_i) {
+      // 对卡片进行refine处理
     bool oops_into_cset = G1CollectedHeap::heap()->g1_rem_set()->refine_card(card_ptr, worker_i, false);
     // This path is executed by the concurrent refine or mutator threads,
     // concurrently, and so we do not care if card_ptr contains references
@@ -147,6 +151,7 @@ class ClearLoggedCardTableEntryClosure: public CardTableEntryClosure {
   }
 };
 
+// in book
 class RedirtyLoggedCardTableEntryClosure : public CardTableEntryClosure {
  private:
   size_t _num_processed;
@@ -490,7 +495,7 @@ bool G1CollectedHeap::is_scavengable(const void* p) {
   HeapRegion* hr = heap_region_containing(p);
   return !hr->isHumongous();
 }
-
+// 检查卡表日志
 void G1CollectedHeap::check_ct_logs_at_safepoint() {
   DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set();
   CardTableModRefBS* ct_bs = g1_barrier_set();
@@ -1425,19 +1430,17 @@ void G1CollectedHeap::print_hrm_post_compaction() {
 
 /**
  * full gc
- * 这个方法要求调用线程必须是vm_thread
- * 这个方法主要是在G1CollectedHeap::satisfy_failed_allocation()(在VM_G1CollectForAllocation这个VM_Operation中) 中和G1CollectedHeap::do_full_collection（在VM_G1CollectFull这个VM_Operation中调用） 中调用的
- * 在G1CollectedHeap::satisfy_failed_allocation()中，explicit_gc都为false，表示这次gc的触发并不是一个规律的显式调度触发，而是由于分配失败导致的，因此wordsize不等于0;
+ * 这个方法要求调用线程必须是vm_thread，即必须处在一个VMOperation中执行
+ * 这个方法主要是在 G1CollectedHeap::satisfy_failed_allocation()(在VM_G1CollectForAllocation这个VM_Operation中) 中
+ *    和G1CollectedHeap::do_full_collection（在VM_G1CollectFull这个VM_Operation中调用） 中调用的
+ * 在 G1CollectedHeap::satisfy_failed_allocation()中，explicit_gc都为false，表示这次gc的触发并不是一个规律的显式调度触发，而是由于分配失败导致的，因此wordsize不等于0;
  *    因此，在gc完成以后重新resize内存的时候，会考虑这个wordsize(但是看resize_if_necessary_after_full_collection()代码，虽然传入参数wordsize，却似乎没有用到wordsize)，
  *    两次尝试调用satisfy_failed_allocation()中，clear_all_soft_refs第一次先为false，第二次则为true
  * 在G1CollectedHeap::do_full_collection()中，explicit_gc都为true,表示这是为了gc而gc，而不是某次分配失败导致的gc
  *
  * 从代码来看，do_collection()就是进行的STW的full gc，
- *  而G1CollectedHeap::do_collection_pause_at_safepoint并不是full gc，虽然也是在safepoint执行的
- * @param explicit_gc
- * @param clear_all_soft_refs
- * @param word_size
- * @return
+ *  而 G1CollectedHeap::do_collection_pause_at_safepoint 并不是full gc，虽然也是在safepoint执行的
+ *  这是full gc
  **/
 bool G1CollectedHeap::do_collection(bool explicit_gc,
                                     bool clear_all_soft_refs,
@@ -1623,15 +1626,19 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       }
 
       // Rebuild remembered sets of all regions.
-      if (G1CollectedHeap::use_parallel_gc_threads()) {
+      // 如果 ParallelGCThread > 0
+      if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果在FullGC的时候使用并行GC线程(注意不是并发)
+          // 关于workers，搜索 FlexibleWorkGang* workers() const { return _workers; }
+          // 搜索 SharedHeap::SharedHeap(CollectorPolicy* policy_) :,可以看到Workers就是ParallelGCThreads
         uint n_workers =
+                //  搜索 int AdaptiveSizePolicy::calc_active_workers(
           AdaptiveSizePolicy::calc_active_workers(workers()->total_workers(),
-                                                  workers()->active_workers(),
+                                                  workers()->active_workers(), // 搜索 FlexibleWorkGang(const char* name, uint workers，可以看到，active_workers默认是ParallelGCThreads
                                                   Threads::number_of_non_daemon_threads());
         assert(UseDynamicNumberOfGCThreads ||
                n_workers == workers()->total_workers(),
                "If not dynamic should be using all the  workers");
-        workers()->set_active_workers(n_workers);
+        workers()->set_active_workers(n_workers); // 根据需要修正 active workers，即实际运行的线程数量
         // Set parallel threads in the heap (_n_par_threads) only
         // before a parallel phase and always reset it to 0 after
         // the phase so that the number of parallel threads does
@@ -1649,7 +1656,7 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
         assert(workers()->active_workers() > 0,
                "Active workers not properly set");
         set_par_threads(workers()->active_workers());
-        workers()->run_task(&rebuild_rs_task);
+        workers()->run_task(&rebuild_rs_task); //  在STW的状态下，并行进行RSet的重建
         set_par_threads(0);
         assert(check_heap_region_claim_values(
                HeapRegion::RebuildRSClaimValue), "sanity check");
@@ -1858,7 +1865,7 @@ resize_if_necessary_after_full_collection(size_t word_size) {
 
 
 /**
- * 这个方法专门处理来自 VM_G1CollectForAllocation doit()操作的回调,要求调用线程必须是vm_thread，因此是STW的
+ * 这个方法专门处理来自 VM_G1CollectForAllocation doit()操作的回调，由于是在VMOperation中调用的，因此调用线程是vm_thread，因此是STW的
  * 该函数会执行所有必要/可能的操作来满足失败的分配请求（包括垃圾收集、内存扩展等）
  * @param word_size
  * @param context
@@ -1869,7 +1876,7 @@ HeapWord*
 G1CollectedHeap::satisfy_failed_allocation(size_t word_size,
                                            AllocationContext_t context,
                                            bool* succeeded) {
-  assert_at_safepoint(true /* should_be_vm_thread */); // 必须已经处于安全点，并且要求当前线程是vm_thread，而不是java_thread或者其他线程
+  assert_at_safepoint(true /* should_be_vm_thread */); // 必须已经处于安全点，并且要求当前线程是vm_thread，而不是java_thread或者其他线程，因为这个方法肯定是在一个VMOpreation中执行的
 
   *succeeded = true;
   // Let's attempt the allocation first.
@@ -2152,13 +2159,20 @@ G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
   guarantee(_task_queues != NULL, "task_queues allocation failure.");
 }
 
+/**
+ * 创建辅助内存区域，主要是在G1CollectedHeap 中创建相关辅助内存，比如，卡表，热卡片的卡片计数器表等
+ * @param description
+ * @param size
+ * @param translation_factor
+ * @return
+ */
 G1RegionToSpaceMapper* G1CollectedHeap::create_aux_memory_mapper(const char* description,
                                                                  size_t size,
                                                                  size_t translation_factor) {
   size_t preferred_page_size = os::page_size_for_region_unaligned(size, 1);
   // Allocate a new reserved space, preferring to use large pages.
   ReservedSpace rs(size, preferred_page_size);
-  G1RegionToSpaceMapper* result  =
+  G1RegionToSpaceMapper* result  = // 搜索 G1RegionToSpaceMapper* G1RegionToSpaceMapper::create_mapper 查看具体实现
     G1RegionToSpaceMapper::create_mapper(rs,
                                          size,
                                          rs.alignment(),
@@ -2196,7 +2210,7 @@ jint G1CollectedHeap::initialize() {
   guarantee(HeapWordSize == wordSize, "HeapWordSize must equal wordSize");
 
   size_t init_byte_size = collector_policy()->initial_heap_byte_size();
-  size_t max_byte_size = collector_policy()->max_heap_byte_size();
+  size_t max_byte_size = collector_policy()->max_heap_byte_size(); // 最大堆内存大小
   size_t heap_alignment = collector_policy()->heap_alignment();
 
   // Ensure that the sizes are properly aligned.
@@ -2224,7 +2238,7 @@ jint G1CollectedHeap::initialize() {
   // address that was requested (i.e. the preferred heap base).
   // If this happens then we could end up using a non-optimal
   // compressed oops mode.
-
+  // 搜索 Universe::reserve_heap
   ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size,
                                                  heap_alignment);
 
@@ -2250,7 +2264,8 @@ jint G1CollectedHeap::initialize() {
 
   // Carve out the G1 part of the heap.
 
-  ReservedSpace g1_rs = heap_rs.first_part(max_byte_size);
+  ReservedSpace g1_rs = heap_rs.first_part(max_byte_size); // ReservedSpace::first_part
+
   G1RegionToSpaceMapper* heap_storage =
     G1RegionToSpaceMapper::create_mapper(g1_rs,
                                          g1_rs.size(),
@@ -2261,22 +2276,25 @@ jint G1CollectedHeap::initialize() {
   heap_storage->set_mapping_changed_listener(&_listener);
 
   // Create storage for the BOT, card table, card counts table (hot card cache) and the bitmaps.
+  // 这一片区域存放块偏移表
   G1RegionToSpaceMapper* bot_storage =
-    create_aux_memory_mapper("Block offset table",
+    create_aux_memory_mapper("Block offset table", // // 搜索 G1BlockOffsetSharedArray::compute_size
                              G1BlockOffsetSharedArray::compute_size(g1_rs.size() / HeapWordSize),
                              G1BlockOffsetSharedArray::N_bytes);
 
+  // 这一片内存区域存放卡表
   ReservedSpace cardtable_rs(G1SATBCardTableLoggingModRefBS::compute_size(g1_rs.size() / HeapWordSize));
   G1RegionToSpaceMapper* cardtable_storage =
-    create_aux_memory_mapper("Card table",
+    create_aux_memory_mapper("Card table", // 搜索 G1SATBCardTableLoggingModRefBS::compute_size
                              G1SATBCardTableLoggingModRefBS::compute_size(g1_rs.size() / HeapWordSize),
                              G1BlockOffsetSharedArray::N_bytes);
 
+  // 这一片内存区域存放热卡片的卡片计数器表
   G1RegionToSpaceMapper* card_counts_storage =
-    create_aux_memory_mapper("Card counts table",
+    create_aux_memory_mapper("Card counts table", // 搜索 G1BlockOffsetSharedArray::compute_size
                              G1BlockOffsetSharedArray::compute_size(g1_rs.size() / HeapWordSize),
                              G1BlockOffsetSharedArray::N_bytes);
-
+  // 搜索 CMBitMap::compute_size
   size_t bitmap_size = CMBitMap::compute_size(g1_rs.size());
   G1RegionToSpaceMapper* prev_bitmap_storage =
     create_aux_memory_mapper("Prev Bitmap", bitmap_size, CMBitMap::mark_distance());
@@ -2345,6 +2363,7 @@ jint G1CollectedHeap::initialize() {
                                                Shared_SATB_Q_lock);
 
   /**
+   * 搜索 void DirtyCardQueueSet::initialize 查看初始化的过程
    * 初始化全局的JavaThread的DCQS
    */
   JavaThread::dirty_card_queue_set().initialize(_refine_cte_cl,
@@ -2358,7 +2377,7 @@ jint G1CollectedHeap::initialize() {
    *  搜索 void DirtyCardQueueSet::initialize 查看初始化的过程
    *  在构造方法 G1CollectedHeap::G1CollectedHeap 中调用
    */
-  dirty_card_queue_set().initialize(NULL, // Should never be called by the Java code
+  dirty_card_queue_set().initialize(NULL, // Should never be called by the Java code; _mut_process_closure == null
                                     DirtyCardQ_CBL_mon,
                                     DirtyCardQ_FL_lock,
                                     -1, // never trigger processing
@@ -2548,13 +2567,13 @@ void G1CollectedHeap::check_gc_time_stamps() {
 
 /**
  * 调用位置 查看 G1RemSet::updateRS
- * RefineRecordRefsIntoCSCardTableEntryClosure是 CardTableEntryClosure的子类，构造函数中包含了一个DCQ
- * @param cl 使用RefineRecordRefsIntoCSCardTableEntryClosure 处理所有剩余的没有处理的DCQ
+ * RefineRecordRefsIntoCSCardTableEntryClosure 是 CardTableEntryClosure的子类，构造函数中包含了一个DCQ
+ * @param cl 使用 RefineRecordRefsIntoCSCardTableEntryClosure 处理所有剩余的没有处理的DCQ
  * @param into_cset_dcq 在发生疏散失败（evacuation failure）时，这些卡片将被传递给管理 RSet 更新的 DirtyCardQueueSet。
  * @param concurrent
  * @param worker_i
  */
-void G1CollectedHeap::iterate_dirty_card_closure(CardTableEntryClosure* cl, //这个closure中含有对into_cset_dcq的引用
+void G1CollectedHeap::iterate_dirty_card_closure(CardTableEntryClosure* cl, //这个RefineRecordRefsIntoCSCardTableEntryClosure中含有对into_cset_dcq的引用
                                                  DirtyCardQueue* into_cset_dcq,
                                                  bool concurrent,
                                                  uint worker_i) {
@@ -2563,12 +2582,12 @@ void G1CollectedHeap::iterate_dirty_card_closure(CardTableEntryClosure* cl, //�
   G1HotCardCache* hot_card_cache = _cg1r->hot_card_cache();
   hot_card_cache->drain(worker_i, g1_rem_set(), into_cset_dcq);
 
-  DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set(); //获取属于JavaThread的全局静态的DCQS
+  DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set(); //获取属于JavaThread的全局静态的DCQS，这个DCQS收集了JavaThread的本地DCQ存放过来的脏卡片队列
   size_t n_completed_buffers = 0;
   // 在这个全局的DCQS上应用 RefineRecordRefsIntoCSCardTableEntryClosure
   /**
    * 查看具体实现 DirtyCardQueueSet::apply_closure_to_completed_buffer
-   * 只要成功就不断循环，其实就是不断从DCQS中取出_completed_buffers_head 链表的头结点来处理，直到处理完，返回false，循环退出
+   * 只要成功就不断循环，其实就是不断从DCQS中取出 _completed_buffers_head 链表的头结点来处理，直到处理完，返回false，循环退出
    * 查看 RefineRecordRefsIntoCSCardTableEntryClosure，其实就做了一件事情，把当前DCQS中的所有的void **buf中指向回收集合的条目添加到into_cset_dcq中去
    */
   while (dcqs.apply_closure_to_completed_buffer(cl, worker_i, 0, true)) {
@@ -2780,10 +2799,10 @@ G1YCType G1CollectedHeap::yc_type() {
  *  这个方法是最上层的触发垃圾回收的方法
  *
  *  在这个方法里，
- *     1. 如果，用户执行了System.gc()，就会调用这个方法,参数中的gc_cause是 GCCause::_java_lang_system_gc
+ *     1. 如果，用户执行了 System.gc()，就会调用这个方法,参数中的 gc_cause是 GCCause::_java_lang_system_gc
  *     2. 同时，在分配对象的时候导致的分配失败，也会触发这个方法的执行，比如 attempt_allocation_humongous()中, 即分配大对象的时候，分配以前就会检查是否需要进行回收
- *     3. 同时, GCLocker在离开关键区的时候，也会经过条件判断，尝试调用collect()
- *  从satisfy_failed_allocation()方法可以看到，一次分配失败导致的gc是不会调用到这里的，因为按照目前的设计，
+ *     3. 同时, GCLocker在离开关键区的时候，也会经过条件判断，尝试调用 collect()
+ *  从 satisfy_failed_allocation() 方法可以看到，一次分配失败导致的gc是不会调用到这里的，因为按照目前的设计，
  *      一次分配失败导致的gc的首先尝试是扩展内存，如果扩展内存都失败，直接full gc
  *  所以在进行回收的时候尽管是调用VMThread，但是很可能是用户线程在调用，但是进行回收的VMOperation是被VMThread执行的
  *  真正的gc操作是委托给对应的VM_GC_Operation的实现类，然后在不同的线程中同步或者异步执行，比如VM_G1IncCollectionPause，VM_G1CollectFull
@@ -2830,8 +2849,8 @@ void G1CollectedHeap::collect(GCCause::Cause cause) {
                                  g1_policy()->max_pause_time_ms(),
                                  cause);
       op.set_allocation_context(AllocationContext::current());
-      // 调用VM_G1IncCollectionPause::doit()
-      VMThread::execute(&op); // 由于是vm thread，因此会stw
+      // 调用 VM_G1IncCollectionPause::doit()
+      VMThread::execute(&op); // 由于是vm thread，因此会stw，提交给VMThread去执行(但是背后的并行任务是由FlxiableWorkerGang线程池执行的)
       /**
        * 这一次的回收没有成功，查看void VM_G1IncCollectionPause::doit()方法
        */
@@ -3140,7 +3159,7 @@ HeapRegion* G1CollectedHeap::start_cset_region_for_worker(uint worker_i) {
              active_workers == workers()->total_workers(),
              "Unless dynamic should use total workers");
 
-    uint end_ind   = (cs_size * worker_i) / active_workers; //
+    uint end_ind   = (cs_size * worker_i) / active_workers;
     uint start_ind = 0; // 起始位置
 
     /**
@@ -3699,7 +3718,7 @@ void G1CollectedHeap::verify(bool silent, VerifyOption vo) {
         "If not dynamic should be using all the workers");
       int n_workers = workers()->active_workers();
       set_par_threads(n_workers);
-      workers()->run_task(&task);
+      workers()->run_task(&task); // 并发进行校验工作
       set_par_threads(0);
       if (task.failures()) {
         failures = true;
@@ -3880,12 +3899,17 @@ void G1CollectedHeap::print_gc_threads_on(outputStream* st) const {
   }
 }
 
+/**
+ * 将Closure apply到所有跟GC相关的线程中
+ * @param tc
+ */
 void G1CollectedHeap::gc_threads_do(ThreadClosure* tc) const {
-  if (G1CollectedHeap::use_parallel_gc_threads()) {
-    workers()->threads_do(tc);
+  if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并发gc，那么就调用
+      // FlexibleWorkGang* workers() const { return _workers; }
+    workers()->threads_do(tc); // 调用 比如  FlexibleWorkGang，搜索 AbstractWorkGang::threads_do
   }
-  tc->do_thread(_cmThread);
-  _cg1r->threads_do(tc);
+  tc->do_thread(_cmThread); // 在 ConcurrentMarkThread 上应用ThreadClosure，ConcurrentMarkThread在JVM中只有一个
+  _cg1r->threads_do(tc); // _cg1r = new ConcurrentG1Refine(this, _refine_cte_cl);，实际上是遍历所有的G1Refine线程，调用tc::do_thread
   if (G1StringDedup::is_enabled()) {
     G1StringDedup::threads_do(tc);
   }
@@ -4050,14 +4074,14 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
 
 /**
  * 通知开始进行并发标记
- * 在方法 do_collection_pause_at_safepoint()中启动
+ * 在方法 do_collection_pause_at_safepoint() 中启动
  */
 void
 G1CollectedHeap::doConcurrentMark() {
   MutexLockerEx x(CGC_lock, Mutex::_no_safepoint_check_flag);
-  if (!_cmThread->in_progress()) {
+  if (!_cmThread->in_progress()) { // 全局只有一个ConcurrentMarkThread对象
     _cmThread->set_started();
-    CGC_lock->notify(); // 在锁上面等待 ConcurrentMarkThread::sleepBeforeNextCycle
+    CGC_lock->notify(); // 通知在锁上面等待的 ConcurrentMarkThread::sleepBeforeNextCycle
   }
 }
 
@@ -4117,16 +4141,19 @@ class RegisterHumongousWithInCSetFastTestClosure : public HeapRegionClosure {
     // allocated after the start of concurrent marking don't need to
     // be scanned.
     //
+
     // * An object must not be reclaimed if it is on the concurrent
     // mark stack.  Objects allocated after the start of concurrent
     // marking are never pushed on the mark stack.
-    //
+    // 在标记开始前分配且尚未扫描其引用的对象都不能被回收。这是为了避免遗漏可能仍然活跃的对象。
+    // 对象在并发标记栈上时也不能被回收，因为标记栈中包含了等待处理的对象引用。如果在标记栈上还有未处理的对象而被回收，可能会导致内存泄漏。
+    // 为了满足上述两个条件，代码选择只考虑并发标记开始之后分配的对象作为候选，这种候选不会错，但是可能会遗漏。这种选择避免了对标记栈和 SATB 不变量的额外测试和处理
     // Nominating only objects allocated after the start of concurrent
     // marking is sufficient to meet both constraints.  This may miss
     // some objects that satisfy the constraints, but the marking data
     // structures don't support efficiently performing the needed
     // additional tests or scrubbing of the mark stack.
-    //
+    // 代码当前仅处理 typeArray 类型的巨型对象。这类对象不包含对象引用，因此不需要处理其他堆区域的记忆集（remset）条目。
     // However, we presently only nominate is_typeArray() objects.
     // A humongous object containing references induces remembered
     // set entries on other regions.  In order to reclaim such an
@@ -4141,7 +4168,7 @@ class RegisterHumongousWithInCSetFastTestClosure : public HeapRegionClosure {
     // Frequent allocation and drop of large binary blobs is an
     // important use case for eager reclaim, and this special handling
     // may reduce needed headroom.
-
+    // 如果是一个typeArray region并且rset很小
     return is_typeArray_region(region) && is_remset_small(region);
   }
 
@@ -4153,15 +4180,17 @@ class RegisterHumongousWithInCSetFastTestClosure : public HeapRegionClosure {
   }
 
   virtual bool doHeapRegion(HeapRegion* r) {
-    if (!r->startsHumongous()) {
+    if (!r->startsHumongous()) { // 如果不是巨型对象的HeapRegion，那么跳过
       return false;
     }
+    // 执行到这里，这个HeapRegion肯定是巨型对象的起始区域
     G1CollectedHeap* g1h = G1CollectedHeap::heap();
-
-    bool is_candidate = humongous_region_is_candidate(g1h, r);
+    // 判断该区域是否应该被标记为回收候选者。判断依据包括是否为 typeArray 类型，以及该区域的记忆集（remset）是否足够小
+    bool is_candidate = humongous_region_is_candidate(g1h, r); // 它可能是candidate，可能不是candidate
     uint rindex = r->hrm_index();
-    g1h->set_humongous_reclaim_candidate(rindex, is_candidate);
+    g1h->set_humongous_reclaim_candidate(rindex, is_candidate); // 设置这个巨型对象是否是一个candidate
     if (is_candidate) {
+        // 增加 _candidate_humongous 计数，并将该区域注册到 G1 堆的候选者列表中。
       _candidate_humongous++;
       g1h->register_humongous_region_with_in_cset_fast_test(rindex);
       // Is_candidate already filters out humongous object with large remembered sets.
@@ -4169,17 +4198,17 @@ class RegisterHumongousWithInCSetFastTestClosure : public HeapRegionClosure {
       // remembered set entries into the DCQS. That will result in automatic
       // re-evaluation of their remembered set entries during the following evacuation
       // phase.
-      if (!r->rem_set()->is_empty()) {
+      if (!r->rem_set()->is_empty()) { // 如果该区域的记忆集合不是空的
         guarantee(r->rem_set()->occupancy_less_or_equal_than(G1RSetSparseRegionEntries),
                   "Found a not-small remembered set here. This is inconsistent with previous assumptions.");
         G1SATBCardTableLoggingModRefBS* bs = g1h->g1_barrier_set();
-        HeapRegionRemSetIterator hrrs(r->rem_set());
+        HeapRegionRemSetIterator hrrs(r->rem_set()); // 遍历这个HeapRegion的记忆集合
         size_t card_index;
         while (hrrs.has_next(card_index)) {
-          jbyte* card_ptr = (jbyte*)bs->byte_for_index(card_index);
-          if (*card_ptr != CardTableModRefBS::dirty_card_val()) {
-            *card_ptr = CardTableModRefBS::dirty_card_val();
-            _dcq.enqueue(card_ptr);
+          jbyte* card_ptr = (jbyte*)bs->byte_for_index(card_index); // 这个卡片对应的内存区域
+          if (*card_ptr != CardTableModRefBS::dirty_card_val()) { //  不是脏卡片
+            *card_ptr = CardTableModRefBS::dirty_card_val(); // 设置为脏卡片
+            _dcq.enqueue(card_ptr); // 插入到脏卡片队列DirtyCardQueue中
           }
         }
         assert(hrrs.n_yielded() == r->rem_set()->occupied(),
@@ -4189,7 +4218,7 @@ class RegisterHumongousWithInCSetFastTestClosure : public HeapRegionClosure {
       }
       assert(r->rem_set()->is_empty(), "At this point any humongous candidate remembered set must be empty.");
     }
-    _total_humongous++;
+    _total_humongous++; // 总的大对象HeapRegion计数器加1
 
     return false;
   }
@@ -4197,7 +4226,7 @@ class RegisterHumongousWithInCSetFastTestClosure : public HeapRegionClosure {
   size_t total_humongous() const { return _total_humongous; }
   size_t candidate_humongous() const { return _candidate_humongous; }
 
-  void flush_rem_set_entries() { _dcq.flush(); }
+  void flush_rem_set_entries() { _dcq.flush(); } // flush操作会将对应的dcq中的元素添加到dcqs中
 };
 
 void G1CollectedHeap::register_humongous_regions_with_in_cset_fast_test() {
@@ -4434,9 +4463,12 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 
     TraceCPUTime tcpu(G1Log::finer(), true, gclog_or_tty);
 
+    /**
+     * 计算活跃线程数量。如果启动了动态线程数量，则会依据当前JVM大小以及非守护的JavaThread的数量动态判定active thread 的数量
+     */
     uint active_workers = AdaptiveSizePolicy::calc_active_workers(workers()->total_workers(),
                                                                   workers()->active_workers(),
-                                                                  Threads::number_of_non_daemon_threads());
+                                                                  Threads::number_of_non_daemon_threads()/*non-daemon线程的数量*/);
     // 只有当UseDynamicNumberOfGCThreads，active_workers才有可能不等于total_workers
     assert(UseDynamicNumberOfGCThreads ||
            active_workers == workers()->total_workers(),
@@ -4552,7 +4584,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 
         if (g1_policy()->during_initial_mark_pause()) {
             /**
-             * 进行初始标记暂停前的准备工作，搜索 搜索ConcurrentMark::checkpointRootsInitialPre查看具体实现
+             * 进行初始标记暂停前的准备工作，搜索 ConcurrentMark::checkpointRootsInitialPre 查看具体实现
              */
           concurrent_mark()->checkpointRootsInitialPre(); //
         }
@@ -4610,7 +4642,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         // 将回收集合中的Region放回到FreeList中去
         free_collection_set(g1_policy()->collection_set(), evacuation_info);
 
-        eagerly_reclaim_humongous_regions();
+        eagerly_reclaim_humongous_regions(); // 采用激进的方式回收在回收集合中的大对象
 
         g1_policy()->clear_collection_set();
 
@@ -4833,7 +4865,7 @@ void G1CollectedHeap::remove_self_forwarding_pointers() {
    */
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     set_par_threads();
-    workers()->run_task(&rsfp_task);
+    workers()->run_task(&rsfp_task); // 并发进行删除自引用的任务
     set_par_threads(0);
   } else {
     rsfp_task.work(0);
@@ -4983,6 +5015,7 @@ void G1CollectedHeap::preserve_mark_if_necessary(oop obj, markOop m) {
 /**
  * 搜索 do_mark_object == G1MarkFromRoot 查看调用者,
  * 这个方法的调用可能发生在STW 的初始标记阶段，也可能发生在 非STW 的并发标记阶段
+ * 发生在STW阶段的就是根扫描
  * 如果尚未标记该对象，则对其进行标记。 这用于标记根所指向的对象，这些对象保证在 GC 期间不会移动（即非 CSet 对象）。 它是 MT 安全的。
  * 这个方法没有递归，即没有将这个对象push到任何的标记栈以递归处理
  */
@@ -5101,7 +5134,7 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
     }
   } else { // 对象不在回收集合中，因此对象不需要转移，但是如果当前是在初始标记状态，那么虽然不需要转移，但是需要标记
     if (state.is_humongous()) {
-      _g1->set_humongous_is_live(obj);
+      _g1->set_humongous_is_live(obj); // 如果是大对象，那么标记这个大对象为存活大对象，这样，这个大对象就不会进入回收候选进行激进回收
     }
     // The object is not in collection set. If we're a root scanning
     // closure during an initial mark pause then attempt to mark the object.
@@ -5118,6 +5151,7 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
    * 在对象发生了移动以后，需要更新引用关系
    * 只有转移失败的时候才会有 G1BarrierEvac
    * 搜索 template <class T> void update_rs(HeapRegion* from, T* p, int tid) {
+   * 注意，需要区分开，对象从CSet中移动到survivor 区域，这时候，cset区域已经清空了，因此完全不需要rset了，但是survivor区域由于有了新的对象进来，因此需要更新维护其rset
    */
   if (barrier == G1BarrierEvac) {
     _par_scan_state->update_rs(_from, p, _worker_id);
@@ -5366,7 +5400,7 @@ public:
          - 如果的确需要进行一次初始标记，那么需要根据ClassUnloadingWithConcurrentMark的配置，决定是否在初始标记的时候进行类卸载相关的处理
        */
       /**
-       * 对于非初始标记阶段的年轻代gc，不进行标记
+       * 对于非初始标记阶段的年轻代gc，不进行标记，仅仅扫描
        *    scan_only_root_cl：仅扫描根对象，不执行标记操作。
             scan_only_cld_cl：处理 CLD，仅处理脏的类元数据，不需要回收 CLDs。
        */
@@ -5380,6 +5414,7 @@ public:
        /**
         * IM young GC.
         * Strong roots closures.
+        * 扫描 + 标记
         * 对于初始标记阶段的年轻代GC，需要进行标记，但是我们需要根据ClassUnloadingWithConcurrentMark来决定是否
         * 强根的相关闭包：
              scan_mark_root_cl：扫描和标记强根。
@@ -5436,7 +5471,7 @@ public:
            * 在需要标记的情况下，我们需要根据ClassUnloadingWithConcurrentMark来决定
            */
         // We also need to mark copied objects.
-        strong_root_cl = &scan_mark_root_cl; // 在并发标记阶段，因此我们在对象完成转以后，也需要进行标记，防止并发标记对转移以后的对象进行漏标记
+        strong_root_cl = &scan_mark_root_cl; // 扫描 + 标记 在并发标记阶段，因此我们在对象完成转以后，也需要进行标记，防止并发标记对转移以后的对象进行漏标记
         strong_cld_cl  = &scan_mark_cld_cl;
         /**
          * 搜索 product(bool, ClassUnloadingWithConcurrentMark 查看ClassUnloadingWithConcurrentMark参数的具体定义
@@ -5924,7 +5959,7 @@ void G1CollectedHeap::parallel_cleaning(BoolObjectClosure* is_alive,
                                         n_workers, class_unloading_occurred);
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     set_par_threads(n_workers);
-    workers()->run_task(&g1_unlink_task);
+    workers()->run_task(&g1_unlink_task); // 并发进行清理工作
     set_par_threads(0);
   } else {
     g1_unlink_task.work(0);
@@ -5951,6 +5986,7 @@ void G1CollectedHeap::unlink_string_and_symbol_table(BoolObjectClosure* is_alive
   }
 }
 
+// in book
 class G1RedirtyLoggedCardsTask : public AbstractGangTask {
  private:
   DirtyCardQueueSet* _queue;
@@ -5973,26 +6009,28 @@ class G1RedirtyLoggedCardsTask : public AbstractGangTask {
 };
 
 /**
- * 重新的redity操作，
+ * 重新的redity操作， in book
  */
 void G1CollectedHeap::redirty_logged_cards() {
   double redirty_logged_cards_start = os::elapsedTime();
 
   uint n_workers = (G1CollectedHeap::use_parallel_gc_threads() ?
                    _g1h->workers()->active_workers() : 1);
-
+  // 一轮垃圾回收以后，G1CollectedHeap::dirty_card_queue_set()中存放的是垃圾收集过程中发生的脏卡片的dcq，
+  // 由各个G1ParScanThreadState的update_rs()方法添加到这个G1CollectedHeap::dirty_card_queue_set()中
+  // template <class T> void update_rs(HeapRegion* from, T* p, int tid)
   G1RedirtyLoggedCardsTask redirty_task(&dirty_card_queue_set());
   dirty_card_queue_set().reset_for_par_iteration();
-  if (use_parallel_gc_threads()) {
+  if (use_parallel_gc_threads()) { // 多线程运行
     set_par_threads(n_workers);
     workers()->run_task(&redirty_task);
     set_par_threads(0);
   } else {
-    redirty_task.work(0);
+    redirty_task.work(0); // 当前线程直接运行
   }
 
   DirtyCardQueueSet& dcq = JavaThread::dirty_card_queue_set();
-  dcq.merge_bufferlists(&dirty_card_queue_set());
+  dcq.merge_bufferlists(&dirty_card_queue_set()); // 将G1CollectedHeap所维护的dirty_card_queue_set()merge到JavaThread的全局dcqs中
   assert(dirty_card_queue_set().completed_buffers_num() == 0, "All should be consumed");
 
   g1_policy()->phase_times()->record_redirty_logged_cards_time_ms((os::elapsedTime() - redirty_logged_cards_start) * 1000.0);
@@ -6043,7 +6081,7 @@ public:
       assert(!obj->is_forwarded(), "invariant" );
       assert(cset_state.is_humongous(),
              err_msg("Only allowed InCSet state is IsHumongous, but is %d", cset_state.value()));
-      _g1->set_humongous_is_live(obj);
+      _g1->set_humongous_is_live(obj); // 如果是大对象，那么标记这个大对象为存活大对象，这样，这个大对象就不会进入回收候选进行激进回收
     }
   }
 };
@@ -6520,7 +6558,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
 
   // Disable the hot card cache.
   G1HotCardCache* hot_card_cache = _cg1r->hot_card_cache();
-  hot_card_cache->reset_hot_cache_claimed_index();
+  hot_card_cache->reset_hot_cache_claimed_index(); // 这里这是在GC开始的时候重置热卡片缓存的起始处理位置，准备遍历或者清空整个热卡片缓存，并不是清空热卡片缓存
   hot_card_cache->set_use_cache(false);
 
   const uint n_workers = workers()->active_workers();
@@ -6530,9 +6568,10 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
     set_par_threads(n_workers);
 
   init_for_evac_failure(NULL);
-  // 设置更年轻一代的Region的卡片值
+  // 为指向更年轻一代的引用的处理工作做准备。在G1GC的场景下，比如，脏卡片就是从老年代指向年轻代的引用
+  // 这个方法我在G1GC中暂时没有看到有用的调用，因为这个方法主要是为后来 younger_refs_iterate()使用，但是我没有看到G1GC调用过 younger_refs_iterate()
   rem_set()->prepare_for_younger_refs_iterate(true);
-
+  // 回收还没有开始，这时候这个G1CollectedHeap::dirty_card_queue_set() 应该是空的
   assert(dirty_card_queue_set().completed_buffers_num() == 0, "Should be empty");
   double start_par_time_sec = os::elapsedTime();
   double end_par_time_sec;
@@ -6554,10 +6593,10 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
 
     /**
      * 是否并行执行
-     * 可以看到，这个 use_parallel_gc_threads方法既用来决定是否并行执行，比如在ConcurrentMark::calc_parallel_marking_threads中
+     * 可以看到，这个 use_parallel_gc_threads 方法既用来决定是否并行执行，比如在ConcurrentMark::calc_parallel_marking_threads中
      *      也用来决定是否并发执行，比如在这里
      */
-    if (G1CollectedHeap::use_parallel_gc_threads()) {
+    if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用并行标记
       // The individual threads will set their evac-failure closures.
       if (ParallelGCVerbose) G1ParScanThreadState::print_termination_stats_hdr();
       // These tasks use ShareHeap::_process_strong_tasks
@@ -6654,6 +6693,7 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
   // RSets.
   enqueue_discovered_references(n_workers);
   // 垃圾收集结束了，进行redirty操作，即取出在收集期间的dcqs中的item，进行refine操作
+  // 垃圾收集期间的dcqs都存放在 _dirty_card_queue_set 和 _into_cset_dirty_card_queue_set
   redirty_logged_cards();
   COMPILER2_PRESENT(DerivedPointerTable::update_pointers());
 }
@@ -6972,7 +7012,7 @@ void G1CollectedHeap::cleanUpCardTable() {
 
     if (G1CollectedHeap::use_parallel_gc_threads()) {
       set_par_threads();
-      workers()->run_task(&cleanup_task);
+      workers()->run_task(&cleanup_task); // 并发进行卡表的清理工作
       set_par_threads(0);
     } else {
       while (_dirty_cards_region_list) {
@@ -7122,7 +7162,7 @@ class G1FreeHumongousRegionClosure : public HeapRegionClosure {
   }
 
   virtual bool doHeapRegion(HeapRegion* r) {
-    if (!r->startsHumongous()) {
+    if (!r->startsHumongous()) { // 这个Closure只会对巨型对象的第一个HeapRegion进行处理，其它HeapRegion不负责
       return false;
     }
 
@@ -7159,9 +7199,27 @@ class G1FreeHumongousRegionClosure : public HeapRegionClosure {
     // considerable effort for cleaning up the the remembered sets. This is
     // required because stale remembered sets might reference locations that
     // are currently allocated into.
+    /**
+     * 这段注释解释了在 G1 垃圾收集器中如何确定巨型对象（humongous objects）是否存活的过程，以及为什么这些检查是足够的。以下是对每一部分的详细解释：
+     * 为了确定一个巨型对象是否存活，除了检查它是否有来自根集（roots）或年轻代（young gen）的引用外，还要检查它是否有一个记忆集（remembered set）条目。
+     *
+     * 这部分解释了为什么没有记忆集条目的巨型对象不可能是存活的：
+            内部引用不存在：巨型对象区域（humongous starts regions）内部不包含其他对象，因此没有可能会被记忆集忽略的区域内引用。这意味着巨型对象的引用只能来自外部，而外部引用会在记忆集中记录。
+            记忆集条目持久存在：一旦一个巨型对象的起始区域有RSet（表示它被引用），这个条目将会保留直到并发标记的结束。因此，如果记忆集中没有RSet，就意味着没有外部引用指向这个巨型对象。
+
+        标记状态检查并非必须：不需要检查对象在标记过程中是否被标记为死亡。如果进行了这种检查，反而可能会阻止在并发标记周期内回收巨型对象，因为在这个周期内分配的所有对象都被默认视为存活。
+
+        SATB（Snapshot-At-The-Beginning）标记更为保守：SATB 标记比记忆集更加保守。因此，如果此时记忆集中没有条目，就可以确信没有引用指向该巨型对象。
+
+       在垃圾收集开始时，所有的 refinement logs（引用精化日志）都会被刷新，这确保了记忆集已经完全更新，能够准确反映出当前对巨型对象的引用情况。
+
+       数组对象的特殊处理：此时不会考虑数组类型的对象，因为清理它们的记忆集会花费相当大的工作量。这是因为旧的记忆集条目可能会引用当前已经被重新分配的内存位置，这种情况会增加清理的复杂性。
+
+     */
     uint region_idx = r->hrm_index();
-    if (!g1h->is_humongous_reclaim_candidate(region_idx) ||
+    if (!g1h->is_humongous_reclaim_candidate(region_idx) || // 搜索 set_humongous_reclaim_candidate
         !r->rem_set()->is_empty()) {
+        // 如果这个 Humongous Start Regin不是Candidate，或者它的RSet并不是空的，那么说明有从外面指过来的引用，不回收
 
       if (G1TraceEagerReclaimHumongousObjects) {
         gclog_or_tty->print_cr("Live humongous region %u size " SIZE_FORMAT " start " PTR_FORMAT " length " UINT32_FORMAT " with remset " SIZE_FORMAT " code roots " SIZE_FORMAT " is marked %d reclaim candidate %d type array %d",
@@ -7179,7 +7237,8 @@ class G1FreeHumongousRegionClosure : public HeapRegionClosure {
 
       return false;
     }
-
+    // 执行到这里，可以知道这个HeapRegion已经被标记位激进回收的候选对象，并且RSet是空的
+    // 只处理typeArray
     guarantee(obj->is_typeArray(),
               err_msg("Only eagerly reclaiming type arrays is supported, but the object "
                       PTR_FORMAT " is not.",
@@ -7199,13 +7258,14 @@ class G1FreeHumongousRegionClosure : public HeapRegionClosure {
                             );
     }
     // Need to clear mark bit of the humongous object if already set.
+    // 此时，我们已经确定可以回收这个巨型对象的HeapRegion了，因此，如果对象在并发标记位图中已标记为存活，则清除该标记位。
     if (next_bitmap->isMarked(r->bottom())) {
       next_bitmap->clear(r->bottom());
     }
-    _freed_bytes += r->used();
-    r->set_containing_set(NULL);
-    _humongous_regions_removed.increment(1u, r->capacity());
-    g1h->free_humongous_region(r, _free_region_list, false);
+    _freed_bytes += r->used(); // 更新已释放的字节数 _freed_bytes。
+    r->set_containing_set(NULL); // 将堆区域从包含集（containing set）中移除。
+    _humongous_regions_removed.increment(1u, r->capacity()); // 增加 _humongous_regions_removed 计数，表示已移除一个巨型对象区域。
+    g1h->free_humongous_region(r, _free_region_list, false); // 调用 free_humongous_region 方法实际释放区域，并将其加入 _free_region_list。
 
     return false;
   }
@@ -7225,7 +7285,10 @@ class G1FreeHumongousRegionClosure : public HeapRegionClosure {
 
 void G1CollectedHeap::eagerly_reclaim_humongous_regions() {
   assert_at_safepoint(true);
-
+  /**
+   *   experimental(bool, G1EagerReclaimHumongousObjects, true,                  \
+          "Try to reclaim dead large objects at every young GC.")           \
+   */
   if (!G1EagerReclaimHumongousObjects ||
       (!_has_humongous_reclaim_candidates && !G1TraceEagerReclaimHumongousObjects)) {
     g1_policy()->phase_times()->record_fast_reclaim_humongous_time_ms(0.0, 0);
@@ -7251,7 +7314,7 @@ void G1CollectedHeap::eagerly_reclaim_humongous_regions() {
     }
   }
 
-  prepend_to_freelist(&local_cleanup_list);
+  prepend_to_freelist(&local_cleanup_list); // 将 local_cleanup_list 中的所有回收区域加入到 G1 GC 的自由区域列表（free list）中，以便这些区域可以被重新分配。
   decrement_summary_bytes(cl.bytes_freed());
 
   g1_policy()->phase_times()->record_fast_reclaim_humongous_time_ms((os::elapsedTime() - start_time) * 1000.0,
@@ -7615,7 +7678,7 @@ HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
       // We really only need to do this for old regions given that we
       // should never scan survivors. But it doesn't hurt to do it
       // for survivors too.
-      new_alloc_region->record_timestamp();
+      new_alloc_region->record_timestamp(); // 记录这个HeapRegion的timestamp为GC timestamp
       if (is_survivor) {
         new_alloc_region->set_survivor();
         _hr_printer.alloc(new_alloc_region, G1HRPrinter::Survivor);

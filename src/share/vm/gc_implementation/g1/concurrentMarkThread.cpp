@@ -40,6 +40,11 @@
 SurrogateLockerThread*
      ConcurrentMarkThread::_slt = NULL;
 
+/**
+ * 这是一个全局唯一的 ConcurrentMarkThread 对象，在构造的时候，就会调用create_and_start()来启动线程，
+ * 实际调用的是ConcurrentMarkThread::run()
+ * @param cm
+ */
 ConcurrentMarkThread::ConcurrentMarkThread(ConcurrentMark* cm) :
   ConcurrentGCThread(),
   _cm(cm),
@@ -47,7 +52,7 @@ ConcurrentMarkThread::ConcurrentMarkThread(ConcurrentMark* cm) :
   _in_progress(false),
   _vtime_accum(0.0),
   _vtime_mark_accum(0.0) {
-  create_and_start();
+  create_and_start(); // 在
 }
 /**
  * remark阶段
@@ -88,6 +93,7 @@ public:
 /**
  *  并发标记子阶段，这里run()中的代码全部都是并发执行的
  *  在方法 G1CollectedHeap::doConcurrentMark 中设置了启动标记并启动
+ *  在 G1CollectedHeap::gc_threads_do 中调用
  *  这个方法的执行不处于safepoint
  */
 void ConcurrentMarkThread::run() {
@@ -109,7 +115,7 @@ void ConcurrentMarkThread::run() {
     if (_should_terminate) {
       break;
     }
-
+    // 收到通知，可以执行了
     {
       ResourceMark rm;
       HandleMark   hm;
@@ -130,7 +136,7 @@ void ConcurrentMarkThread::run() {
           gclog_or_tty->print_cr("[GC concurrent-root-region-scan-start]");
         }
         /**
-         * 需要跟 markFromRoot区别开
+         * 需要跟 markFromRoot 区别开
          * 扫描root region，这里的root region应该是survivor region，因为经过上一轮 young gc，实际上除了老年代，所有的young region的对象都进入了survivor
          * 为了弥补从直接的Java根指向老年代的情况，在G1ParCopyClosure<barrier, do_mark_object>::do_oop_work中，
          *      使用了一个参数do_mark_object， 当进行一般的YGC时， 参数设置为G1MarkNone，
@@ -176,7 +182,7 @@ void ConcurrentMarkThread::run() {
             gclog_or_tty->print_cr("[GC concurrent-mark-end, %1.7lf secs]",
                                       mark_end_sec - mark_start_sec);
           }
-          // 这是再标记操作 ，通过 VM_CGC_Operation 执行，因此是STW的
+          // 这是再标记Remark操作 ，通过 VM_CGC_Operation 执行，因此是STW的
           CMCheckpointRootsFinalClosure final_cl(_cm);
           VM_CGC_Operation op(&final_cl, "GC remark", true /* needs_pll */);
           VMThread::execute(&op);
@@ -214,7 +220,7 @@ void ConcurrentMarkThread::run() {
       } else {  // 如果已经被Full GC终止，则跳过清理操作
         // We don't want to update the marking status if a GC pause
         // is already underway.
-        SuspendibleThreadSetJoiner sts;
+        SuspendibleThreadSetJoiner sts; // 将当前线程加入到暂停线程的集合中
         g1h->set_marking_complete();
       }
 
@@ -238,9 +244,9 @@ void ConcurrentMarkThread::run() {
         // Now do the concurrent cleanup operation.
         /**
          * 现在进行清理，这个阶段需要STW.注意，这里的cleanup，并不是evacuation，只是并发标记最后的一个子阶段，用来进行分区计数，RSet清理等
-         * 这个过程中如果打开了
+         * 在这里，会将清理阶段获取的空的HeapRegion添加到二级空闲列表中
          */
-        _cm->completeCleanup(); //
+        _cm->completeCleanup();
 
         // Notify anyone who's waiting that there are no more free
         // regions coming. We have to do this before we join the STS
@@ -357,6 +363,9 @@ void ConcurrentMarkThread::print_on(outputStream* st) const {
   st->cr();
 }
 
+/**
+ * 一直sleep，直到收到 G1CollectedHeap::doConcurrentMark()通知
+ */
 void ConcurrentMarkThread::sleepBeforeNextCycle() {
   // We join here because we don't want to do the "shouldConcurrentMark()"
   // below while the world is otherwise stopped.

@@ -154,7 +154,7 @@ void G1StringDedup::unlink_or_oops_do(BoolObjectClosure* is_alive,
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     G1CollectedHeap* g1h = G1CollectedHeap::heap();
     g1h->set_par_threads();
-    g1h->workers()->run_task(&task);
+    g1h->workers()->run_task(&task); // 并发进行string类型的去重操作
     g1h->set_par_threads(0);
   } else {
     task.work(0);

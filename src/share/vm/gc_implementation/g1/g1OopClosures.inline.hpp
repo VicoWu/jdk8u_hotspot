@@ -90,8 +90,8 @@ inline void G1ParScanClosure::do_oop_nv(T* p) {
              "p should still be pointing to obj or to its forwardee");
 
       _par_scan_state->push_on_queue(p);
-    } else { // 不在目标集合中
-      if (state.is_humongous()) {
+    } else { // 不在回收集合中
+      if (state.is_humongous()) { // 如果是大对象，那么标记这个大对象为存活大对象，这样，这个大对象就不会进入回收候选进行激进回收
         _g1->set_humongous_is_live(obj);
       }
       // 仅仅需要更新RS,用来更新引用关系
@@ -151,12 +151,12 @@ inline void G1CMOopClosure::do_oop_nv(T* p) {
                            "*" PTR_FORMAT " = " PTR_FORMAT,
                            _task->worker_id(), p2i(p), p2i((void*) obj));
   }
-  _task->deal_with_reference(obj);
+  _task->deal_with_reference(obj); // CMTask::deal_with_reference(
 }
 
 
 /**
- * 这个方法的调用发生在并发标记阶段，因此当前的状态不是STW的
+ * 这个方法的调用发生在并发标记阶段的根分区扫描阶段，因此当前的状态不是STW的
  * 可以看到，这个do_oop_nv并没有任何递归的操作，仅仅是传入什么对象就扫描什么对象
  * 这个Closure的构造发生在方法 void ConcurrentMark::scanRootRegion 中
  * @tparam T
@@ -164,17 +164,18 @@ inline void G1CMOopClosure::do_oop_nv(T* p) {
  */
 template <class T>
 inline void G1RootRegionScanClosure::do_oop_nv(T* p) {
-  T heap_oop = oopDesc::load_heap_oop(p); // 获取oop* 指针指向的oop对象
+  T heap_oop = oopDesc::load_heap_oop(p); // 获取oop* 指针指向的oop对象，即，对应的field所指向的对象
   if (!oopDesc::is_null(heap_oop)) { // 调用oopDesc类的静态方法，判断对象是否为null
     /**
      * 如果不是narrowoop，那么直接返回，如果是narrow oop，需要进行相应的解码工作
      * 实现类搜索 inline oop oopDesc::decode_heap_oop_not_null
      */
     oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
-    HeapRegion* hr = _g1h->heap_region_containing((HeapWord*) obj);
+    HeapRegion* hr = _g1h->heap_region_containing((HeapWord*) obj); // 这个field所指向的对象所在的HeapRegion
     /**
      * 标记对象，将标记结果存放在_cm对象的_nextMarkBitMap中
      * 这里没有进行相应的递归操作，只是对root region进行了扫描和标记
+     * 搜搜 inline void ConcurrentMark::grayRoot(oop obj, size_t word_size,
      */
 
     _cm->grayRoot(obj, obj->size(), _worker_id, hr);
@@ -204,12 +205,12 @@ inline void G1InvokeIfNotTriggeredClosure::do_oop_nv(T* p) {
 
 // 无论check_for_refs_into_cset = false/true, 这个Closure都会调用。
 // 在 G1RemSet::refine_card中调用
-// 总而言之，如果无论check_for_refs_into_cset = true 则会将这个对象push到对应的worker线程的 G1ParScanThreadState的引用队列 中
+// 总而言之，如果无论check_for_refs_into_cset = true 则会将这个对象push到对应的worker线程的 G1ParScanThreadState 的引用队列 中
 // 而如果 check_for_refs_into_cset = false，则是将这个field的应用关系更新到目标对象的HeapRegion的RSet中
 // 在 bool G1RemSet::refine_card 中被调用
 template <class T>
 inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
-  oop obj = oopDesc::load_decode_heap_oop(p);
+  oop obj = oopDesc::load_decode_heap_oop(p);  // 获取这个field p指向的对象的对象指针
   if (obj == NULL) {
     return;
   }
@@ -230,7 +231,7 @@ inline void G1UpdateRSOrPushRefOopClosure::do_oop_nv(T* p) {
   assert(_from != NULL, "from region must be non-NULL");
   assert(_from->is_in_reserved(p), "p is not in from");
 
-  HeapRegion* to = _g1->heap_region_containing(obj);
+  HeapRegion* to = _g1->heap_region_containing(obj); // 这个对象所在的HeapRegion
   if (_from == to) {
     // Normally this closure should only be called with cross-region references.
     // But since Java threads are manipulating the references concurrently and we

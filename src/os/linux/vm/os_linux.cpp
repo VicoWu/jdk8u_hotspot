@@ -847,11 +847,18 @@ static void *java_start(Thread *thread) {
   return 0;
 }
 
+/**
+ *
+ * @param thread
+ * @param thr_type
+ * @param stack_size
+ * @return
+ */
 bool os::create_thread(Thread* thread, ThreadType thr_type, size_t stack_size) {
   assert(thread->osthread() == NULL, "caller responsible");
 
   // Allocate the OSThread object
-  OSThread* osthread = new OSThread(NULL, NULL);
+  OSThread* osthread = new OSThread(NULL, NULL); // 创建一个OSThread对象
   if (osthread == NULL) {
     return false;
   }

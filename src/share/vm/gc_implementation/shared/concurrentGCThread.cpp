@@ -40,6 +40,9 @@ ConcurrentGCThread::ConcurrentGCThread() :
   _should_terminate(false), _has_terminated(false) {
 };
 
+/**
+ * 所有实现了ConcurrentGCThread的类，都会嗲用这个方法 来启动对应的线程
+ */
 void ConcurrentGCThread::create_and_start() {
   if (os::create_thread(this, os::cgc_thread)) {
     // XXX: need to set this to low priority
@@ -47,7 +50,7 @@ void ConcurrentGCThread::create_and_start() {
     // should be just less than that of VMThread.
     os::set_priority(this, NearMaxPriority);
     if (!_should_terminate && !DisableStartThread) {
-      os::start_thread(this);
+      os::start_thread(this); // 启动线程
     }
   }
 }

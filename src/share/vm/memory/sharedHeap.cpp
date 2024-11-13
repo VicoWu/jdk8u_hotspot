@@ -54,7 +54,7 @@ SharedHeap::SharedHeap(CollectorPolicy* policy_) :
       (UseConcMarkSweepGC && (CMSParallelInitialMarkEnabled ||
                               CMSParallelRemarkEnabled)) ||
        UseG1GC) &&
-      ParallelGCThreads > 0) {
+      ParallelGCThreads > 0) { // 如果使用G1GC，并且 ParallelGCThreads > 0
       /**
        * 构造 FlexibleWorkGang，并初始化它所管理的worker，这些worker会用来在stw期间进行evacuation操作
        * 在并发标记阶段所使用的并发标记线程也是使用FlxeiableWorkGang来进行多线程的管理的，但是显然他们执行的任务不同，并发度也不同

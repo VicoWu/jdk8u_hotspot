@@ -30,6 +30,7 @@
 #include "oops/oop.inline.hpp"
 
 /**
+ * in book
  * 调用者是 G1ParScanThreadState::deal_with_reference
  * 在这里，指针p指向一个Field，这个field指向一个对象，因此，指针P的位置存放的就是这个目标对象的地址
  * 当这个对象转移到survivor区域以后，就需要在这个位置写入对象的新地址
@@ -73,6 +74,7 @@ template <class T> void G1ParScanThreadState::do_oop_evac(T* p, HeapRegion* from
     }
     oopDesc::encode_store_heap_oop(p, forwardee);// 使用转发以后的地址更新引用者所引用该对象的地址
   } else if (in_cset_state.is_humongous()) { // 是大对象，大对象被标记是通过特殊方法 set_humongous_is_live进行的，而不是直接使用obj->mark方法
+    // 如果是大对象，那么标记这个大对象为存活大对象，这样，这个大对象就不会进入回收候选进行激进回收
     _g1h->set_humongous_is_live(obj); // 搜索 inline void G1CollectedHeap::set_humongous_is_live(oop obj)
   } else {
     assert(!in_cset_state.is_in_cset_or_humongous(),

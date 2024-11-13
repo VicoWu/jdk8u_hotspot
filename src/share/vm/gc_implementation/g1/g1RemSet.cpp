@@ -204,11 +204,10 @@ public:
   }
 
   /**
-   * ScanRSClosure::doHeapRegion
+   *
    * 这里的HeapRegion一定是回收结合中的 Region
    * 调用者 G1RemSet::scanRS
-   * @param r
-   * @return
+   * ScanRSClosure::doHeapRegion
    */
   bool doHeapRegion(HeapRegion* r) {
     assert(r->in_collection_set(), "should only be called on elements of CS.");
@@ -378,7 +377,8 @@ public:
       // Enqueue the card
       /**
        * 如果卡片的确有指向回收集合的引用，那么我们需要将这个卡片加入到_into_cset_dcq
-       * (由于_into_cset_dcq是基于G1CollectedHeap::into_cset_dirty_card_queue_set()构建的，因此实际上是加入到into_cset_dirty_card_queue_set中去了)
+       * (由于_into_cset_dcq是基于G1CollectedHeap::into_cset_dirty_card_queue_set()构建的，因此实际上是加入到 into_cset_dirty_card_queue_set 中去了)
+       * 由于DirtyCardQueue是PtrQueue的子类，这里调用的是 PtrQueue::enqueue() 方法
        */
       _into_cset_dcq->enqueue(card_ptr); // 记录这个包含有指向回收集合的卡片，加入到into_cset_dirty_card_queue_set
     }
@@ -414,8 +414,9 @@ void G1RemSet::cleanupHRRS() {
 }
 
 /**
+ * G1ParTask::work() -> scan_remembered_sets() -> oop_into_collection_set_do()
  * 静态方法
- * 搜 G1RootProcessor::scan_remembered_sets 查看调用位置，而G1RootProcessor::scan_remembered_sets是在evacuate_root 中被调用的，
+ * 搜 G1RootProcessor::scan_remembered_sets 查看调用位置，而G1RootProcessor::scan_remembered_sets 是在evacuate_root 中被调用的，
  *   即这个方法做的事情就是以RSet为根进行扫描
  */
 void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
@@ -457,7 +458,7 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
   assert((ParallelGCThreads > 0) || worker_i == 0, "invariant");
   /**
    * 搜索 void G1RemSet::updateRS
-   * 这里将会往 into_cset_dirty_card_queue_set 中添加数据
+   * 这里将会往 into_cset_dirty_card_queue_set 中添加指向回收集合的脏卡片
    */
   updateRS(&into_cset_dcq, worker_i);
   /**
@@ -471,11 +472,11 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
 
 void G1RemSet::prepare_for_oops_into_collection_set_do() {
   _g1->set_refine_cte_cl_concurrency(false);
-  DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set();
+  DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set(); // 用户线程级别的全局DCQS
   dcqs.concatenate_logs(); // 遍历所有用户线程的不完整的logs以及全局的_shared_dirty_card_queue，将这些logs添加到全局的已完成的链表中去
 
   guarantee( _cards_scanned == NULL, "invariant" );
-  _cards_scanned = NEW_C_HEAP_ARRAY(size_t, n_workers(), mtGC);
+  _cards_scanned = NEW_C_HEAP_ARRAY(size_t, n_workers(), mtGC); // 为每一个worker记录已经扫描的卡片的数量
   for (uint i = 0; i < n_workers(); ++i) {
     _cards_scanned[i] = 0;
   }
@@ -509,13 +510,13 @@ void G1RemSet::cleanup_after_oops_into_collection_set_do() {
     // We just need to transfer the completed buffers from the DirtyCardQueueSet
     // used to hold cards that contain references that point into the collection set
     // to the DCQS used to hold the deferred RS updates.
-    _g1->dirty_card_queue_set().merge_bufferlists(&into_cset_dcqs);
+    _g1->dirty_card_queue_set().merge_bufferlists(&into_cset_dcqs);  // 由于CSet被清理了，因此将之前指向CSet的DCQS迁移到G1CollectedHeap所维护的全局DCQS(区别JavaThread的全局静态DCQS)
     _g1->g1_policy()->phase_times()->record_evac_fail_restore_remsets((os::elapsedTime() - restore_remembered_set_start) * 1000.0);
   }
   // 如果回收成功了，意味着回收集合已经清空了，那么没必要保存指向回收集合的RSet了
   // Free any completed buffers in the DirtyCardQueueSet used to hold cards
   // which contain references that point into the collection.
-  _g1->into_cset_dirty_card_queue_set().clear();
+  _g1->into_cset_dirty_card_queue_set().clear(); // 已经迁移到_g1->dirty_card_queue_set()了，没必要再保留 _g1->into_cset_dirty_card_queue_set()
   assert(_g1->into_cset_dirty_card_queue_set().completed_buffers_num() == 0,
          "all buffers should be freed");
   _g1->into_cset_dirty_card_queue_set().clear_n_completed_buffers();
@@ -582,6 +583,7 @@ G1UpdateRSOrPushRefOopClosure(G1CollectedHeap* g1h,
 // false otherwise.
 
 /**
+ * in book
  * 这个refine_card的处理目标一定只是针对脏卡片，通过Refine线程或者GC线程来调用处理脏卡片
  * 处理脏卡片的基本原理是，如果是脏卡片(GC中要求脏卡片并且对应的field指向cset)，那么选择对这个脏卡片中的引用关系更新到对应的目标Region的RSet中，
  * 或者，如果是GC线程，则更新到worker线程的 G1ParScanThreadState的引用队列 中
@@ -697,7 +699,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
     // only be active outside of a collection which means that when they
     // reach here they should have check_for_refs_into_cset == false.
     assert((size_t)worker_i < n_workers(), "index of worker larger than _cset_rs_update_cl[].length");
-    oops_in_heap_closure = _cset_rs_update_cl[worker_i]; // 获取当前的worker thread 的 G1ParPushHeapRSClosure， 每一个 worker thread都有自己的 worker thread
+    oops_in_heap_closure = _cset_rs_update_cl[worker_i]; // 获取当前的worker thread 的 G1ParPushHeapRSClosure， 每一个worker thread都有自己的 worker thread
   }
   // check_for_refs_into_cset = false，搜索 G1UpdateRSOrPushRefOopClosure::do_oop_nv
   G1UpdateRSOrPushRefOopClosure update_rs_oop_cl(_g1,
@@ -705,7 +707,7 @@ bool G1RemSet::refine_card(jbyte* card_ptr, uint worker_i,
                                                  oops_in_heap_closure, // 如果check_for_refs_into_cset = false，oops_in_heap_closure为空
                                                  check_for_refs_into_cset, // 如果是GC引起的，那么check_for_refs_into_cset=true
                                                  worker_i);
-  update_rs_oop_cl.set_from(r); // 设置卡片来自于的HeapRegion
+  update_rs_oop_cl.set_from(r); // 设置卡片来自于的 HeapRegion
 
   G1TriggerClosure trigger_cl; // inline void G1TriggerClosure::do_oop_nv(T* p)
   FilterIntoCSClosure into_cs_cl(NULL, _g1, &trigger_cl); // FilterIntoCSClosure::do_oop_nv(T* p),如果对象的确在回收集合中或者是大对象，那么设置trigger_cl 为triggered

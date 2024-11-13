@@ -93,9 +93,9 @@ void G1StringDedupThread::run() {
         G1StringDedupTable::deduplicate(java_string, stat);
 
         // Safepoint this thread if needed
-        if (sts.should_yield()) {
+        if (sts.should_yield()) { // 如果当前有试图STW的线程
           stat.mark_block();
-          sts.yield();
+          sts.yield(); // 当前线程终止执行，直到VM 线程完成STW，当前线程恢复执行
           stat.mark_unblock();
         }
       }

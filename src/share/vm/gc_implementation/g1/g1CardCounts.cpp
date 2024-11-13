@@ -68,8 +68,8 @@ void G1CardCounts::initialize(G1RegionToSpaceMapper* mapper) {
     _ct_bs = _g1h->g1_barrier_set();
     _ct_bot = _ct_bs->byte_for_const(_g1h->reserved_region().start());
 
-    _card_counts = (jubyte*) mapper->reserved().start();
-    _reserved_max_card_num = mapper->reserved().byte_size();
+    _card_counts = (jubyte*) mapper->reserved().start(); //
+    _reserved_max_card_num = mapper->reserved().byte_size(); // size_t byte_size() const
     mapper->set_mapping_changed_listener(&_listener);
   }
 }
@@ -90,8 +90,8 @@ uint G1CardCounts::add_card_count(jbyte* card_ptr) {
            err_msg("Card " SIZE_FORMAT " outside of card counts table (max size " SIZE_FORMAT ")",
                    card_num, _reserved_max_card_num));
     count = (uint) _card_counts[card_num];
-    if (count < G1ConcRSHotCardLimit) {
-      _card_counts[card_num] =
+    if (count < G1ConcRSHotCardLimit) { // G1ConcRSHotCardLimit默认值是4
+      _card_counts[card_num] = //它的最大值为4
         (jubyte)(MIN2((uintx)(_card_counts[card_num] + 1), G1ConcRSHotCardLimit));
     }
   }

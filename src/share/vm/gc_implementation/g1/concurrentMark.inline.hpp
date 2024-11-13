@@ -30,7 +30,7 @@
 
 // Utility routine to set an exclusive range of cards on the given
 // card liveness bitmap
-inline void ConcurrentMark::set_card_bitmap_range(BitMap* card_bm,
+inline void ConcurrentMark::set_card_bitmap_range(BitMap* card_bm, // 这个worker对应的卡片标记位图
                                                   BitMap::idx_t start_idx,
                                                   BitMap::idx_t end_idx,
                                                   bool is_par) {
@@ -47,11 +47,11 @@ inline void ConcurrentMark::set_card_bitmap_range(BitMap* card_bm,
   // cards that are spanned by an object/mem region so 8 cards will
   // allow up to object sizes up to 4K to be handled using the loop.
   if ((end_idx - start_idx) <= 8) {
-    for (BitMap::idx_t i = start_idx; i < end_idx; i += 1) {
+    for (BitMap::idx_t i = start_idx; i < end_idx; i += 1) { // 在起始范围内的所有卡片，
       if (is_par) {
-        card_bm->par_set_bit(i);
+        card_bm->par_set_bit(i); // 需要在并发状态下执行
       } else {
-        card_bm->set_bit(i);
+        card_bm->set_bit(i); // 不需要在并发状态下执行
       }
     }
   } else {
@@ -78,15 +78,15 @@ inline BitMap::idx_t ConcurrentMark::card_bitmap_index_for(HeapWord* addr) {
 // Counts the given memory region in the given task/worker
 // counting data structures.
 inline void ConcurrentMark::count_region(MemRegion mr, HeapRegion* hr,
-                                         size_t* marked_bytes_array,
-                                         BitMap* task_card_bm) {
+                                         size_t* marked_bytes_array, // 这个Task在每一个HeapRegion的标记数据量的字节数
+                                         BitMap* task_card_bm) { // 这个Task在每一个HeapRegion的标记卡片信息
   G1CollectedHeap* g1h = _g1h;
   CardTableModRefBS* ct_bs = g1h->g1_barrier_set();
 
   HeapWord* start = mr.start();
   HeapWord* end = mr.end();
-  size_t region_size_bytes = mr.byte_size();
-  uint index = hr->hrm_index();
+  size_t region_size_bytes = mr.byte_size(); // 这个MemRegion的字节数
+  uint index = hr->hrm_index();// 这个HeapRegion的Region索引
 
   assert(!hr->continuesHumongous(), "should not be HC region");
   assert(hr == g1h->heap_region_containing(start), "sanity");
@@ -95,15 +95,18 @@ inline void ConcurrentMark::count_region(MemRegion mr, HeapRegion* hr,
   assert(task_card_bm != NULL, "pre-condition");
 
   // Add to the task local marked bytes for this region.
-  marked_bytes_array[index] += region_size_bytes;
-
+  marked_bytes_array[index] += region_size_bytes; // 更新这个Task的marked_bytes_array的已经标记的字节数
+  // 这个MemRegion的卡片起始索引
   BitMap::idx_t start_idx = card_bitmap_index_for(start);
+  // 这个MemRegion的卡片终止索引
   BitMap::idx_t end_idx = card_bitmap_index_for(end);
 
   // Note: if we're looking at the last region in heap - end
   // could be actually just beyond the end of the heap; end_idx
   // will then correspond to a (non-existent) card that is also
   // just beyond the heap.
+  // 这个这个MemRegion的结束地址不是某一个卡片区域的头地址，那么，设置end_idx，这样，[start_idx, end_idx]的卡片索引对应的卡片区域能够完全
+  // 覆盖MemRegion。但是此时会有一个问题，如果end是最后一个卡片区域，那么end_idx += 1完全有可能超出卡片区域的范围
   if (g1h->is_in_g1_reserved(end) && !ct_bs->is_card_aligned(end)) {
     // end of region is not card aligned - incremement to cover
     // all the cards spanned by the region.
@@ -112,6 +115,7 @@ inline void ConcurrentMark::count_region(MemRegion mr, HeapRegion* hr,
   // The card bitmap is task/worker specific => no need to use
   // the 'par' BitMap routines.
   // Set bits in the exclusive bit range [start_idx, end_idx).
+  // 这里的task_card_bm只是这个Task的对应的卡片的标记位图，因此没有必要关心并发问题，是线程安全的
   set_card_bitmap_range(task_card_bm, start_idx, end_idx, false /* is_par */);
 }
 
@@ -127,8 +131,9 @@ inline void ConcurrentMark::count_region(MemRegion mr, HeapRegion* hr,
 inline void ConcurrentMark::count_region(MemRegion mr,
                                          HeapRegion* hr,
                                          uint worker_id) {
+  // 返回一个数组，这个数组记录了这个worker对每一个HeapRegion已经标记的字节数
   size_t* marked_bytes_array = count_marked_bytes_array_for(worker_id);
-  BitMap* task_card_bm = count_card_bitmap_for(worker_id); // 获取 这个worker对应的标记数组 _count_card_bitmaps
+  BitMap* task_card_bm = count_card_bitmap_for(worker_id); // 获取这个worker对应的标记数组 _count_card_bitmaps
   count_region(mr, hr, marked_bytes_array, task_card_bm);
 }
 
@@ -257,7 +262,7 @@ inline bool CMBitMap::parMark(HeapWord* addr) {
   check_mark(addr);
   /**
    * 搜索 size_t heapWordToOffset(const HeapWord* addr)
-   * _bm 定义在  class CMBitMapRO VALUE_OBJ_CLASS_SPEC中， CMBitMapRO是CMBitMap 的父类
+   * _bm 定义在  class CMBitMapRO VALUE_OBJ_CLASS_SPEC 中， CMBitMapRO是CMBitMap 的父类
    * 搜索 BitMap::par_set_bit(idx_t bit)查看 par_set_bit
    * 可以看到，当有其他
    */
@@ -271,6 +276,11 @@ inline bool CMBitMap::parClear(HeapWord* addr) {
 
 #undef check_mark
 
+/**
+ * 标记过程中将对象放入本地标记栈中，如果本地标记栈满了，就推送到全局标记栈中
+ * 调用者是 inline void CMTask::make_reference_grey
+ * @param obj
+ */
 inline void CMTask::push(oop obj) {
   HeapWord* objAddr = (HeapWord*) obj;
   assert(_g1h->is_in_g1_reserved(objAddr), "invariant");
@@ -284,6 +294,7 @@ inline void CMTask::push(oop obj) {
   }
 
   if (!_task_queue->push(obj)) {
+      // 向本地标记栈存入元素失败
     // The local task queue looks full. We need to push some entries
     // to the global stack.
 
@@ -292,12 +303,12 @@ inline void CMTask::push(oop obj) {
                              "moving entries to the global stack",
                              _worker_id);
     }
-    move_entries_to_global_stack();
+    move_entries_to_global_stack();  // 将本地标记栈存放到全局标记栈中
 
     // this should succeed since, even if we overflow the global
     // stack, we should have definitely removed some entries from the
     // local queue. So, there must be space on it.
-    bool success = _task_queue->push(obj);
+    bool success = _task_queue->push(obj); // 向本地标记栈存入元素
     assert(success, "invariant");
   }
 
@@ -357,6 +368,7 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
      * 返回true，说明成功标记了该对象，返回false，说明这个对象已经被其他对象标记
      * 对对象的标记与全局_finger 无关
      * 这里par_mark_and_count方法是全局的_cm的成员方法，而不是当前的CMTask的成员方法
+     * 从方法par开头，说明是一个可以并行执行的线程安全的方法
      */
 
   if (_cm->par_mark_and_count(obj, hr, _marked_bytes_array, _card_bm)) {
@@ -392,7 +404,7 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
      *      在这种情况下，当任务扫描该区域时，该对象可能会被访问，并且也会被推送到堆栈上。 因此，有些重复的工作，但没有正确性问题。
      */
     if (is_below_finger(obj, global_finger)) { // 只有位于全局_finger以下的灰色对象才会被放入到stack中
-      if (obj->is_typeArray()) { //如果对象是array
+      if (obj->is_typeArray()) { //如果对象是primitive type array
         // Immediately process arrays of primitive types, rather
         // than pushing on the mark stack.  This keeps us from
         // adding humongous objects to the mark stack that might
@@ -416,14 +428,15 @@ inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
                                  _worker_id, p2i(_finger),
                                  p2i(global_finger), p2i(obj));
         }
-        push(obj); // 将对象推入当前的 CMTask的本地标记栈 _task_queue，因此将会得到递归处理
+        push(obj); // 将对象推入当前的 CMTask的本地标记栈 _task_queue，因此将会得到递归处理，查看 CMTask::push
       }
     }
   }
 }
 
 /**
- * 在inline void G1CMOopClosure::do_oop_nv中被调用
+ * 在 inline void G1CMOopClosure::do_oop_nv 中被调用
+ * 这里会根据引用，递归遍历对象并推送到标记栈中进行递归标记
  * @param obj
  */
 inline void CMTask::deal_with_reference(oop obj) {
@@ -444,7 +457,7 @@ inline void CMTask::deal_with_reference(oop obj) {
       // anything with it).
       HeapRegion* hr = _g1h->heap_region_containing_raw(obj);
       if (!hr->obj_allocated_since_next_marking(obj)) { // 这个object不可以是TAMS以后新分配的对象
-        make_reference_grey(obj, hr);
+        make_reference_grey(obj, hr); // 递归遍历对象并推送到标记栈中进行递归标记
       }
     }
   }

@@ -180,8 +180,9 @@ public:
 
   // Return the number of slots needed for an offset array
   // that covers mem_region_words words.
+  // G1BlockOffsetSharedArray::compute_size
   static size_t compute_size(size_t mem_region_words) {
-    size_t number_of_slots = (mem_region_words / N_words);
+    size_t number_of_slots = (mem_region_words / N_words); // mem_region_words代表整个堆内存的HeapWord数量，N_words代表一张卡片对应的内存的卡片数量(512 /8 = 64)
     return ReservedSpace::allocation_align_size_up(number_of_slots);
   }
 
@@ -204,7 +205,7 @@ public:
     N_bytes = 1 << LogN,
     /**
      * 偏移数组的大小(以HeapWord为单位),，假如LogN=9，而一个字是8个字节，因此LogHeapWordSize=3，
-     *      因此LogN_words = 6，那么N_words = 64，代表64个HeapWord，即一个卡片代表了64个HeapWord，对应了64 * 8 = 512Byte
+     *      因此LogN_words = 9 - 3 = 6，那么N_words = 64，代表64个HeapWord，即一个卡片代表了64个HeapWord，对应了64 * 8 = 512Byte
      */
     N_words = 1 << LogN_words
   };

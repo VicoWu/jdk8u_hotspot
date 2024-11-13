@@ -35,6 +35,10 @@
 // may not enter the set when an attempted suspension is in progress. The
 // suspending thread later calls desynchronize(), allowing the suspended
 // threads to continue.
+/**
+ * 通过这一类，线程可以加入或离开这个集合，并且在某些情况下会定期让出执行权。其主要作用是在需要时，
+ * 允许某个线程请求暂停整个线程集合中的所有线程，并确保这些线程在安全的时机暂停。
+ */
 class SuspendibleThreadSet : public AllStatic {
 private:
   static uint   _nthreads;
@@ -65,17 +69,17 @@ public:
 class SuspendibleThreadSetJoiner : public StackObj {
 public:
   SuspendibleThreadSetJoiner() {
-    SuspendibleThreadSet::join();
+    SuspendibleThreadSet::join(); // 将当前线程加入到可暂停线程集合中
   }
 
   ~SuspendibleThreadSetJoiner() {
-    SuspendibleThreadSet::leave();
+    SuspendibleThreadSet::leave(); // 当前线程离开可暂停线程集合中
   }
 
   bool should_yield() {
-    return SuspendibleThreadSet::should_yield();
+    return SuspendibleThreadSet::should_yield(); // 如果有现成调用了synchronize()方法，那么_suspend_all = True，should_yield()返回True
   }
-
+  // 调用方搜索 sts.yield
   void yield() {
     SuspendibleThreadSet::yield();
   }

@@ -97,10 +97,18 @@ AdaptiveSizePolicy::AdaptiveSizePolicy(size_t init_eden_size,
 //    Calculate the number of GC threads based on the size of the heap.
 //    Use the larger.
 
-int AdaptiveSizePolicy::calc_default_active_workers(uintx total_workers,
-                                            const uintx min_workers,
-                                            uintx active_workers,
-                                            uintx application_workers) {
+/**
+ * calc_default_active_workers 方法会根据多个因素（如用户指定的线程数、应用程序线程数、堆大小等）来计算出应该使用的活跃 GC 线程数。
+ * @param total_workers
+ * @param min_workers
+ * @param active_workers
+ * @param application_workers
+ * @return
+ */
+int AdaptiveSizePolicy::calc_default_active_workers(uintx total_workers, // 总线程数
+                                            const uintx min_workers, // 最小线程数
+                                            uintx active_workers, // 调用者需要的线程数
+                                            uintx application_workers /*当前的应用程序线程数，也即正在运行的 Java 应用程序的线程数。*/) {
   // If the user has specifically set the number of
   // GC threads, use them.
 
@@ -108,40 +116,48 @@ int AdaptiveSizePolicy::calc_default_active_workers(uintx total_workers,
   // or the users has requested a specific number, set the active
   // number of workers to all the workers.
 
-  uintx new_active_workers = total_workers;
-  uintx prev_active_workers = active_workers;
+  uintx new_active_workers = total_workers; // 默认情况下new_active_workers等于total_workers
+  uintx prev_active_workers = active_workers; // 上一次所使用的活跃线程数
   uintx active_workers_by_JT = 0;
   uintx active_workers_by_heap_size = 0;
 
   // Always use at least min_workers but use up to
   // GCThreadsPerJavaThreads * application threads.
-  active_workers_by_JT =
+  active_workers_by_JT = // 计算基于每个 Java (非守护)线程分配的 GC 线程数
     MAX2((uintx) GCWorkersPerJavaThread * application_workers,
          min_workers);
 
+  /**
+   *  默认每64MB一个GC线程                                                                           \
+  product(uintx, HeapSizePerGCThread, ScaleForWordSize(64*M),               \
+          "Size of heap (bytes) per GC thread used in calculating the "     \
+          "number of GC threads")
+   */
   // Choose a number of GC threads based on the current size
   // of the heap.  This may be complicated because the size of
   // the heap depends on factors such as the thoughput goal.
   // Still a large heap should be collected by more GC threads.
-  active_workers_by_heap_size =
+  active_workers_by_heap_size = // 计算基于堆大小分配的 GC 线程数
       MAX2((size_t) 2U, Universe::heap()->capacity() / HeapSizePerGCThread);
 
-  uintx max_active_workers =
-    MAX2(active_workers_by_JT, active_workers_by_heap_size);
+  uintx max_active_workers = // the larger,保证设置的线程数量有足够的能力处理当前的用户线程数量，以及JVM Heap
+    MAX2(active_workers_by_JT, active_workers_by_heap_size); // 选择基于 Java 线程数和堆大小计算的活跃线程数的最大值
 
   // Limit the number of workers to the the number created,
   // (workers()).
   new_active_workers = MIN2(max_active_workers,
-                                (uintx) total_workers);
+                                (uintx) total_workers); // 最大活跃线程数不能超过总线程数
 
   // Increase GC workers instantly but decrease them more
   // slowly.
+  // 如果新计算的活跃线程数少于之前的活跃线程数，则使用之前的线程数和新线程数的平均值，但不低于最小线程数
   if (new_active_workers < prev_active_workers) {
     new_active_workers =
       MAX2(min_workers, (prev_active_workers + new_active_workers) / 2);
   }
 
   // Check once more that the number of workers is within the limits.
+  // 确保计算出的线程数符合预期的范围
   assert(min_workers <= total_workers, "Minimum workers not consistent with total workers");
   assert(new_active_workers >= min_workers, "Minimum workers not observed");
   assert(new_active_workers <= total_workers, "Total workers not observed");
@@ -188,15 +204,18 @@ int AdaptiveSizePolicy::calc_active_workers(uintx total_workers,
   // or the users has requested a specific number, set the active
   // number of workers to all the workers.
 
+  // 如果 UseDynamicNumberOfGCThreads 是 false，表示不使用动态数量的GC线程，
+  // 或者
+  // 用户已经明确指定了 ParallelGCThreads（并行GC线程数），则会直接使用所有的工作线程作为active现成数量
   int new_active_workers;
   if (!UseDynamicNumberOfGCThreads ||
      (!FLAG_IS_DEFAULT(ParallelGCThreads) && !ForceDynamicNumberOfGCThreads)) {
     new_active_workers = total_workers;
-  } else {
+  } else {  // 如果 UseDynamicNumberOfGCThreads 为 true，并且用户没有强制设定GC线程数：
     uintx min_workers = (total_workers == 1) ? 1 : 2;
-    new_active_workers = calc_default_active_workers(total_workers,
-                                                     min_workers,
-                                                     active_workers,
+    new_active_workers = calc_default_active_workers(total_workers, // 总的workers
+                                                     min_workers, // 最小workers
+                                                     active_workers, // 当前的active_workers
                                                      application_workers);
   }
   assert(new_active_workers > 0, "Always need at least 1");

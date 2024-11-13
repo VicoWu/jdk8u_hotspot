@@ -338,8 +338,8 @@ void HeapRegion::initialize(MemRegion mr, bool clear_space, bool mangle_space) {
 
   _orig_end = mr.end();
   hr_clear(false /*par*/, false /*clear_space*/);
-  set_top(bottom());
-  record_timestamp();
+  set_top(bottom()); // 刚初始化的时候，top就是bottom，从最低地址开始写入
+  record_timestamp(); // 记录这个Region的timestamp为GC的timestamp(如果当前的确是在GC Pause中)
 }
 
 CompactibleSpace* HeapRegion::next_compaction_space() const {
@@ -532,7 +532,7 @@ HeapWord* HeapRegion::oops_on_card_seq_iterate_careful(MemRegion mr,
       // in the memory region.
       // 如果这个对象不是一个array，或者，尽管是一个array，但是这个array是在start和end之间，那么对这个obj apply FilterOutOfRegionClosure
       if (!obj->is_objArray() || (((HeapWord*)obj) >= start && cur <= end)) {
-        obj->oop_iterate(cl); // 搜索 inline int oopDesc::oop_iterate, 实际上会apply FilterOutOfRegionClosure::do_oop_nv
+        obj->oop_iterate(cl); // 搜索 inline int oopDesc::oop_iterate, 实际上会 apply FilterOutOfRegionClosure::do_oop_nv
       } else {
         obj->oop_iterate(cl, mr); // 如果这个对象是obj Array，并且 (obj < start 或者  cur > end)
       }
@@ -1141,23 +1141,32 @@ HeapWord* G1OffsetTableContigSpace::cross_threshold(HeapWord* start,
   return _offsets.threshold();
 }
 
+/**
+ * in book
+ * @return
+ */
 HeapWord* G1OffsetTableContigSpace::scan_top() const {
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
   HeapWord* local_top = top();
   OrderAccess::loadload();
   const unsigned local_time_stamp = _gc_time_stamp;
   assert(local_time_stamp <= g1h->get_gc_time_stamp(), "invariant");
-  if (local_time_stamp < g1h->get_gc_time_stamp()) { // 如果这个HeapRegion中保存的local_time_stamp是前面的某一次gc时间，那么，整个HeapRegion都可以扫描
+  // local_time_stamp < g1h->get_gc_time_stamp() = true，说明当前肯定处于GC Pause中(否则 gc_time_stamp() = 0),
+  // 并且，当前的这个HeapRegion肯定不是当前GC所分配的Region
+  if (local_time_stamp < g1h->get_gc_time_stamp()) {
     return local_top;
   } else { // 这个HeapRegion是当前GC alloc Region，那么，只可以最多扫描到_scan_top的位置(对于本轮的gc alloc region，_scan_top就是bottom)，高于这个位置
     return _scan_top;
   }
 }
-
+/**
+ * 记录当前的GC版本号到这个在GC期间使用的HeapRegion中。
+ * 这样，通过一个HeapRegion的本地版本号与当前GC的版本号做比较，就可以知道当前HeapRegion是不是在当前GC中分配的还是以前的GC分配的。
+ */
 void G1OffsetTableContigSpace::record_timestamp() {
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
   unsigned curr_gc_time_stamp = g1h->get_gc_time_stamp();
-
+  //  由于每次GC结束的时候都会将_gc_time_stamp重置为0，因此如果_gc_time_stamp < curr_gc_time_stamp，说明当前肯定处于GC pause当中
   if (_gc_time_stamp < curr_gc_time_stamp) {
     // Setting the time stamp here tells concurrent readers to look at
     // scan_top to know the maximum allowed address to look at.
@@ -1167,14 +1176,14 @@ void G1OffsetTableContigSpace::record_timestamp() {
     HeapWord* st = _scan_top;
     guarantee(st == _bottom || st == _top, "invariant");
 
-    _gc_time_stamp = curr_gc_time_stamp;
+    _gc_time_stamp = curr_gc_time_stamp; // 这个Region是在当前GC中分配的，因此将当前GC的版本号记录到这个HeapRegion中
   }
 }
 
 void G1OffsetTableContigSpace::record_retained_region() {
   // scan_top is the maximum address where it's safe for the next gc to
   // scan this region.
-  _scan_top = top(); // 更新可扫描区域的最高地址
+  _scan_top = top(); // 更新可扫描区域的最高地址为当前HeapRegion的_top，即当前内存分配的最新地址(注意不是_end)
 }
 
 void G1OffsetTableContigSpace::safe_object_iterate(ObjectClosure* blk) {

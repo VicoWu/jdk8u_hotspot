@@ -1352,7 +1352,7 @@ void G1CollectorPolicy::adjust_concurrent_refinement(double update_rs_time,
                                     cg1r->yellow_zone());
     // Change the barrier params
     dcqs.set_process_completed_threshold(processing_threshold);
-    dcqs.set_max_completed_queue(cg1r->red_zone());
+    dcqs.set_max_completed_queue(cg1r->red_zone()); // 设置dcqs最大的完成队列的数量。超过这个数量，将由mutator自己进行refine
   }
 
   int curr_queue_size = dcqs.completed_buffers_num();

@@ -57,7 +57,7 @@ class AbstractGangTask VALUE_OBJ_CLASS_SPEC {
 public:
   // The abstract work method.
   // The argument tells you which member of the gang you are.
-  virtual void work(uint worker_id) = 0;
+  virtual void work(uint worker_id) = 0; // 搜索 void work(uint worker_id) 查看所有的work方法实现
 
   // This method configures the task for proper termination.
   // Some tasks do not have any requirements on termination
@@ -244,7 +244,7 @@ public:
 class WorkGang: public AbstractWorkGang {
 public:
   // Constructor
-  WorkGang(const char* name, uint workers,
+  workgang(const char* name, uint workers,
            bool are_GC_task_threads, bool are_ConcurrentGC_threads);
   // Run a task, returns when the task is done (or terminated).
   virtual void run_task(AbstractGangTask* task);
@@ -325,7 +325,10 @@ class FlexibleWorkGang: public WorkGang {
   // Initialize active_workers to a minimum value.  Setting it to
   // the parameter "workers" will initialize it to a maximum
   // value which is not desirable.
-  FlexibleWorkGang(const char* name, uint workers,
+  // 搜索  new FlexibleWorkGang，可以看到， 在G1CollectedHeap中初始化的事后，are_GC_task_threads=true，are_ConcurrentGC_threads=false
+  // 而在ConcurrentMark中初始化的时候，are_GC_task_threads=false，are_ConcurrentGC_threads=true
+  // 在  WorkGang::initialize_workers()中，这将决定worker_type
+  FlexibleWorkGang(const char* name, uint workers, // ParallelGCThreads
                    bool are_GC_task_threads,
                    bool  are_ConcurrentGC_threads) :
     WorkGang(name, workers, are_GC_task_threads, are_ConcurrentGC_threads),
@@ -333,13 +336,13 @@ class FlexibleWorkGang: public WorkGang {
     _active_workers(UseDynamicNumberOfGCThreads ? 1U : ParallelGCThreads) {}
   // Accessors for fields
   virtual uint active_workers() const { return _active_workers; }
-
+    // FlexibleWorkGang::set_active_workers
   void set_active_workers(uint v) {
     assert(v <= _total_workers,
            "Trying to set more workers active than there are");
-    _active_workers = MIN2(v, _total_workers);
+    _active_workers = MIN2(v, _total_workers); // active workers不能大于 _total_workers
     assert(v != 0, "Trying to set active workers to 0");
-    _active_workers = MAX2(1U, _active_workers);
+    _active_workers = MAX2(1U, _active_workers); // active workers最小是1
     assert(UseDynamicNumberOfGCThreads || _active_workers == _total_workers,
            "Unless dynamic should use total workers");
   }
@@ -470,7 +473,7 @@ protected:
   uint _n_claimed;   // Number of tasks claimed.
   // _n_threads is used to determine when a sub task is done.
   // See comments on SubTasksDone::_n_threads
-  uint _n_threads;   // Total number of parallel threads.
+  uint _n_threads;   // Total number of parallel threads. //
   uint _n_completed; // Number of completed threads.
 
   void clear();

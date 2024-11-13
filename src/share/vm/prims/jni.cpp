@@ -5169,6 +5169,12 @@ DT_RETURN_MARK_DECL(CreateJavaVM, jint
                     , HOTSPOT_JNI_CREATEJAVAVM_RETURN(_ret_ref));
 #endif /* USDT2 */
 
+/**
+ * 宏定义，创建Java虚拟机
+ *
+这段代码展示了 JVM 初始化过程中，JNI_CreateJavaVM 方法的实现，涉及到虚拟机的创建、线程的管理
+ 以及一些低层次的原子操作和错误处理逻辑。下面分步骤解释代码的关键部分：
+ */
 _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_CreateJavaVM(JavaVM **vm, void **penv, void *args) {
 #ifndef USDT2
   HS_DTRACE_PROBE3(hotspot_jni, CreateJavaVM__entry, vm, penv, args);
@@ -5228,7 +5234,7 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_CreateJavaVM(JavaVM **vm, void **penv, v
    */
   bool can_try_again = true;
 
-  result = Threads::create_vm((JavaVMInitArgs*) args, &can_try_again);
+  result = Threads::create_vm((JavaVMInitArgs*) args, &can_try_again); // 创建虚拟机
   if (result == JNI_OK) {
     JavaThread *thread = JavaThread::current();
     /* thread is thread_in_vm here */

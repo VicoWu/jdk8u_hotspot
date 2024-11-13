@@ -42,7 +42,7 @@ class ConcurrentMarkThread: public ConcurrentGCThread {
   double _vtime_mark_accum;
 
  public:
-  virtual void run();
+  virtual void run(); // 在 G1CollectedHeap::gc_threads_do中调用
 
  private:
   ConcurrentMark*                  _cm;

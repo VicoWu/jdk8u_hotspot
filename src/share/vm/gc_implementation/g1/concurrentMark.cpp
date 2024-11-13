@@ -453,7 +453,7 @@ void CMRootRegions::init(G1CollectedHeap* g1h, ConcurrentMark* cm) {
   _cm = cm;
 }
 /**
- * 这个方法是在 ConcurrentMark::checkpointRootsInitialPost中调用的
+ * 这个方法是在 ConcurrentMark::checkpointRootsInitialPost 中调用的
  */
 void CMRootRegions::prepare_for_scan() {
   assert(!scan_in_progress(), "pre-condition");
@@ -492,9 +492,9 @@ HeapRegion* CMRootRegions::claim_next() {
         // that we're done.
         _next_survivor = NULL;
       } else {
-        _next_survivor = res->get_next_young_region();// 调用HeapRegion的方法 get_next_young_region
+        _next_survivor = res->get_next_young_region();// 调用HeapRegion的方法 get_next_young_region，获取survivor list的下一个survivor region
       }
-    } else {
+    } else { // 这里res == null，只能说明最后一个survivor region已经被抢走了
       // Someone else claimed the last survivor while we were trying
       // to take the lock so nothing else to do.
     }
@@ -520,6 +520,10 @@ void CMRootRegions::scan_finished() {
   }
 }
 
+/**
+ * 增量回收暂停以前，必须调用这个方法等待scanRootRegions完成才行
+ * @return
+ */
 bool CMRootRegions::wait_until_scan_finished() {
   if (!scan_in_progress()) return false;
 
@@ -536,7 +540,7 @@ bool CMRootRegions::wait_until_scan_finished() {
 #pragma warning( disable:4355 ) // 'this' : used in base member initializer list
 #endif // _MSC_VER
 
-uint ConcurrentMark::scale_parallel_threads(uint n_par_threads) {
+uint ConcurrentMark::scale_parallel_threads(uint n_par_threads) { // 根据ParallelGCThread设置并发标记的线程数量
   return MAX2((n_par_threads + 2) / 4, 1U);
 }
 
@@ -562,14 +566,14 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
   _markStack(this),
   // _finger set in set_non_marking_state
 
-  _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)),
+  _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)), //  task的数量是由 ParallelGCThreads 决定的
   // _active_tasks set in set_non_marking_state
   // _tasks set inside the constructor
-  _task_queues(new CMTaskQueueSet((int) _max_worker_id)),
+  _task_queues(new CMTaskQueueSet((int) _max_worker_id)), // 构造全局的任务队列集合
   _terminator(ParallelTaskTerminator((int) _max_worker_id, _task_queues)),
 
   _has_overflown(false),
-  _concurrent(false),
+  _concurrent(false), // 默认，当前的并发标记周期的状态是 非并发，随后进入并发标记或者remark的时候会修改该状态
   _has_aborted(false),
   _aborted_gc_id(GCId::undefined()),
   _restart_for_overflow(false),
@@ -583,7 +587,7 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
   _total_counting_time(0.0),
   _total_rs_scrub_time(0.0),
 
-  _parallel_workers(NULL),
+  _parallel_workers(NULL), // 后面会根据ParallelGCThreads来决定是否使用并行标记
 
   _count_card_bitmaps(NULL),
   _count_marked_bytes(NULL),
@@ -606,7 +610,7 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
   _markBitMap2.initialize(g1h->reserved_region(), next_bitmap_storage);
 
   // Create & start a ConcurrentMark thread.
-  _cmThread = new ConcurrentMarkThread(this);
+  _cmThread = new ConcurrentMarkThread(this) // 这里只创建了一个并发标记线程对象，构造的时候就会启动线程了，在 G1CollectedHeap::gc_threads_do 中调用
   assert(cmThread() != NULL, "CM Thread should have been created");
   assert(cmThread()->cm() != NULL, "CM Thread should refer to this cm");
   if (_cmThread->osthread() == NULL) {
@@ -628,57 +632,60 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
             ConcGCThreads, ParallelGCThreads);
     return;
   }
-  if (ParallelGCThreads == 0) {
+  if (ParallelGCThreads == 0) { // 如果 ParallelGCThreads = 0，那么标记的过程也会使用串行标记
     // if we are not running with any parallel GC threads we will not
     // spawn any marking threads either
-    _parallel_marking_threads =       0;
+    _parallel_marking_threads =       0; // 运行并发任务(虽然这里的名字是parallel,但是在这里实际指的是并发标记和扫描root region的并发度)
     _max_parallel_marking_threads =   0;
-    _sleep_factor             =     0.0;
+    _sleep_factor             =     0.0; // 不需要休眠
     _marking_task_overhead    =     1.0;
-  } else {
-    if (!FLAG_IS_DEFAULT(ConcGCThreads) && ConcGCThreads > 0) {
+  } else { // 如果 ParallelGCThreads > 0，那么可以使用并行标记，需要进一步确认并行标记的相关细节
+    if (!FLAG_IS_DEFAULT(ConcGCThreads) && ConcGCThreads > 0) { // 如果已经设置了 ConcGCThreads，注意不是 ParallelGCThreads，那么就不需要再设置 ConcGCThreads了
       // Note: ConcGCThreads has precedence over G1MarkingOverheadPercent
       // if both are set
-      _sleep_factor             = 0.0;
-      _marking_task_overhead    = 1.0;
-    } else if (G1MarkingOverheadPercent > 0) { // overhead of concurrent marking， default 是0
-      // We will calculate the number of parallel marking threads based
-      // on a target overhead with respect to the soft real-time goal
+      //  ConcGCThreads 的优先级高于G1MarkingOverheadPercent，即如果用户明确设置了ConcGCThreads，则不再考虑overhead，直接按照ConcGCThreads的值设置并发
+      _sleep_factor             = 0.0; // 休眠系数为0，表示不休眠
+      _marking_task_overhead    = 1.0; // 标记任务开销
+    } else if (G1MarkingOverheadPercent > 0) { // 如果用户没有设置ConcGCThreads, 但是已经设置了非默认的G1MarkingOverheadPercent  ， default 是0
+      // 基于软实时目标，计算出并发标记的线程数量
+      // 将 G1MarkingOverheadPercent 转换为一个小数，表示并发标记任务的开销比例。例如，如果 G1MarkingOverheadPercent = 10，则 marking_overhead = 0.1，表示并发标记开销占总资源的 10%
       double marking_overhead = (double) G1MarkingOverheadPercent / 100.0;
+      // 确定在给定的标记周期内，允许并发标记占用多少时间，即并发标记开销相对于垃圾回收暂停时间的比例,这是一个比例值
+      // MaxGCPauseMillis是垃圾回收的最大暂停时间（Wall Time，不是CPU Time，软实时目标)， GCPauseIntervalMillis 是两次垃圾回收之间的时间间隔，这也是Wall Time
       double overall_cm_overhead =
         (double) MaxGCPauseMillis * marking_overhead /
         (double) GCPauseIntervalMillis;
-      double cpu_ratio = 1.0 / os::initial_active_processor_count();
-      double marking_thread_num = ceil(overall_cm_overhead / cpu_ratio);
-      double marking_task_overhead =
-        overall_cm_overhead / marking_thread_num * os::initial_active_processor_count();
-      double sleep_factor =
-                         (1.0 - marking_task_overhead) / marking_task_overhead;
+      double cpu_ratio = 1.0 / os::initial_active_processor_count(); // 单个 CPU 核心的工作分配比例
+      double marking_thread_num = ceil(overall_cm_overhead / cpu_ratio); // 需要的并发标记线程数量， ceil 函数用于向上取整，确保至少有一个标记线程。
+      double marking_task_overhead = // 表示单个标记线程的任务开销。通过将 overall_cm_overhead 除以标记线程数量，再乘以可用处理器数量来计算
+              (overall_cm_overhead / marking_thread_num) * os::initial_active_processor_count();
+      double sleep_factor = // 每一个标记线程在相邻标记任务期间需要sleep的时间比例，这个比例需要乘以CMTask的运行时间，得到具体的sleep时长
+                         (1.0 - marking_task_overhead) / marking_task_overhead; // 标记线程的休眠系数，表示标记线程在执行任务后的休眠时间比例。这个值是由标记任务的开销决定的，开销越大，休眠时间就越短。
 
-      FLAG_SET_ERGO(uintx, ConcGCThreads, (uint) marking_thread_num);
-      _sleep_factor             = sleep_factor;
+      FLAG_SET_ERGO(uintx, ConcGCThreads, (uint) marking_thread_num); // 将计算出的标记线程数量 marking_thread_num 赋值给 ConcGCThreads，决定最终并发标记使用的线程数量。
+      _sleep_factor             = sleep_factor; // 设置睡眠系数，一个CMTask执行完成以后，需要根据执行的CPU时间(不是wall time)和睡眠系数，设置睡眠时间
       _marking_task_overhead    = marking_task_overhead;
-    } else { // 如果  ConcGCThreads 和  G1MarkingOverheadPercent都是默认值，那么会根据ParallelGCThreads的值来设置ConcGCThreads
+    } else { // 如果  ConcGCThreads 和  G1MarkingOverheadPercent 都是默认值，没有设置，但是设置了ParallelGCThreads， 那么会根据 ParallelGCThreads 的值来设置 ConcGCThreads
       // Calculate the number of parallel marking threads by scaling
       // the number of parallel GC threads.
       // 关于 ParallelGCThreadcs的值的设置，搜索 unsigned int Abstract_VM_Version::parallel_worker_threads
-      uint marking_thread_num = scale_parallel_threads((uint) ParallelGCThreads); // 搜具体实现 ConcurrentMark::scale_parallel_threads
+      uint marking_thread_num = scale_parallel_threads((uint) ParallelGCThreads); // 搜具体实现 ConcurrentMark::scale_parallel_threads，具体的标记线程数量等于 ParallelGCThreads的1/4
       FLAG_SET_ERGO(uintx, ConcGCThreads, marking_thread_num);
       _sleep_factor             = 0.0;
       _marking_task_overhead    = 1.0;
     }
-
+    // 由于设置了 ParallelGCThreads，因此上面已经根据 ParallelGCThreads 设置了 ConcGCThreads
     assert(ConcGCThreads > 0, "Should have been set");
-    _parallel_marking_threads = (uint) ConcGCThreads;
-    _max_parallel_marking_threads = _parallel_marking_threads;
+    _parallel_marking_threads = (uint) ConcGCThreads; // 在ConcurrentMark构造方法中，设置为ConcGCThreads
+    _max_parallel_marking_threads = _parallel_marking_threads; // 这也是最大的并行标记线程数
 
-    if (parallel_marking_threads() > 1) {
+    if (parallel_marking_threads() > 1) { // 如果 _parallel_marking_threads > 1，那么_cleanup_task_overhead， 这样，_cleanup_sleep_factor  = 0
       _cleanup_task_overhead = 1.0;
     } else {
       _cleanup_task_overhead = marking_task_overhead();
     }
     _cleanup_sleep_factor =
-                     (1.0 - cleanup_task_overhead()) / cleanup_task_overhead();
+                     (1.0 - cleanup_task_overhead()) / cleanup_task_overhead(); // 根据cleanup_task_overhead， 计算 cleanup_sleep_factor
 
 #if 0
     gclog_or_tty->print_cr("Marking Threads          %d", parallel_marking_threads());
@@ -691,10 +698,11 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
     guarantee(parallel_marking_threads() > 0, "peace of mind");
     /**
      * 构造一个全局的FlexibleWorkGang，负责这次并发标记的线程的管理
-     * 在构造G1CollectedHeap::G1CollectedHeap的时候，也会构造一个FlexibleWorkGang
+     * 在构造 G1CollectedHeap::G1CollectedHeap 的时候，也会构造一个 FlexibleWorkGang
      */
     _parallel_workers = new FlexibleWorkGang("G1 Parallel Marking Threads",
-         _max_parallel_marking_threads, false, true);
+         _max_parallel_marking_threads,  // 最大worker数量
+         false, true);
     if (_parallel_workers == NULL) {
       vm_exit_during_initialization("Failed necessary allocation.");
     } else {
@@ -704,7 +712,7 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
 
   if (FLAG_IS_DEFAULT(MarkStackSize)) {
     uintx mark_stack_size =
-      MIN2(MarkStackSizeMax,
+      MIN2(MarkStackSizeMax, // 不可以大于最大的MarkStackSize
           MAX2(MarkStackSize, (uintx) (parallel_marking_threads() * TASKQUEUE_SIZE)));
     // Verify that the calculated value for MarkStackSize is in range.
     // It would be nice to use the private utility routine from Arguments.
@@ -740,8 +748,8 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
     warning("Failed to allocate CM marking stack");
     return;
   }
-
-  _tasks = NEW_C_HEAP_ARRAY(CMTask*, _max_worker_id, mtGC);
+  // _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)), //  task的数量是由 ParallelGCThreads 决定的
+  _tasks = NEW_C_HEAP_ARRAY(CMTask*, _max_worker_id, mtGC); // taskd 指针数组
   _accum_task_vtime = NEW_C_HEAP_ARRAY(double, _max_worker_id, mtGC);
 
   _count_card_bitmaps = NEW_C_HEAP_ARRAY(BitMap,  _max_worker_id, mtGC);
@@ -754,17 +762,18 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
 
   size_t max_regions = (size_t) _g1h->max_regions();
   /**
-   * 构造 _tasks数组，数组中的每一个CMTask都有一个CMTaskQueue* task_queue，一个
+   * 构造 _tasks数组，数组中的每一个CMTask都有一个CMTaskQueue* task_queue
    */
-  for (uint i = 0; i < _max_worker_id; ++i) {
+  for (uint i = 0; i < _max_worker_id; ++i) { // 每一个Worker都会有一个CMTaskQueue
     CMTaskQueue* task_queue = new CMTaskQueue();
     task_queue->initialize();
-    _task_queues->register_queue(i, task_queue);
+    _task_queues->register_queue(i, task_queue); // 将这个CMTaskQueue添加到 _task_queues中，即 CMTaskQueueSet 中
 
     _count_card_bitmaps[i] = BitMap(card_bm_size, false);
     _count_marked_bytes[i] = NEW_C_HEAP_ARRAY(size_t, max_regions, mtGC);
-
-    _tasks[i] = new CMTask(i, this,
+    // 注意_tasks的声明，CMTask** _tasks;是一个双重指针，即 _task[i]是一个指向CMTask对象的CMTask指针
+    // 注意，CMTask并不是可以直接提供给FlexibleGangWorker的AbstractGantTask的实现类
+    _tasks[i] = new CMTask(i, this, // 创建对应的CMTask，并将对应的CMTaskQueue()绑定到这个CMTask，同时还有一个全局唯一的 CMTaskQueueSet
                            _count_marked_bytes[i],
                            &_count_card_bitmaps[i],
                            task_queue, _task_queues);
@@ -826,16 +835,16 @@ void ConcurrentMark::reset() {
 
 
 void ConcurrentMark::reset_marking_state(bool clear_overflow) {
-  _markStack.set_should_expand();
-  _markStack.setEmpty();        // Also clears the _markStack overflow flag
+  _markStack.set_should_expand(); // 如果MarkStack在上一次标记周期中发生了overflow，那么这时候应该设置_should_expand，即希望在这一次标记的时候进行扩展
+  _markStack.setEmpty();        // 重置MarkStack中的index，并且重置_markStack为overflow标记位为false
   if (clear_overflow) {
-    clear_has_overflown();
+    clear_has_overflown(); // 重置ConcurrentMark中的_has_overflown标记位，_has_overflown = false
   } else {
     assert(has_overflown(), "pre-condition");
   }
-  _finger = _heap_start; // 全局的_finger的初始化
+  _finger = _heap_start; // 全局的_finger的初始化为整个堆内存的起始位置
 
-  for (uint i = 0; i < _max_worker_id; ++i) {
+  for (uint i = 0; i < _max_worker_id; ++i) { // 清空所有的CMTaskQueue，每一个CMTaskQueue是属于某一个CMTask，但是这些CMTaskQueue都统一放在_task_queues中
     CMTaskQueue* queue = _task_queues->queue(i);
     queue->set_empty();
   }
@@ -886,6 +895,9 @@ ConcurrentMark::~ConcurrentMark() {
   ShouldNotReachHere();
 }
 
+/**
+ * 通过ClearBitmapHRClosure来 清理nextBitMap
+ */
 void ConcurrentMark::clearNextBitmap() {
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
 
@@ -1002,7 +1014,7 @@ void ConcurrentMark::checkpointRootsInitialPost() {
   // This is the start of  the marking cycle, we're expected all
   // threads to have SATB queues with active set to false.
   satb_mq_set.set_active_all_threads(true, /* new active value */
-                                     false /* expected_active */);
+                                     false /* expected_active */); // 将所有的satb PtrQueue设置为active，只有active的PtrQueue才能接受enqueue
 
   _root_regions.prepare_for_scan(); // 搜索 CMRootRegions::prepare_for_scan
 
@@ -1033,6 +1045,10 @@ void ConcurrentMark::checkpointRootsInitialPost() {
  * doesn't manipulate any data structures afterwards.
  */
 
+/**
+ * 这个方法的调用是由于溢出的发生
+ * @param worker_id
+ */
 void ConcurrentMark::enter_first_sync_barrier(uint worker_id) {
   if (verbose_low()) {
     gclog_or_tty->print_cr("[%u] entering first barrier", worker_id);
@@ -1058,19 +1074,20 @@ void ConcurrentMark::enter_first_sync_barrier(uint worker_id) {
     }
   }
 
-  if (barrier_aborted) {
+  if (barrier_aborted) { // 栅栏终止了
     // If the barrier aborted we ignore the overflow condition and
     // just abort the whole marking phase as quickly as possible.
     return;
   }
 
+  // 已经进入了栅栏，这时候会让第一个worker重置并发标记状态和结构信息，并且更新强制溢出的次数
   // If we're executing the concurrent phase of marking, reset the marking
   // state; otherwise the marking state is reset after reference processing,
   // during the remark pause.
   // If we reset here as a result of an overflow during the remark we will
   // see assertion failures from any subsequent set_concurrency_and_phase()
   // calls.
-  if (concurrent()) {
+  if (concurrent()) { // 如果是并发状态，那么仅仅让第一个worker执行下面的代码
     // let the task associated with with worker 0 do this
     if (worker_id == 0) {
       // task 0 is responsible for clearing the global data structures
@@ -1078,8 +1095,8 @@ void ConcurrentMark::enter_first_sync_barrier(uint worker_id) {
       // not clear the overflow flag since we rely on it being true when
       // we exit this method to abort the pause and restart concurent
       // marking.
-      reset_marking_state(true /* clear_overflow */);
-      force_overflow()->update();
+      reset_marking_state(true /* clear_overflow */); // 重置mark状态，需要重置overflow标记位，设置为false
+      force_overflow()->update(); // 减少一次强制溢出的机会，只有第一个Worker才有权利减少一次强制溢出的机会
 
       if (G1Log::fine()) {
         gclog_or_tty->gclog_stamp(concurrent_gc_id());
@@ -1119,29 +1136,42 @@ void ConcurrentMark::enter_second_sync_barrier(uint worker_id) {
 
 #ifndef PRODUCT
 void ForceOverflowSettings::init() {
-  _num_remaining = G1ConcMarkForceOverflow;
-  _force = false;
-  update();
+  _num_remaining = G1ConcMarkForceOverflow; // 强制溢出的次数限制，默认是0
+  _force = false; // 初始化的时候不强制溢出
+  update(); // 减少一次强制溢出的允许次数
 }
 
+/**
+ * 只要_number_remaining还有值，那么就会将_force设置为true，然后通should_force()获取should_force的指示
+ */
 void ForceOverflowSettings::update() {
-  if (_num_remaining > 0) {
-    _num_remaining -= 1;
-    _force = true;
+  if (_num_remaining > 0) { // 还有进行强制溢出的机会
+    _num_remaining -= 1; // 减少一次强制溢出的允许次数
+    _force = true; // 还有剩余次数，因此强制进行overflow
   } else {
-    _force = false;
+    _force = false; // force overflow的剩余次数用尽，不再强制overflow，
   }
 }
 
+/**
+ * 当should_force返回true，那么会强行设置ConcurrentMark的溢出标记位
+ * @return
+ */
 bool ForceOverflowSettings::should_force() {
-  if (_force) {
+  if (_force) { // 如果是force，返回true，但是会将_force更新为false，即只会force一次，除非下一次update()被调用会将_force重新设置为true
     _force = false;
     return true;
   } else {
-    return false;
+    return false; // 不是force，即不强制溢出
   }
 }
 #endif // !PRODUCT
+
+/**
+ * in book
+ * 搜索 CMConcurrentMarkingTask markingTask(this, cmThread()); 查看构造方法的调用过程
+ * 可以看到，CMConcurrentMarkingTask只会构造一个，但是  CMConcurrentMarkingTask::work()方法会在多个线程中执行，这个方法是同用户线程并发执行的
+ */
 
 class CMConcurrentMarkingTask: public AbstractGangTask {
 private:
@@ -1159,10 +1189,12 @@ public:
 
     double start_vtime = os::elapsedVTime();
     /**
-     * 当发生同步的时候，继续等待。SuspendibleThreadSet主要用来控制G1GC的几个特殊线程
+     * 将自己(当前线程)加入到SuspendibleThreadSet中。这样，如果有safepoint启动，这个线程会进行yield，直到safepoint离开
+     * 当发生同步的时候，继续等待。SuspendibleThreadSet 主要用来控制G1GC的几个特殊线程
      */
     SuspendibleThreadSet::join();
 
+    // 取出对应的 CMTask。查看
     assert(worker_id < _cm->active_tasks(), "invariant");
     CMTask* the_task = _cm->task(worker_id); // 根据当前的线程id取出对应的CMTask,这个CMTask数组是在构造函数 ConcurrentMark::ConcurrentMark 中构造的
     the_task->record_start_time();
@@ -1187,7 +1219,7 @@ public:
           sleep_time_ms =
             (jlong) (elapsed_vtime_sec * _cm->sleep_factor() * 1000.0);
           SuspendibleThreadSet::leave();
-          os::sleep(Thread::current(), sleep_time_ms, false);
+          os::sleep(Thread::current(), sleep_time_ms, false); // 根据计算得到的sleep_factor和刚刚的并发标记时间，计算睡眠时间
           SuspendibleThreadSet::join();
         }
       } while (!_cm->has_aborted() && the_task->has_aborted());
@@ -1217,7 +1249,7 @@ public:
 uint ConcurrentMark::calc_parallel_marking_threads() {
     /**
      * 是否正在使用并行垃圾收集线程 (use_parallel_gc_threads)，注意区分
-     * 在 Arguments::set_g1_gc_flags中会设置_parallel_gc_threads的值
+     * 在 Arguments::set_g1_gc_flags 中会设置 _parallel_gc_threads 的值
      */
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     uint n_conc_workers = 0;
@@ -1277,8 +1309,8 @@ void ConcurrentMark::scanRootRegion(HeapRegion* hr, uint worker_id) {
 
   const uintx interval = PrefetchScanIntervalInBytes;
   HeapWord* curr = hr->bottom();
-  const HeapWord* end = hr->top();
-  while (curr < end) {
+  const HeapWord* end = hr->top(); // 当前内存分配的截止位置。回收的时候会等待scanRootRegion()结束，因此，这个survivor region的top此时是不变的
+  while (curr < end) { // 不断从bottom往top的位置移动
     Prefetch::read(curr, interval);
     oop obj = oop(curr); // 将 curr 转换为 oopDesc* 类型，并将结果赋值给 obj
     /**
@@ -1311,10 +1343,10 @@ public:
      * @param worker_id
      */
   void work(uint worker_id) {
-    assert(Thread::current()->is_ConcurrentGC_thread(),
+    assert(Thread::current()->is_ConcurrentGC_thread(), // 执行当前的CMRootRegionScanTask的GangWorker一定是一个ConcurrentGC_thread,即这个GangWorker一定来自于ConcurrentMark中创建的WorkGang所管理的GangWorker
            "this should only be done by a conc GC thread");
     /**
-     * 返回 CMRootRegions指针
+     * 返回 CMRootRegions 指针
      */
     CMRootRegions* root_regions = _cm->root_regions(); //
     /**
@@ -1330,7 +1362,7 @@ public:
 };
 
 /**
- * 在   ConcurrentMarkThread::run中调用该方法
+ * 在   ConcurrentMarkThread::run 中调用该方法，这也是并发(Concurrently)执行的，即和用户代码一起执行的
  */
 void ConcurrentMark::scanRootRegions() {
   // Start of concurrent marking.
@@ -1340,21 +1372,22 @@ void ConcurrentMark::scanRootRegions() {
   // at least one root region to scan. So, if it's false, we
   // should not attempt to do any further work.
   /**
-   * 在 CMRootRegions::prepare_for_scan中，会将_scan_in_progress 设置为true，
+   * 在 CMRootRegions::prepare_for_scan中，会将 _scan_in_progress 设置为true，
    * 在 scan_finished中，会将_scan_in_progress设置为false
    */
   if (root_regions()->scan_in_progress()) { // 如果 CM 线程正在主动扫描根区域，则返回 true，否则返回 false。
-    _parallel_marking_threads = calc_parallel_marking_threads(); // 获取ConcGCThreads所配置的并发度
+    _parallel_marking_threads = calc_parallel_marking_threads(); // 获取 ConcGCThreads 所配置的并发度，并记录在 _parallel_marking_threads中，下一次如果动态计算活跃线程数的时候，会参考该值(参考 AdaptiveSizePolicy::calc_default_active_worker())
     assert(parallel_marking_threads() <= max_parallel_marking_threads(),
            "Maximum number of marking threads exceeded");
-    uint active_workers = MAX2(1U, parallel_marking_threads());
+    uint active_workers = MAX2(1U, parallel_marking_threads()); // 可以有多少个active worker，最少1个
 
     CMRootRegionScanTask task(this);
-    if (use_parallel_marking_threads()) { // 如果 _parallel_workers != null
-      _parallel_workers->set_active_workers((int) active_workers);
+    if (use_parallel_marking_threads()) { // 如果 _parallel_workers != null ， 即构造了FlexibleWorkGang _parallel_workers
+      _parallel_workers->set_active_workers((int) active_workers); // 设置线程池的线程大小 FlexibleWorkGang::set_active_workers，这里的并发度是parallel_marking_threads()
       _parallel_workers->run_task(&task); // 使用线程池提交任务，这个任务会被分解成不同的worker去分别执行，搜索 FlexibleWorkGang::run_task 查看具体实现
     } else {
-      task.work(0); // 直接在当前线程中执行
+      task.work(0); // 直接在当前线程中执行，搜搜 CMRootRegionScanTask::work
+
     }
 
     // 代码执行到这里，并发执行的标记任务应该都执行结束
@@ -1384,24 +1417,24 @@ void ConcurrentMark::markFromRoots() {
   force_overflow_conc()->init();
 
   // _g1h has _n_par_threads
-  _parallel_marking_threads = calc_parallel_marking_threads(); // 由 ConcGCThreads 决定
+  _parallel_marking_threads = calc_parallel_marking_threads(); // 获取 ConcGCThreads 所配置的并发度，并记录在 _parallel_marking_threads中，下一次如果动态计算活跃线程数的时候，会参考该值(参考 AdaptiveSizePolicy::calc_default_active_worker())
   assert(parallel_marking_threads() <= max_parallel_marking_threads(),
     "Maximum number of marking threads exceeded");
 
   uint active_workers = MAX2(1U, parallel_marking_threads());
 
   // Parallel task terminator is set in "set_concurrency_and_phase()"
-  set_concurrency_and_phase(active_workers, true /* concurrent */);
+  set_concurrency_and_phase(active_workers, true /* concurrent */); //  当前准备进入并发执行阶段(concurrent=true)
   /**
    * 执行并发标记的task，执行过程在方法 CMConcurrentMarkingTask::work() 中
    */
   CMConcurrentMarkingTask markingTask(this, cmThread());
-  if (use_parallel_marking_threads()) { // 是否concurrently执行
-    _parallel_workers->set_active_workers((int)active_workers);
+  if (use_parallel_marking_threads()) { // 是否并行执行
+    _parallel_workers->set_active_workers((int)active_workers); // 这里的并发度是parallel_marking_threads()
     // Don't set _n_par_threads because it affects MT in process_roots()
     // and the decisions on that MT processing is made elsewhere.
     assert(_parallel_workers->active_workers() > 0, "Should have been set");
-    _parallel_workers->run_task(&markingTask);
+    _parallel_workers->run_task(&markingTask); // 以并发状态执行
   } else {
     markingTask.work(0);
   }
@@ -1409,12 +1442,15 @@ void ConcurrentMark::markFromRoots() {
 }
 
 /**
- * ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void() -> ConcurrentMark::checkpointRootsFinal
+ * ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void()
+ *  -> ConcurrentMark::checkpointRootsFinal -> ConcurrentMark::checkpointRootsFinalWork
+ * 由于是通过VM_Thread::execute()来提交一个Operation执行一个Closure，因此当前的状态是STW的
+ * remark
  */
 void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
   // world is stopped at this checkpoint
   assert(SafepointSynchronize::is_at_safepoint(),
-         "world should be stopped");
+         "world should be stopped"); // 一定处于Safepoint
 
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
 
@@ -1439,7 +1475,7 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
 
   double start = os::elapsedTime();
 
-  checkpointRootsFinalWork();
+  checkpointRootsFinalWork(); // 真正的remark的工作内容。这里面可能会强制设置overflow
 
   double mark_work_end = os::elapsedTime();
   /**
@@ -1447,7 +1483,7 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
    */
   weakRefsWork(clear_all_soft_refs);
 
-  if (has_overflown()) {
+  if (has_overflown()) { // 如果发生了overflow, 那么
     // Oops.  We overflowed.  Restart concurrent marking.
     _restart_for_overflow = true;
     if (G1TraceMarkStackOverflow) {
@@ -1464,8 +1500,9 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
 
     // Clear the marking state because we will be restarting
     // marking due to overflowing the global mark stack.
-    reset_marking_state();
+    reset_marking_state(); // 重置mark状态
   } else {
+      // 没有发生overflow
     // Aggregate the per-task counting data that we have accumulated
     // while marking.
     aggregate_count_data();
@@ -1474,6 +1511,7 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
     // We're done with marking.
     // This is the end of  the marking cycle, we're expected all
     // threads to have SATB queues with active set to true.
+    // 已经结束了标记操作，已经没有必要再进行SATB的写栅栏了，因此关闭SATB 队列
     satb_mq_set.set_active_all_threads(false, /* new active value */
                                        true /* expected_active */);
 
@@ -1490,7 +1528,7 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
   }
 
   // Expand the marking stack, if we have to and if we can.
-  if (_markStack.should_expand()) {
+  if (_markStack.should_expand()) { //如果发生了overflow，那么尝试进行扩展
     _markStack.expand();
   }
 
@@ -1787,7 +1825,6 @@ protected:
 
   int  _failures;
   bool _verbose;
-
 public:
   G1ParVerifyFinalCountTask(G1CollectedHeap* g1h,
                             BitMap* region_bm, BitMap* card_bm,
@@ -1943,7 +1980,7 @@ public:
                                                 _actual_region_bm,
                                                 _actual_card_bm);
 
-    if (G1CollectedHeap::use_parallel_gc_threads()) {
+    if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行GC线程
       _g1h->heap_region_par_iterate_chunked(&final_update_cl,
                                             worker_id,
                                             _n_workers,
@@ -2067,7 +2104,7 @@ public:
     // 构造G1NoteEndOfConcMarkClosure对象，进行一些清理工作
     G1NoteEndOfConcMarkClosure g1_note_end(_g1h, &local_cleanup_list,
                                            &hrrs_cleanup_task);
-    if (G1CollectedHeap::use_parallel_gc_threads()) {
+    if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行标记线程，那么使用并行标记线程进行处理
       _g1h->heap_region_par_iterate_chunked(&g1_note_end, worker_id,
                                             _g1h->workers()->active_workers(),
                                             HeapRegion::NoteEndClaimValue);
@@ -2124,7 +2161,7 @@ public:
     _region_bm(region_bm), _card_bm(card_bm) { }
 
   void work(uint worker_id) {
-    if (G1CollectedHeap::use_parallel_gc_threads()) {
+    if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行标记线程
       _g1rs->scrub_par(_region_bm, _card_bm, worker_id,
                        HeapRegion::ScrubRemSetClaimValue);
     } else {
@@ -2173,7 +2210,7 @@ void ConcurrentMark::cleanup() {
   // Do counting once more with the world stopped for good measure.
   G1ParFinalCountTask g1_par_count_task(g1h, &_region_bm, &_card_bm);
 
-  if (G1CollectedHeap::use_parallel_gc_threads()) {
+  if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行标记线程
    assert(g1h->check_heap_region_claim_values(HeapRegion::InitialClaimValue),
            "sanity check");
 
@@ -2181,14 +2218,14 @@ void ConcurrentMark::cleanup() {
     n_workers = g1h->n_par_threads();
     assert(g1h->n_par_threads() == n_workers,
            "Should not have been reset");
-    g1h->workers()->run_task(&g1_par_count_task);
+    g1h->workers()->run_task(&g1_par_count_task); // 这里是交给G1CollectedHeap的FlexibleWorkGang来运行的
     // Done with the parallel phase so reset to 0.
     g1h->set_par_threads(0);
 
     assert(g1h->check_heap_region_claim_values(HeapRegion::FinalCountClaimValue),
            "sanity check");
   } else {
-    n_workers = 1;
+    n_workers = 1; // 没有并行标记，因此，直接在当前线程中执行(当前已经处于safepoint)
     g1_par_count_task.work(0);
   }
 
@@ -2206,9 +2243,9 @@ void ConcurrentMark::cleanup() {
                                                  &expected_region_bm,
                                                  &expected_card_bm);
 
-    if (G1CollectedHeap::use_parallel_gc_threads()) {
+    if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行标记线程
       g1h->set_par_threads((int)n_workers);
-      g1h->workers()->run_task(&g1_par_verify_task);
+      g1h->workers()->run_task(&g1_par_verify_task); // 这里是交给G1CollectedHeap的FlexibleWorkGang来运行的
       // Done with the parallel phase so reset to 0.
       g1h->set_par_threads(0);
 
@@ -2241,9 +2278,9 @@ void ConcurrentMark::cleanup() {
   // Note end of marking in all heap regions.
   // 构造G1ParNoteEndTask
   G1ParNoteEndTask g1_par_note_end_task(g1h, &_cleanup_list);
-  if (G1CollectedHeap::use_parallel_gc_threads()) {
+  if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行标记线程
     g1h->set_par_threads((int)n_workers);
-    g1h->workers()->run_task(&g1_par_note_end_task);
+    g1h->workers()->run_task(&g1_par_note_end_task); // 这里是交给G1CollectedHeap的FlexibleWorkGang来运行的
     g1h->set_par_threads(0);
 
     assert(g1h->check_heap_region_claim_values(HeapRegion::NoteEndClaimValue),
@@ -2265,9 +2302,9 @@ void ConcurrentMark::cleanup() {
   if (G1ScrubRemSets) { // 如果用户设置了G1ScrubRemSets，即清理阶段结束以后对RSet进行清理
     double rs_scrub_start = os::elapsedTime();
     G1ParScrubRemSetTask g1_par_scrub_rs_task(g1h, &_region_bm, &_card_bm);
-    if (G1CollectedHeap::use_parallel_gc_threads()) {
+    if (G1CollectedHeap::use_parallel_gc_threads()) { // 如果使用了并行标记线程
       g1h->set_par_threads((int)n_workers);
-      g1h->workers()->run_task(&g1_par_scrub_rs_task);
+      g1h->workers()->run_task(&g1_par_scrub_rs_task); // 这里是交给G1CollectedHeap的FlexibleWorkGang来运行的
       g1h->set_par_threads(0);
 
       assert(g1h->check_heap_region_claim_values(
@@ -2453,7 +2490,7 @@ class G1CMKeepAliveAndDrainClosure: public OopClosure {
                                _task->worker_id(), p2i(p), p2i((void*) obj));
       }
 
-      _task->deal_with_reference(obj);
+      _task->deal_with_reference(obj); // CMTask::deal_with_reference 方法
       _ref_counter--;
 
       if (_ref_counter == 0) {
@@ -2757,7 +2794,7 @@ void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
     if (_markStack.overflow()) {
       // This should have been done already when we tried to push an
       // entry on to the global mark stack. But let's do it again.
-      set_has_overflown();
+      set_has_overflown(); // 设置ConcurrentMark的_has_overflown标记位
     }
 
     assert(rp->num_q() == active_workers, "why not");
@@ -2864,7 +2901,9 @@ public:
     }
   }
 };
-
+/**
+ * 这是一个ThreadClosure，用来对所有的thread进行遍历并应用对应的closure
+ */
 class G1RemarkThreadsClosure : public ThreadClosure {
   CMSATBBufferClosure _cm_satb_cl;
   G1CMOopClosure _cm_cl;
@@ -2918,7 +2957,7 @@ public:
         HandleMark hm;
 
         G1RemarkThreadsClosure threads_f(G1CollectedHeap::heap(), task, !_is_serial);
-        Threads::threads_do(&threads_f);
+        Threads::threads_do(&threads_f); // 将这个ThreadClose apply到所有的thread上
       }
 
       do {
@@ -2938,6 +2977,11 @@ public:
   }
 };
 
+/**
+ *  * ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void()
+ *  -> ConcurrentMark::checkpointRootsFinal -> ConcurrentMark::checkpointRootsFinalWork
+ *  这个方法调用的时候是在stw中的，即remark操作
+ */
 void ConcurrentMark::checkpointRootsFinalWork() {
   ResourceMark rm;
   HandleMark   hm;
@@ -2946,7 +2990,7 @@ void ConcurrentMark::checkpointRootsFinalWork() {
   G1RemarkGCTraceTime trace("Finalize Marking", G1Log::finer());
 
   g1h->ensure_parsability(false);
-
+  // 下面的代码的执行需要STW
   if (G1CollectedHeap::use_parallel_gc_threads()) {
     G1CollectedHeap::StrongRootsScope srs(g1h);
     // this is remark, so we'll use up all active threads
@@ -2954,25 +2998,26 @@ void ConcurrentMark::checkpointRootsFinalWork() {
     if (active_workers == 0) {
       assert(active_workers > 0, "Should have been set earlier");
       active_workers = (uint) ParallelGCThreads;
-      g1h->workers()->set_active_workers(active_workers);
+      g1h->workers()->set_active_workers(active_workers); // 调整并发度。注意，这里使用的是STW的WorkGang，因此将并发度设置到最高
     }
-    set_concurrency_and_phase(active_workers, false /* concurrent */);
+    set_concurrency_and_phase(active_workers, false /* concurrent */); // 当前将进入非concurrent阶段，即需要STW
     // Leave _parallel_marking_threads at it's
     // value originally calculated in the ConcurrentMark
     // constructor and pass values of the active workers
     // through the gang in the task.
 
+    // 进行remark操作
     CMRemarkTask remarkTask(this, active_workers, false /* is_serial */);
     // We will start all available threads, even if we decide that the
     // active_workers will be fewer. The extra ones will just bail out
     // immediately.
     g1h->set_par_threads(active_workers);
-    g1h->workers()->run_task(&remarkTask);
+    g1h->workers()->run_task(&remarkTask); // Remark是交给G1CollectedHeap的FlexibleWorkGang运行的, 查看 void FlexibleWorkGang::run_task
     g1h->set_par_threads(0);
   } else {
     G1CollectedHeap::StrongRootsScope srs(g1h);
     uint active_workers = 1;
-    set_concurrency_and_phase(active_workers, false /* concurrent */);
+    set_concurrency_and_phase(active_workers, false /* concurrent */); //  // 当前将进入非concurrent阶段，即需要STW
 
     // Note - if there's no work gang then the VMThread will be
     // the thread to execute the remark - serially. We have
@@ -3165,7 +3210,7 @@ void ConcurrentMark::clearRangeNextBitmap(MemRegion mr) {
 }
 
 /**
- * 在CMTask::do_marking_step调用了这个方法
+ * 在CMTask::do_marking_step 调用了这个方法
  * 它声明标记任务/线程要扫描的下一个可用区域，并更新全局_finger。 如果下一个区域为空或者我们已经用完区域，它可能会返回 NULL。
  * 在后一种情况下，out_of_regions() 确定我们是否真的用完了区域，或者任务是否应该再次调用claim_region()。
  * 这可能看起来有点尴尬。 最初，编写代码是为了让claim_region() 成功返回一个非空区域，或者没有更多区域需要claim。
@@ -3562,24 +3607,24 @@ public:
 
 void ConcurrentMark::aggregate_count_data() {
   int n_workers = (G1CollectedHeap::use_parallel_gc_threads() ?
-                        _g1h->workers()->active_workers() :
+                        _g1h->workers()->active_workers() : // 搜索 virtual uint active_workers() const {
                         1);
 
   G1AggregateCountDataTask g1_par_agg_task(_g1h, this, &_card_bm,
                                            _max_worker_id, n_workers);
 
-  if (G1CollectedHeap::use_parallel_gc_threads()) {
+  if (G1CollectedHeap::use_parallel_gc_threads()) { // 使用并发gc
     assert(_g1h->check_heap_region_claim_values(HeapRegion::InitialClaimValue),
            "sanity check");
     _g1h->set_par_threads(n_workers);
-    _g1h->workers()->run_task(&g1_par_agg_task);
+    _g1h->workers()->run_task(&g1_par_agg_task); // 提交到线程池运行，这里是交给G1CollectedHeap的FlexibleWorkGang运行的, 查看 void FlexibleWorkGang::run_task
     _g1h->set_par_threads(0);
 
     assert(_g1h->check_heap_region_claim_values(HeapRegion::AggregateCountClaimValue),
            "sanity check");
     _g1h->reset_heap_region_claim_values();
   } else {
-    g1_par_agg_task.work(0);
+    g1_par_agg_task.work(0); // 当前线程直接运行
   }
 }
 
@@ -3651,7 +3696,7 @@ void ConcurrentMark::abort() {
   satb_mq_set.abandon_partial_marking();
   // This can be called either during or outside marking, we'll read
   // the expected_active value from the SATB queue set.
-  satb_mq_set.set_active_all_threads(
+  satb_mq_set.set_active_all_threads( // 已经结束了标记操作，已经没有必要再进行SATB的写栅栏了，因此关闭SATB队列
                                  false, /* new active value */
                                  satb_mq_set.is_active() /* expected_active */);
 
@@ -3722,11 +3767,11 @@ void ConcurrentMark::print_on_error(outputStream* st) const {
 
 // We take a break if someone is trying to stop the world.
 bool ConcurrentMark::do_yield_check(uint worker_id) {
-  if (SuspendibleThreadSet::should_yield()) {
+  if (SuspendibleThreadSet::should_yield()) { // 如果当前有vm thread正在stop the world
     if (worker_id == 0) {
       _g1h->g1_policy()->record_concurrent_pause();
     }
-    SuspendibleThreadSet::yield();
+    SuspendibleThreadSet::yield(); // 当前线程终止执行，直到stw完成所有操作，然后恢复执行
     return true;
   } else {
     return false;
@@ -3747,7 +3792,7 @@ void ConcurrentMark::print_finger() {
 
 /**
  * 调用者
- *       CMTask::make_reference_grey // 这时候scan=false,不对子对象进行递归(或许是因为子对象是primitive)
+ *       CMTask::make_reference_grey // 这时候scan=false, 不对子对象进行递归(或许是因为子对象是primitive)
  * 以及
  *       void scan_object(oop obj) // scan_object的调用者是 CMTask::drain_local_queue,这时候scan=true
  * 只有当scan = true的时候，才会在obj的field上去apply G1CMOopClosure，即进行递归
@@ -3770,7 +3815,7 @@ inline void CMTask::process_grey_object(oop obj) {
        *  调用 搜索 G1CMOopClosure  cm_oop_closure
        *  迭代方法搜索 G1CMOopClosure::do_oop_nv(T* p)
        *  typedef class oopDesc*                            oop;
-       *  在obj的每一个子对象(field) apply对应的 G1CMOopClosure
+       *  在obj的每一个子对象(field) apply对应的 G1CMOopClosure，这会进行递归扫描，递归扫描的对象将会进入标记栈
        *  这个递归的scan需要跟我们在转移暂停的时候转移对象并将对象的相关field放入到PSS的队列中的递归的时候的递归的scan区别开，是两件事情
        */
     obj->oop_iterate(_cm_oop_closure);
@@ -3784,7 +3829,7 @@ template void CMTask::process_grey_object<false>(oop);
 
 // Closure for iteration over bitmaps
 /**
- * 这个Closure 用来对bitmap进行遍历
+ * 这个Closure 用来对bitmap进行遍历扫描
  */
 class CMBitMapClosure : public BitMapClosure {
 private:
@@ -3912,8 +3957,8 @@ void CMTask::giveup_current_region() {
 void CMTask::clear_region_fields() {
   // Values for these three fields that indicate that we're not
   // holding on to a region.
-  _curr_region   = NULL;
-  _finger        = NULL;
+  _curr_region   = NULL; // 当前的CMTask正在处理的Region
+  _finger        = NULL; //
   _region_limit  = NULL;
 }
 
@@ -3943,7 +3988,7 @@ void CMTask::reset(CMBitMap* nextMarkBitMap) {
   /**
    * 全局的_nextMarkBitMap设置当前的CMTask的_nextMarkBitMap
    */
-  _nextMarkBitMap                = nextMarkBitMap;
+  _nextMarkBitMap                = nextMarkBitMap; // 将当前的全局nextMarkBitMap更新给每一个MarkTask
   clear_region_fields();
 
   _calls                         = 0;
@@ -4103,6 +4148,10 @@ void CMTask::decrease_limits() {
     3 * refs_reached_period / 4;
 }
 
+/**
+ * 这是将CMTask的本地标记栈推送到ConcurrentMark的全局标记栈中
+ * 参考调用者 CMTask::push(oop obj)
+ */
 void CMTask::move_entries_to_global_stack() {
   // local array where we'll store the entries that will be popped
   // from the local queue
@@ -4311,7 +4360,7 @@ void CMTask::drain_global_stack(bool partially) {
 // replicated. We should really get rid of the single-threaded version
 // of the code to simplify things.
 /**
- * 这是CMTask对象的实例方法
+ * 这是CMTask对象的实例方法，用来清空SATB队列
  */
 void CMTask::drain_satb_buffers() {
   if (has_aborted()) return;
@@ -4917,7 +4966,7 @@ void CMTask::do_marking_step(double time_target_ms,
    */
   if (do_termination && !has_aborted()) {
     if (_cm->force_overflow()->should_force()) {
-      _cm->set_has_overflown();
+      _cm->set_has_overflown(); // 强行设置overflow标记，即使可能实际上没有发生溢出。在真实发生溢出的时候，也会设置溢出标记位
       regular_clock_call();
     }
   }
@@ -4960,12 +5009,12 @@ void CMTask::do_marking_step(double time_target_ms,
           // we need to set this to false before the next
           // safepoint. This way we ensure that the marking phase
           // doesn't observe any more heap expansions.
-          _cm->clear_concurrent_marking_in_progress(); // 设置 _concurrent_marking_in_progress
+          _cm->clear_concurrent_marking_in_progress(); // 重置 _concurrent_marking_in_progress
         }
       }
 
       // We can now guarantee that the global stack is empty, since
-      // all other tasks have finished. We separated the guarantees so
+      // all other tasks have finished. We separated the guarantees so g
       // that, if a condition is false, we can immediately find out
       // which one.
       guarantee(_cm->out_of_regions(), "only way to reach here");
@@ -5013,7 +5062,7 @@ void CMTask::do_marking_step(double time_target_ms,
       _marking_step_diffs_ms.add(diff_ms);
     }
 
-    if (_cm->has_overflown()) {
+    if (_cm->has_overflown()) { // 发生了溢出
       // This is the interesting one. We aborted because a global
       // overflow was raised. This means we have to restart the
       // marking phase and start iterating over regions. However, in
@@ -5072,13 +5121,22 @@ void CMTask::do_marking_step(double time_target_ms,
 
 /**
  * 查看 ConcurrentMark::ConcurrentMark
+
+ *  _count_card_bitmaps[i] = BitMap(card_bm_size, false);
+    _count_marked_bytes[i] = NEW_C_HEAP_ARRAY(size_t, max_regions, mtGC);
+    // 注意_tasks的声明，CMTask** _tasks;是一个双重指针，即 _task[i]是一个指向CMTask对象的CMTask指针
+    // 注意，CMTask并不是可以直接提供给FlexibleGangWorker的AbstractGantTask的实现类
+    _tasks[i] = new CMTask(i, this, // 创建对应的CMTask，并将对应的CMTaskQueue()绑定到这个CMTask，同时还有一个全局唯一的 CMTaskQueueSet
+                           _count_marked_bytes[i],
+                           &_count_card_bitmaps[i],
+                           task_queue, _task_queues);
  */
 CMTask::CMTask(uint worker_id,
                ConcurrentMark* cm,
                size_t* marked_bytes,
                BitMap* card_bm,
-               CMTaskQueue* task_queue, // typedef GenericTaskQueue<oop, mtGC>            CMTaskQueue
-               CMTaskQueueSet* task_queues)
+               CMTaskQueue* task_queue, // typedef GenericTaskQueue<oop, mtGC>            CMTaskQueue，每一个CMTask都有一个独立的任务队列
+               CMTaskQueueSet* task_queues) // 这是全局的任务队列集合
   : _g1h(G1CollectedHeap::heap()),
     _worker_id(worker_id), _cm(cm),
     _claimed(false),

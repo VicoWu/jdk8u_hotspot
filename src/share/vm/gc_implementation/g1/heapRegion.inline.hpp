@@ -209,7 +209,7 @@ inline HeapWord* HeapRegion::allocate_no_bot_updates(size_t word_size) {
 /**
  *
  * 在 NoteStartOfMarkHRClosure 中被调用，发生在初始标记开始的时候，
- *      设置_next_top_at_mark_start的地址为当前的分配位置,随后，top就一直往前移动，但是_next_top_at_mark_start保持不变
+ *      设置 _next_top_at_mark_start 的地址为当前的分配位置,随后，top就一直往前移动，但是_next_top_at_mark_start保持不变
  */
 inline void HeapRegion::note_start_of_marking() {
   _next_marked_bytes = 0;

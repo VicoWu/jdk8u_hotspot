@@ -64,7 +64,7 @@ class G1CardCounts: public CHeapObj<mtGC> {
   size_t _reserved_max_card_num;
 
   // CardTable bottom.
-  const jbyte* _ct_bot;
+  const jbyte* _ct_bot; // 卡表的底部地址
 
   // Barrier set
   CardTableModRefBS* _ct_bs;
@@ -77,6 +77,9 @@ class G1CardCounts: public CHeapObj<mtGC> {
     return has_reserved_count_table();
   }
 
+  /**
+   * 将一个指向卡片的指针转换为卡片编号。这个编号表示卡片在整个卡片计数表中的位置。
+   */
   size_t ptr_2_card_num(const jbyte* card_ptr) {
     assert(card_ptr >= _ct_bot,
            err_msg("Invalid card pointer: "

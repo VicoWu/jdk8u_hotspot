@@ -53,8 +53,8 @@ bool DirtyCardQueue::apply_closure(CardTableEntryClosure* cl,
 }
 
 /**
- * 搜索 bool DirtyCardQueueSet::
-apply_closure_to_completed_buffer_helper 查看调用者
+ * in book
+ * 搜索 bool DirtyCardQueueSet::apply_closure_to_completed_buffer_helper 查看调用者
  buf中的数据是位于[index, sz]之间
  这是一个静态方法，用来对一个void** buf代表的转移专用记忆集合 去apply对应的Closure
  */
@@ -72,7 +72,7 @@ bool DirtyCardQueue::apply_closure_to_buffer(CardTableEntryClosure* cl,
       // above) if we reconsider this buffer.
       if (consume) buf[ind] = NULL;
       /**
-       * 调用对应的RefineRecordRefsIntoCSCardTableEntryClosure的do_card_ptr()方法
+       * 调用对应的 RefineRecordRefsIntoCSCardTableEntryClosure 的do_card_ptr()方法
        * 搜索 bool do_card_ptr(jbyte* card_ptr, uint worker_i)
        */
       if (!cl->do_card_ptr(card_ptr, worker_i)) return false;
@@ -87,7 +87,7 @@ bool DirtyCardQueue::apply_closure_to_buffer(CardTableEntryClosure* cl,
 
 DirtyCardQueueSet::DirtyCardQueueSet(bool notify_when_complete) :
   PtrQueueSet(notify_when_complete),
-  _mut_process_closure(NULL),
+  _mut_process_closure(NULL), // 对于JavaThread::DirtyCardQueueSet，这里是 _refine_cte_cl = new RefineCardTableEntryClosure();
   _shared_dirty_card_queue(this, true /*perm*/),
   _free_ids(NULL),
   _processed_buffers_mut(0), _processed_buffers_rs_thread(0)
@@ -104,7 +104,7 @@ void DirtyCardQueueSet::initialize(CardTableEntryClosure* cl, Monitor* cbl_mon, 
                                    int process_completed_threshold,
                                    int max_completed_queue,
                                    Mutex* lock, PtrQueueSet* fl_owner) {
-  _mut_process_closure = cl;
+  _mut_process_closure = cl; // 对于JavaThread::DirtyCardQueueSet，这里是 _refine_cte_cl = new RefineCardTableEntryClosure();
   PtrQueueSet::initialize(cbl_mon, fl_lock, process_completed_threshold,
                           max_completed_queue, fl_owner);
   set_buffer_size(G1UpdateBufferSize);
@@ -146,6 +146,12 @@ void DirtyCardQueueSet::iterate_closure_all_threads(CardTableEntryClosure* cl,
   guarantee(b, "Should not be interrupted.");
 }
 
+/**
+ * in book
+ * 这个方法的含义是，由Mutator线程直接对buffer进行处理
+ * @param buf
+ * @return
+ */
 bool DirtyCardQueueSet::mut_process_buffer(void** buf) {
 
   // Used to determine if we had already claimed a par_id
@@ -174,6 +180,7 @@ bool DirtyCardQueueSet::mut_process_buffer(void** buf) {
 
   bool b = false;
   if (worker_i != UINT_MAX) {
+      // 对于JavaThread::DirtyCardQueueSet，这里是 _refine_cte_cl = new RefineCardTableEntryClosure();
     b = DirtyCardQueue::apply_closure_to_buffer(_mut_process_closure, buf, 0,
                                                 _sz, true, worker_i);
     if (b) Atomic::inc(&_processed_buffers_mut);
