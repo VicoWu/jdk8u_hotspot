@@ -243,6 +243,7 @@ void ConcurrentMarkThread::run() {
 
         // Now do the concurrent cleanup operation.
         /**
+         * 如果在清理阶段有直接释放出来的Region，那么在这里需要进行处理
          * 现在进行清理，这个阶段需要STW.注意，这里的cleanup，并不是evacuation，只是并发标记最后的一个子阶段，用来进行分区计数，RSet清理等
          * 在这里，会将清理阶段获取的空的HeapRegion添加到二级空闲列表中
          */

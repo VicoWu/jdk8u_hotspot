@@ -1194,7 +1194,7 @@ public:
      */
     SuspendibleThreadSet::join();
 
-    // 取出对应的 CMTask。查看
+    // 取出对应的 CMTask。查看 CMTask* task(int id)
     assert(worker_id < _cm->active_tasks(), "invariant");
     CMTask* the_task = _cm->task(worker_id); // 根据当前的线程id取出对应的CMTask,这个CMTask数组是在构造函数 ConcurrentMark::ConcurrentMark 中构造的
     the_task->record_start_time();
