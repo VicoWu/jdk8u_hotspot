@@ -1211,25 +1211,29 @@ public:
         double end_vtime_sec = os::elapsedVTime();
         double elapsed_vtime_sec = end_vtime_sec - start_vtime_sec;
         _cm->clear_has_overflown();
-
+        // ConcurrentMark::do_yield_check
+        // 检查是否需要将当前标记线程挂起
         _cm->do_yield_check(worker_id);
 
         jlong sleep_time_ms;
+        // 如果整个标记周期没有被终止，但是当前CMTask任务已经因为各种原因被中断，那么开始进入休眠阶段()
         if (!_cm->has_aborted() && the_task->has_aborted()) {
           sleep_time_ms =
             (jlong) (elapsed_vtime_sec * _cm->sleep_factor() * 1000.0);
           SuspendibleThreadSet::leave();
           os::sleep(Thread::current(), sleep_time_ms, false); // 根据计算得到的sleep_factor和刚刚的并发标记时间，计算睡眠时间
-          SuspendibleThreadSet::join();
+          SuspendibleThreadSet::join(); // 休眠完成以后，需要等待正在进行的Full GC完成(如果有)
         }
-      } while (!_cm->has_aborted() && the_task->has_aborted());
+      } while (!_cm->has_aborted() && the_task->has_aborted()); // the_task->has_aborted()只是说明发生中断(时间quota用完，栈溢出等)，但是当前的CMTask还需要继续执行完
     }
+    // 任务正常结束，比如，正常完成了自己所负责的所有HeapRegion的扫描，已经可以结束了
     the_task->record_end_time();
     guarantee(!the_task->has_aborted() || _cm->has_aborted(), "invariant");
 
     SuspendibleThreadSet::leave();
 
     double end_vtime = os::elapsedVTime();
+    // 更新整个执行时间
     _cm->update_accum_task_vtime(worker_id, end_vtime - start_vtime);
   }
 
@@ -4046,8 +4050,8 @@ void CMTask::regular_clock_call() {
   // During the regular clock call we do the following
 
   // (1) If an overflow has been flagged, then we abort.
-  if (_cm->has_overflown()) {
-    set_has_aborted();
+  if (_cm->has_overflown()) { // 发生了标记栈溢出
+    set_has_aborted(); // CMTask终止
     return;
   }
 
@@ -4057,8 +4061,8 @@ void CMTask::regular_clock_call() {
   if (!concurrent()) return;
 
   // (2) If marking has been aborted for Full GC, then we also abort.
-  if (_cm->has_aborted()) {
-    set_has_aborted();
+  if (_cm->has_aborted()) { // 整个标记周期已经终止了
+    set_has_aborted(); // CMTask终止
     statsOnly( ++_aborted_cm_aborted );
     return;
   }
@@ -4090,10 +4094,10 @@ void CMTask::regular_clock_call() {
 #endif // _MARKING_STATS_
 
   // (4) We check whether we should yield. If we have to, then we abort.
-  if (SuspendibleThreadSet::should_yield()) {
+  if (SuspendibleThreadSet::should_yield()) { // 有Full GC即将发生，我们主动suspend
     // We should yield. To do this we abort the task. The caller is
     // responsible for yielding.
-    set_has_aborted();
+    set_has_aborted(); // CMTask终止
     statsOnly( ++_aborted_yield );
     return;
   }
@@ -4118,7 +4122,7 @@ void CMTask::regular_clock_call() {
     }
     // we do need to process SATB buffers, we'll abort and restart
     // the marking task to do so
-    set_has_aborted();
+    set_has_aborted(); // 我们需要处理SATB缓存了，因此需要终止
     statsOnly( ++_aborted_satb );
     return;
   }
@@ -4170,11 +4174,12 @@ void CMTask::move_entries_to_global_stack() {
     statsOnly( ++_global_transfers_to; _local_pops += n );
 
     if (!_cm->mark_stack_push(buffer, n)) {
+        // 发生溢出，因此终止当前的CMTask
       if (_cm->verbose_low()) {
         gclog_or_tty->print_cr("[%u] aborting due to global stack overflow",
                                _worker_id);
       }
-      set_has_aborted();
+      set_has_aborted(); // CMTask终止
     } else {
       // the transfer was successful
 
@@ -4682,7 +4687,7 @@ void CMTask::do_marking_step(double time_target_ms,
     // and this task, after a yield point, restarts. We have to abort
     // as we need to get into the overflow protocol which happens
     // right at the end of this task.
-    set_has_aborted();
+    set_has_aborted(); // CMTask终止
   }
 
   // First drain any available SATB buffers. After this, we will not
@@ -4886,7 +4891,7 @@ void CMTask::do_marking_step(double time_target_ms,
   } while ( _curr_region != NULL && !has_aborted());
   // 退出while循环的时候，说明成功claim了一个region
   /**
-   * while循环退出来，但是并没有abort，说明是因为找到了_curr_region导致循环退出
+   * while循环退出来，但是并没有abort，说明是因为找不到_curr_region导致循环退出
    */
   if (!has_aborted()) {
     // We cannot check whether the global stack is empty, since other
@@ -5035,7 +5040,7 @@ void CMTask::do_marking_step(double time_target_ms,
                                _worker_id);
       }
 
-      set_has_aborted();  // 设置abort标志位
+      set_has_aborted();  // 设置CMTask的abort标志位
       statsOnly( ++_aborted_termination );
     }
   }
