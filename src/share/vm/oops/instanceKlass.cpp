@@ -2330,7 +2330,7 @@ int InstanceKlass::oop_oop_iterate##nv_suffix(oop obj, OopClosureType* closure) 
     closure->do_klass##nv_suffix(obj->klass());                         \
   }                                                                          \
    // 调用了宏展开  InstanceKlass_OOP_MAP_ITERATE  , 搜索 #define InstanceKlass_OOP_MAP_ITERATE
-   //  InstanceKlass_OOP_MAP_ITERATE是InstandceKlass对象定义的实例宏方法，在obj的每一个指针域(非常量域)上apply对应的do_oop
+   //  InstanceKlass_OOP_MAP_ITERATE 是InstandceKlass对象定义的实例宏方法，在obj的每一个指针域(非常量域)上apply对应的do_oop
    // 提取对应的obj
   InstanceKlass_OOP_MAP_ITERATE(                                        \
     obj,                                                                \

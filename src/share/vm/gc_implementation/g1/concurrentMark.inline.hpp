@@ -211,24 +211,31 @@ inline bool ConcurrentMark::par_mark_and_count(oop obj,
  * @return
  */
 inline bool CMBitMapRO::iterate(BitMapClosure* cl, MemRegion mr) {
+    // 作边界，在bitmap的低地址和mr的低地址之间取较大值，防止越界
   HeapWord* start_addr = MAX2(startWord(), mr.start());
+  // 右边界，在bitmap的高地址和mr的高地址之间取较小值，防止越界
   HeapWord* end_addr = MIN2(endWord(), mr.end());
 
   if (end_addr > start_addr) {
     // Right-open interval [start-offset, end-offset).
     BitMap::idx_t start_offset = heapWordToOffset(start_addr); // 将内存地址转换成 位图 偏移量
     BitMap::idx_t end_offset = heapWordToOffset(end_addr);// 将内存地址转换成 位图 偏移量
-
+    // 在位图（BitMap）中查找下一个设置为 1 的位的函数
     start_offset = _bm.get_next_one_offset(start_offset, end_offset);
+    // 不断往前移动start_offset，直到 start_offset不小于end_offset的值
     while (start_offset < end_offset) {
         /**
-         * 这里调用 cl->do_bit, 说明 start_offset的这个位置已经标记过了
+         * class CMBitMapClosure : public BitMapClosure的do_bit方法
+         * 这里调用 cl->do_bit, 说明 start_offset 的这个位置已经标记过了
+         * 由于get_next_one_offset的调用，这里，class CMBitMapClosure : public BitMapClosure的do_bit方法
+         * 要求传入的start_offset的位置必须已经是被标记的元素
          */
       if (!cl->do_bit(start_offset)) { //
         return false;
       }
       HeapWord* next_addr = MIN2(nextObject(offsetToHeapWord(start_offset)), end_addr); // 下一个对象的地址
       BitMap::idx_t next_offset = heapWordToOffset(next_addr);
+      // 在位图（BitMap）中查找下一个设置为 1 的位的函数
       start_offset = _bm.get_next_one_offset(next_offset, end_offset); // 更新start_offset，不断往前进
     }
   }
@@ -292,7 +299,7 @@ inline void CMTask::push(oop obj) {
   if (_cm->verbose_high()) {
     gclog_or_tty->print_cr("[%u] pushing " PTR_FORMAT, _worker_id, p2i((void*) obj));
   }
-
+  // 将对象推入到CMTask的本地标记栈中
   if (!_task_queue->push(obj)) {
       // 向本地标记栈存入元素失败
     // The local task queue looks full. We need to push some entries
@@ -365,7 +372,7 @@ inline bool CMTask::is_below_finger(oop obj, HeapWord* global_finger) const {
  */
 inline void CMTask::make_reference_grey(oop obj, HeapRegion* hr) {
     /**
-     * 返回true，说明成功标记了该对象，返回false，说明这个对象已经被其他对象标记
+     * 返回true，说明成功标记了该对象(只是在标记位图中标记，并不是推入到标记栈)，返回false，说明这个对象已经被其他对象标记
      * 对对象的标记与全局_finger 无关
      * 这里par_mark_and_count方法是全局的_cm的成员方法，而不是当前的CMTask的成员方法
      * 从方法par开头，说明是一个可以并行执行的线程安全的方法
@@ -446,18 +453,19 @@ inline void CMTask::deal_with_reference(oop obj) {
   }
 
   increment_refs_reached();
-
+  // 获取这个field的值，field值是其所指向对象的地址
   HeapWord* objAddr = (HeapWord*) obj;
   assert(obj->is_oop_or_null(true /* ignore mark word */), "Error");
   if (_g1h->is_in_g1_reserved(objAddr)) {
     assert(obj != NULL, "null check is implicit");
-    if (!_nextMarkBitMap->isMarked(objAddr)) {
+    // 当对象还不在bitmap中，那么说明对象还没有被标记为灰色，因此将对象标记为灰色对象
+    if (!_nextMarkBitMap->isMarked(objAddr)) { // 这个对象还没有变成灰色对象
       // Only get the containing region if the object is not marked on the
       // bitmap (otherwise, it's a waste of time since we won't do
       // anything with it).
-      HeapRegion* hr = _g1h->heap_region_containing_raw(obj);
+      HeapRegion* hr = _g1h->heap_region_containing_raw(obj); // 这个obj所在的HeapRegion完全可能不属于这个CMTask
       if (!hr->obj_allocated_since_next_marking(obj)) { // 这个object不可以是TAMS以后新分配的对象
-        make_reference_grey(obj, hr); // 递归遍历对象并推送到标记栈中进行递归标记
+        make_reference_grey(obj, hr); // 对该对象进行标记，递归遍历对象并推送到标记栈中进行递归标记
       }
     }
   }

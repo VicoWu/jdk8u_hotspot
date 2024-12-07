@@ -1657,8 +1657,8 @@ public:
    */
   bool is_obj_ill(const oop obj, const HeapRegion* hr) const {
     return
-      !hr->obj_allocated_since_next_marking(obj) &&
-      !isMarkedNext(obj);
+      !hr->obj_allocated_since_next_marking(obj) && // 是在本地标记以前就产生了
+      !isMarkedNext(obj); // 没有被标记
   }
 
   // Determine if an object is dead, given only the object itself.

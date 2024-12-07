@@ -182,11 +182,11 @@ G1RootProcessor::G1RootProcessor(G1CollectedHeap* g1h) :
                                       trace_metadata,  // 如果设置了ClassUnloadingWithConcurrentMark，那么trace_metadata=true
                                       worker_id // 当前的gc线程的id);
  */
-void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
-                                     OopClosure* scan_non_heap_weak_roots,
-                                     CLDClosure* scan_strong_clds,
-                                     CLDClosure* scan_weak_clds,
-                                     bool trace_metadata,
+void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots, //non-heap的强根
+                                     OopClosure* scan_non_heap_weak_roots, // non-heap的弱根
+                                     CLDClosure* scan_strong_clds, // heap的强根
+                                     CLDClosure* scan_weak_clds, // heap的弱根
+                                     bool trace_metadata, // 如果类卸载，那么需要trace_metadata
                                      uint worker_i) {
   // First scan the shared roots.
   double ext_roots_start = os::elapsedTime();
@@ -216,10 +216,12 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
    */
   // 处理Java 根
   /**
+   *
    * 搜索 G1RootProcessor::process_java_roots 查看具体实现
-   * 只有当trace_metadata = true， weak_cld_cl和 strong_cld_cl才会使用，否则为null
+   *  当trace_metadata = true，使用 scan_strong_clds
+   *  当trace_metadata = false，使用 scan_weak_clds
    */
-  process_java_roots(strong_roots,
+  process_java_roots(strong_roots, // buf_scan_non_heap_roots; non-heap的强根
                       /**
                        *  如果需要跟踪metadata（发生在需要进行标记（当前正在初始标记，并且需要卸载class）），
                        *  那么用来处理线程栈的cld的闭包就是scan_strong_clds，否则是null
@@ -228,7 +230,7 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
                      scan_strong_clds,
                         /**
                         *  如果需要跟踪metadata（发生在需要进行标记（当前正在初始标记，并且需要卸载class）），
-                        *  那么用来处理线程栈的cld的闭包就是scan_weak_clds，否则是null
+                        *  那么用来处理线程栈的cld的闭包就是null， 否则是scan_weak_clds
                         */
                      trace_metadata ? NULL : scan_weak_clds,
                      &root_code_blobs,
@@ -237,17 +239,20 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
 
   // This is the point where this worker thread will not find more strong CLDs/nmethods.
   // Report this so G1 can synchronize the strong and weak CLDs/nmethods processing.
-  if (trace_metadata) {
+  if (trace_metadata) { // ClassUnloadingWithConcurrentMark = True
       /**
        * 调用这个方法，代表自己这个worker已经处理完了所有的强根
        */
     worker_has_discovered_all_strong_classes();
   }
   /**
+   * 虚拟机根都是non-heap root，但是non-heap root不一定是虚拟机根，可能还有java 根
    * 处理 VM的根, 传入进来的参数是strong_roots和weak_roots, 和CLD无关
    * 搜索 G1RootProcessor::process_vm_roots
    */
-  process_vm_roots(strong_roots, weak_roots, phase_times, worker_i);
+  process_vm_roots(strong_roots, // buf_scan_non_heap_roots non-heap的强根
+                   weak_roots, // buf_scan_non_heap_weak_roots non-heap的弱根
+                   phase_times, worker_i);
   // 处理string table 根
   process_string_table_roots(weak_roots, phase_times, worker_i);
   {
@@ -258,11 +263,14 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
       // concurrent mark ref processor as roots and keep entries
       // (which are added by the marking threads) on them live
       // until they can be processed at the end of marking.
+      // ReferenceProcessor* _ref_processor_cm;
+      // 搜索 ReferenceProcessor::weak_oops_do
+      // 当前的stw状态可能处于某一个并发标记期间，这时候我们必须讲CM阶段的Weak Reference当做强根，避免
       _g1h->ref_processor_cm()->weak_oops_do(&buf_scan_non_heap_roots);
     }
   }
 
-  if (trace_metadata) {
+  if (trace_metadata) { // ClassUnloadingWithConcurrentMark = True
     {
       G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::WaitForStrongCLD, worker_i);
       // Barrier to make sure all workers passed
@@ -277,9 +285,12 @@ void G1RootProcessor::evacuate_roots(OopClosure* scan_non_heap_roots,
     // Now take the complement of the strong CLDs.
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::WeakCLDRoots, worker_i);
       /**
+       * 在process_java_roots中也调用了 ClassLoaderDataGraph::roots_cld_do
        * 所有的强根的处理(注意当前方法只是根扫描，因此不包括对那些根 所 指向的对象的间接扫描)开始进行弱根的扫描
+       * 处理所有的keep_alive()为false的那些ClassLoaderData
+       * scan_weak_clds的G1
        */
-    ClassLoaderDataGraph::roots_cld_do(NULL, scan_weak_clds); // 不再处理强应用，只处理弱引用，只处理is_weak=true的那些cld
+    ClassLoaderDataGraph::roots_cld_do(NULL, scan_weak_clds); // 不再处理强引用，只处理弱引用，只处理keep_alive()为false的那些cld
   } else {
     phase_times->record_time_secs(G1GCPhaseTimes::WaitForStrongCLD, worker_i, 0.0);
     phase_times->record_time_secs(G1GCPhaseTimes::WeakCLDRoots, worker_i, 0.0);
@@ -375,6 +386,8 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
                                          CodeBlobClosure* strong_code, // 一个用于处理强代码块的 CodeBlobClosure
                                          G1GCPhaseTimes* phase_times,
                                          uint worker_i // 工作线程的id) {
+ // 如果 trace_metadata = true,那么只有 thread_stack_clds， 没有 weak_clds
+ // 如果 trace_metadata = false,那么只有weak_clds， 没有 thread_stack_clds
   assert(thread_stack_clds == NULL || weak_clds == NULL, "There is overlap between those, only one may be set");
   // Iterating over the CLDG and the Threads are done early to allow us to
   // first process the strong CLDs and nmethods and then, after a barrier,
@@ -395,8 +408,10 @@ void G1RootProcessor::process_java_roots(OopClosure* strong_roots, // 一个用�
          * 搜索 ClassLoaderDataGraph::roots_cld_do 查看方法的具体实现
          * 查看静态方法的具体实现，可以看到，如果CLD对象的keep_alive()是true，那么就apply strong_clds，否则，apply weak_clds
          * 我们从 调用者的构造方法可以看到，strong_clds和 weak_clds的区别是他们的参数中的 G1ParCopyClosure _oop_closure 是对应的strong还是weak
+         *  ClassLoaderDataGraph::roots_cld_do的strong，指的是keep_alive = true，这种对象是用strong_clds来扫描
+         *                                                  keep_alive = false，这种对象是用weak_clds来扫描
          */
-      ClassLoaderDataGraph::roots_cld_do(strong_clds, weak_clds); // 如果trace metadata，那么weak_clds = null
+      ClassLoaderDataGraph::roots_cld_do(strong_clds, weak_clds); // 如果trace metadata，那么weak_clds = null，这时候的weak_clds会在完成了强根扫描以后统一进行
     }
   }
 

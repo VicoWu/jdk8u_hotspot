@@ -142,16 +142,20 @@ inline void G1ParPushHeapRSClosure::do_oop_nv(T* p) {
 
 /**
  * 调用者查看 inline void CMTask::process_grey_object
+ * 这里传入的参数是指向某一个field的指针，因此对指针取值，得到field的值，
+ * 然后，field的值是一个指向被引用对象的指针，因此，对field取值，就得到对应的object
  */
 template <class T>
 inline void G1CMOopClosure::do_oop_nv(T* p) {
+    // 根据指向field的指针p，取出field的值obj，field的值obj是其所指向的对象的地址
   oop obj = oopDesc::load_decode_heap_oop(p); // 根据指针取出p所指向的object
   if (_cm->verbose_high()) {
     gclog_or_tty->print_cr("[%u] we're looking at location "
                            "*" PTR_FORMAT " = " PTR_FORMAT,
                            _task->worker_id(), p2i(p), p2i((void*) obj));
   }
-  _task->deal_with_reference(obj); // CMTask::deal_with_reference(
+  // 此时，obj就是这个field的值，field的值就是指向被引用的对象的指针
+  _task->deal_with_reference(obj); // CMTask::deal_with_reference
 }
 
 

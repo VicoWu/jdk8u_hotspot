@@ -89,19 +89,26 @@ void G1DefaultAllocator::init_gc_alloc_regions(EvacuationInfo& evacuation_info) 
                             &_retained_old_gc_alloc_region);
 }
 
+/**
+ * 释放SurvivorGCAllocRegion和OldGCAllocRegion，对他们的释放是不同的，因为一轮GC结束以后，survivor region完全不需要了，可以脱管了，下次GC到来一定会清空
+ * 但是对于Old HeapRegion，不可以，
+ * @param no_of_gc_workers
+ * @param evacuation_info
+ */
 void G1DefaultAllocator::release_gc_alloc_regions(uint no_of_gc_workers, EvacuationInfo& evacuation_info) {
   AllocationContext_t context = AllocationContext::current();
   evacuation_info.set_allocation_regions(survivor_gc_alloc_region(context)->count() +
                                          old_gc_alloc_region(context)->count());
-  survivor_gc_alloc_region(context)->release();
+  survivor_gc_alloc_region(context)->release(); // 释放掉当前的SurvivorAllocRegion当前的所管理的那个HeapRegion
   // If we have an old GC alloc region to release, we'll save it in
   // _retained_old_gc_alloc_region. If we don't
   // _retained_old_gc_alloc_region will become NULL. This is what we
   // want either way so no reason to check explicitly for either
   // condition.
+  // 将OldGCAllocRegion所管理的HeapRegion释放掉，返回被释放的这个Old HeapRegion
   _retained_old_gc_alloc_region = old_gc_alloc_region(context)->release();
   if (_retained_old_gc_alloc_region != NULL) {
-    _retained_old_gc_alloc_region->record_retained_region();
+    _retained_old_gc_alloc_region->record_retained_region(); // 更新这个Old HeapRegion 的scan_top为当前分配的最新位置
   }
 
   if (ResizePLAB) {

@@ -221,14 +221,20 @@ void G1AllocRegion::update_alloc_region(HeapRegion* alloc_region) {
   trace("updated");
 }
 
+/**
+ * 释放掉当前G1AllocRegion所管理的active 的HeapRegion
+ * 注意区分 G1AllocRegion::retire()，G1AllocRegion::release()会将_alloc_region置为Null，而 G1AllocRegion::retire() 会将_alloc_region置为dummy_region
+ * @return
+ */
 HeapRegion* G1AllocRegion::release() {
   trace("releasing");
   HeapRegion* alloc_region = _alloc_region;
-  retire(false /* fill_up */);
-  assert(_alloc_region == _dummy_region,
+  retire(false /* fill_up */); // 先将当前所管理的Region卸载掉
+  assert(_alloc_region == _dummy_region, // retire()一定会将_alloc_region置为_dummy_region
          ar_ext_msg(this, "post-condition of retire()"));
-  _alloc_region = NULL;
+  _alloc_region = NULL; // 当前管理的Region置为空
   trace("released");
+  // 如果retire()以前的region已经是dummy_region，返回null，否则，返回之前的Region
   return (alloc_region == _dummy_region) ? NULL : alloc_region;
 }
 

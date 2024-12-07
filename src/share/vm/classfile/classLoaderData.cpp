@@ -172,16 +172,16 @@ void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool m
     return;
   }
   /**
-   * f是G1ParCopyClosure, 对这个CLD对应的_classLoader对象去apply 没有拦截的G1ParCopyClosure
+   * f是G1ParCopyClosure, 对这个CLD对应的_classLoader oop去apply 没有拦截的G1ParCopyClosure
    * 对于一个ClassLoaderData，如果不是构造中的匿名类或者空类加载器，那么，它的keep_alive_object就是对应的class loader
    * 如果是一个匿名类，它的keep alive object就是对应的mirror对象
    * 查看 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
    */
-  f->do_oop(&_class_loader);
+  f->do_oop(&_class_loader); // 处理自己的_class_loader
   /**
-   * 对这个CLD所依赖的所有的CLD去apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
+   * 对这个CLD所依赖的所有的ClassLoaderData去apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
    */
-  _dependencies.oops_do(f);
+  _dependencies.oops_do(f); // 递归处理依赖的ClassLoaderData
   /**
    * 对这个常量池数组 apply G1ParCopyClosure 没有拦截的G1ParCopyClosure
    */
@@ -192,7 +192,7 @@ void ClassLoaderData::oops_do(OopClosure* f, KlassClosure* klass_closure, bool m
        *
        * 方法实现搜索 搜索 void ClassLoaderData::classes_do
        */
-    classes_do(klass_closure);
+    classes_do(klass_closure); // 处理自己的klass
   }
 }
 
@@ -201,7 +201,7 @@ void ClassLoaderData::Dependencies::oops_do(OopClosure* f) {
 }
 
 /**
- * 调用者是 void ClassLoaderData::oops_do
+ * 调用者是 void ClassLoaderData::oops_do，需要跟oop_do区分开
  * 对这个ClassLoaderData中以_klasses链接起来的所有的klass 去apply klass_closure,
  * 即对于这个CLD的每一个klass，调用 G1KlassScanClosure的 do_klass方法（搜索g1CollectedHeap中的 void do_klass(Klass* klass) ）
  */
@@ -414,6 +414,7 @@ void ClassLoaderData::unload() {
 
 /**
  * 获取当前cld对应的class的keep_alive_object，这个object专门被G1GC用来跟踪对象的存活特性
+ * 一个CLD的keep_alive=true的时候，没有keep_alive_object。有keep_alive_object的时候，keep_alive = false
  * @return
  */
 oop ClassLoaderData::keep_alive_object() const {
@@ -427,6 +428,7 @@ oop ClassLoaderData::keep_alive_object() const {
 
 /**
  * 在对CLD进行卸载的时候，检查这个ClassLoaderData 是否存活
+ * 一个ClassLoaderData如果本身是keep_alive的，或者虽然不是keep_alive的，但是有keep_live_object，都被认为是存活的
  * 调用者 SystemDictionary::do_unloading -> bool ClassLoaderDataGraph::do_unloading
  * @param is_alive_closure
  * @return
@@ -435,7 +437,6 @@ bool ClassLoaderData::is_alive(BoolObjectClosure* is_alive_closure) const {
     /**
      *  搜索 ClassLoaderData::keep_alive()
      *  如果是Null Class Loader加载的cld或者是一个当前还没有完全构造完成的匿名类，那么必须keep_alive()
-     *
      *  null 类加载器被用来加载 Java 核心类库（如 java.lang 包中的类）和基本类（如原始数据类型的包装类），这些类在 JVM 启动时就已经预先加载到内存中了。
      *  因为这些类在 JVM 启动时就已经加载到内存中，所以它们不需要经过普通的类加载器加载，也不需要在加载时指定一个特定的类加载器。因此，对于这些系统类和基本类，它们的类加载器通常被设置为 null，表示它们是由 JVM 内部直接加载的。
      */
@@ -764,8 +765,9 @@ void ClassLoaderDataGraph::roots_cld_do(CLDClosure* strong, CLDClosure* weak) {
   for (ClassLoaderData* cld = _head;  cld != NULL; cld = cld->_next) {
   /**
    * 遍历当前所有的ClassLoaderData，
-   *    如果是keep_alive的，那么就使用 strong，
-   *    如果不是keep_alive的，就使用strong
+   *    如果是keep_alive的，那么就使用 strong。keep_alive的意思是，即使这个cld没有keep_alive_object，也需要被保留
+   *    如果不是keep_alive的，就使用strong。不是keep_alive的意思是，只要这个cld没有keep_alive_object，就可以被卸载。
+   *    这里，在初始标记阶段，被卸载的含义就是，不对它进行标记
    * 一个CLD需要keep alive，意味着这个CLD对应的class loader是null class loader，或者，这个class是一个正在构造中的匿名类
    */
     CLDClosure* closure = cld->keep_alive() ? strong : weak;
@@ -890,25 +892,25 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, boo
        * 主要是查看这个cld在刚刚完成的标记的keep_alive_data是否已经被标记存活
        */
     if (data->is_alive(is_alive_closure)) {
-      prev = data;
+      prev = data; // prev指向存活的链表的链表头
       data = data->next();
       continue;
     }
     seen_dead_loader = true;
     ClassLoaderData* dead = data;
     dead->unload(); // 对这个CLD执行unload操作
-    data = data->next();
+    data = data->next(); // 下一个待判断的ClassLoaderData
     // Remove from loader list.
     // This class loader data will no longer be found
     // in the ClassLoaderDataGraph.
-    if (prev != NULL) {
-      prev->set_next(data);
-    } else {
+    if (prev != NULL) { // 如果已经有ClassLoaderData是alive的
+      prev->set_next(data); // 先把写一个ClassLoaderData挂载到存活的data下面
+    } else { // 找到第一个存活的链表节点ClassLoaderData
       assert(dead == _head, "sanity check");
-      _head = data;
+      _head = data; // 当前还没有发现任何一个alive的ClassLoaderData，将_head更新为当前卸载的ClassLoaderData
     }
-    dead->set_next(_unloading);
-    _unloading = dead; // 将这个cld加入到_unloading这个链表中去
+    dead->set_next(_unloading); // 卸载的这个加入到_unloading的头链表中去
+    _unloading = dead; // _unloading指向卸载的ClassLoaderData的链表头
   }
 
   if (clean_alive) {
@@ -920,7 +922,7 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, boo
     post_class_unload_events();
   }
 
-  return seen_dead_loader;
+  return seen_dead_loader; // 返回 如果发现了任何一个死亡的ClassLoaderData，返回true，否则，返回false
 }
 
 void ClassLoaderDataGraph::clean_metaspaces() {

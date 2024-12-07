@@ -298,6 +298,7 @@ void SATBMarkQueueSet::filter_thread_buffers() {
 /**
  * SATBMarkQueueSet的实例方法，用来对已完成的缓冲区应用 SATBBufferClosure
  * 调用者 搜索 CMTask::drain_satb_buffers
+ * 从方法内容可以看到，这里会从SATBMarkQueueSet中取出一个BufferNode去Apply SATBBufferClosure，只要这个BufferNode apply成功了，就返回true
  * @param cl
  * @return
  */
@@ -325,7 +326,7 @@ bool SATBMarkQueueSet::apply_closure_to_completed_buffer(SATBBufferClosure* cl) 
     // Filtering can result in non-full completed buffers; see
     // should_enqueue_buffer.
     assert(_sz % sizeof(void*) == 0, "invariant");
-    size_t limit = ObjPtrQueue::byte_index_to_index((int)_sz);
+    size_t limit = ObjPtrQueue::byte_index_to_index((int)_sz); // 将字节索引转换成buf数组中的索引
     /**
      * 遍历缓冲区中的元素，找到第一个非空的元素，表示已完成的数据块的起始位置
      */

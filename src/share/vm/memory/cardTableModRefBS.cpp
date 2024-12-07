@@ -575,9 +575,9 @@ void CardTableModRefBS::clear_MemRegion(MemRegion mr) {
     cur = byte_for(mr.start());
   } else {
     assert(mr.start() > _whole_heap.start(), "mr is not covered.");
-    cur = byte_after(mr.start() - 1);
+    cur = byte_after(mr.start() - 1); // mr所在的卡片的起始位置
   }
-  jbyte* last = byte_after(mr.last());
+  jbyte* last = byte_after(mr.last()); // mr所在的卡片的下一个卡片的起始地址
   memset(cur, clean_card, pointer_delta(last, cur, sizeof(jbyte)));
 }
 

@@ -82,7 +82,7 @@ void PtrQueue::enqueue_known_active(void* ptr) {
    * 所以我们往DCQ中插入一个元素的时候，index = index - oopSize
    */
   _index -= oopSize; // 从这里可以看到，这个_index的值是随着插入的进行从大逐渐减小到0，因此 可以通过_index==0确定buffer已经满了
-  _buf[byte_index_to_index((int)_index)] = ptr;
+  _buf[byte_index_to_index((int)_index)] = ptr; // ind / oopSize
   assert(0 <= _index && _index <= _sz, "Invariant.");
 }
 
@@ -223,15 +223,15 @@ void PtrQueue::handle_zero_index() {
     } else {
       if (qset()->process_or_enqueue_complete_buffer(_buf)) {
         // Recycle the buffer. No allocation.
-        _sz = qset()->buffer_size();
+        _sz = qset()->buffer_size(); // 这里取的是QSet的buffer_size
         _index = _sz;
         return;
       }
     }
   }
   // Reallocate the buffer
-  _buf = qset()->allocate_buffer(); // 分配新的DCQ, 搜索 PtrQueueSet::allocate_buffer
-  _sz = qset()->buffer_size(); // 搜索 PtrQueueSet::buffer_size
+  _buf = qset()->allocate_buffer(); // 分配新的DCQ, 这个新的_buf可能是从free list中取的，可能是新创建的，搜索 PtrQueueSet::allocate_buffer
+  _sz = qset()->buffer_size(); // 搜索 PtrQueueSet::buffer_size，这里取的是QSet的buffer_size
   _index = _sz; // _index指示的是_buf中待插入的位置，因此可以看到插入是从后往前插入的，因此可以通过_index==0判断_buf是否满了
   assert(0 <= _index && _index <= _sz, "Invariant.");
 }

@@ -39,11 +39,12 @@ G1ParScanThreadState::G1ParScanThreadState(G1CollectedHeap* g1h, uint queue_num,
     _hash_seed(17), _queue_num(queue_num),
     _term_attempts(0),
     _tenuring_threshold(g1h->g1_policy()->tenuring_threshold()),
-    _age_table(false), _scanner(g1h, rp),
+    _age_table(false), _scanner(g1h, rp), // G1ParScanClosure
     _strong_roots_time(0), _term_time(0) {
     /**
      * 这个scanner用于在完成了一个对象的evacuation以后，对对象进行一个递归的扫描
      * 搜索 obj->oop_iterate_backwards(&_scanner);
+     * G1ParScanClosure
      */
   _scanner.set_par_scan_thread_state(this);
   // we allocate G1YoungSurvRateNumRegions plus one entries, since

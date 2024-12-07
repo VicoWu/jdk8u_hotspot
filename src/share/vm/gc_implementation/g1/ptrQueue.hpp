@@ -182,6 +182,7 @@ public:
   // Align the size of the structure to the size of the pointer
   // 将BufferNode对象的大小对齐到当前系统的指针大小的整数倍， 例如，如果sizeof(BufferNode) = 13， sizeof(void *) = 4
   //    调用 round_to(13, 4)，表示将 13 向上舍入到最接近的 4 的倍数，结果为 16。
+  // 搜索 inline intptr_t round_to(intptr_t x, uintx s) {
   static size_t aligned_size() {
     static const size_t alignment = round_to(sizeof(BufferNode), sizeof(void*));
     return alignment;
@@ -336,6 +337,7 @@ public:
   void set_buffer_size(size_t sz);
 
   // Get the buffer size.
+  // PtrQueueSet::buffer_size()
   size_t buffer_size() { return _sz; }
 
   // Get/Set the number of completed buffers that triggers log processing.

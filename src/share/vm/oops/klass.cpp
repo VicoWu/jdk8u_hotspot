@@ -478,6 +478,11 @@ void Klass::clean_weak_klass_links(BoolObjectClosure* is_alive, bool clean_alive
   }
 }
 
+/**
+ * 在方法  void Klass::klass_oop_store(oop* p, oop v) 中被调用。
+ * 调用链是 void set_java_mirror(oop m) -> void Klass::klass_oop_store(oop* p, oop v) -> klass_update_barrier_set(oop v)
+ * 这个
+ */
 void Klass::klass_update_barrier_set(oop v) {
   record_modified_oops();
 }
@@ -496,6 +501,9 @@ void Klass::klass_update_barrier_set_pre(oop* p, oop v) {
 #endif
 }
 
+/**
+ * 将对象指针 v 存储到地址 p 中
+ */
 void Klass::klass_oop_store(oop* p, oop v) {
   assert(!Universe::heap()->is_in_reserved((void*)p), "Should store pointer into metadata");
   assert(v == NULL || Universe::heap()->is_in_reserved((void*)v), "Should store pointer to an object");

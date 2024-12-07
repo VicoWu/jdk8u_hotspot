@@ -307,6 +307,8 @@ protected:
   /**
    * Klasses 不放置在堆中，因此 Card Table 或 Mod Union Table
    * 不能用于标记 klasses 何时修改了 oops。 CT 和 MUT 位保存各个类别的此信息。
+   * 对于普通对象，a.field = b，假如a.field = c了，那么可以从脏卡片中看到。但是如果a是一个klass，由于其不在对内存中，因此无法通过卡片去记录，
+   * 只能通过_modified_oops来记录
    */
   void record_modified_oops()            { _modified_oops = 1; }
   void clear_modified_oops()             { _modified_oops = 0; }

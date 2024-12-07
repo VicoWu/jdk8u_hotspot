@@ -989,7 +989,7 @@ Klass* SystemDictionary::parse_stream(Symbol* class_name,
   Ticks class_load_start_time = Ticks::now();
 
   ClassLoaderData* loader_data;
-  if (host_klass.not_null()) {
+  if (host_klass.not_null()) { // 是否存在一个宿主类
     // Create a new CLD for anonymous class, that uses the same class loader
     // as the host_klass
     assert(EnableInvokeDynamic, "");
@@ -1724,7 +1724,7 @@ public:
  * 在remark阶段被调用，调用者
  *      ConcurrentMarkThread::run -> CMCheckpointRootsFinalClosure::do_void() -> ConcurrentMark::checkpointRootsFinal -> ConcurrentMark::weakRefsWork
  * 其中BoolObjectClosure 的实现是 G1CMIsAliveClosure g1_is_alive
- * @param is_alive
+ * @param is_alive 这个Closure 是 G1CMIsAliveClosure
  * @param clean_alive
  * @return
  */

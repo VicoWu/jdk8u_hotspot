@@ -138,6 +138,7 @@ public:
   }
 
   template <class T> void do_oop_nv(T* p) { do_oop_work(p); }
+   // G1ParCopyClosure::do_oop()
   virtual void do_oop(oop* p)       { // 最终还是调用do_oop_work
       do_oop_nv(p);
   }

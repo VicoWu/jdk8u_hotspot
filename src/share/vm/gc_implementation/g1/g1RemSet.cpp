@@ -414,7 +414,7 @@ void G1RemSet::cleanupHRRS() {
 }
 
 /**
- * G1ParTask::work() -> scan_remembered_sets() -> oop_into_collection_set_do()
+ * G1ParTask::work() -> scan_remembered_sets() -> oops_into_collection_set_do()
  * 静态方法
  * 搜 G1RootProcessor::scan_remembered_sets 查看调用位置，而G1RootProcessor::scan_remembered_sets 是在evacuate_root 中被调用的，
  *   即这个方法做的事情就是以RSet为根进行扫描
@@ -459,6 +459,7 @@ void G1RemSet::oops_into_collection_set_do(G1ParPushHeapRSClosure* oc,
   /**
    * 搜索 void G1RemSet::updateRS
    * 这里将会往 into_cset_dirty_card_queue_set 中添加指向回收集合的脏卡片
+   * into_cset_dirty_card_queue_set仅仅在回收失败的时候被使用，用来恢复Collection Set的RSet
    */
   updateRS(&into_cset_dcq, worker_i);
   /**
@@ -477,7 +478,7 @@ void G1RemSet::prepare_for_oops_into_collection_set_do() {
 
   guarantee( _cards_scanned == NULL, "invariant" );
   _cards_scanned = NEW_C_HEAP_ARRAY(size_t, n_workers(), mtGC); // 为每一个worker记录已经扫描的卡片的数量
-  for (uint i = 0; i < n_workers(); ++i) {
+  for (uint i = 0; i < n_workers(); ++i) { // 搜索 G1RemSet::scanRS查看对 _cards_scanned 的赋值
     _cards_scanned[i] = 0;
   }
   _total_cards_scanned = 0; // 扫描数量清零，准备扫描

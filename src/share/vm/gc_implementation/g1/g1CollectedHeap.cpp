@@ -160,7 +160,7 @@ class RedirtyLoggedCardTableEntryClosure : public CardTableEntryClosure {
   RedirtyLoggedCardTableEntryClosure() : CardTableEntryClosure(), _num_processed(0) { }
 
   bool do_card_ptr(jbyte* card_ptr, uint worker_i) {
-    *card_ptr = CardTableModRefBS::dirty_card_val();
+    *card_ptr = CardTableModRefBS::dirty_card_val(); // 将dirty值复制给对应的卡片
     _num_processed++;
     return true;
   }
@@ -1590,7 +1590,7 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       ref_processor_stw()->verify_no_references_recorded();
 
       // Delete metaspaces for unloaded class loaders and clean up loader_data graph
-      ClassLoaderDataGraph::purge();
+      ClassLoaderDataGraph::purge(); // 释放掉已经卸载的类
       MetaspaceAux::verify_metrics();
 
       // Note: since we've just done a full GC, concurrent
@@ -2580,6 +2580,7 @@ void G1CollectedHeap::iterate_dirty_card_closure(CardTableEntryClosure* cl, //�
   // Clean cards in the hot card cache
   // 处理热表
   G1HotCardCache* hot_card_cache = _cg1r->hot_card_cache();
+  // refine所有的热卡片集合
   hot_card_cache->drain(worker_i, g1_rem_set(), into_cset_dcq);
 
   DirtyCardQueueSet& dcqs = JavaThread::dirty_card_queue_set(); //获取属于JavaThread的全局静态的DCQS，这个DCQS收集了JavaThread的本地DCQ存放过来的脏卡片队列
@@ -4629,7 +4630,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         // 开始进行young gc 的 evacuation
         setup_surviving_young_words();
 
-        // Initialize the GC alloc regions.
+        // 初始化GC AllocRegion，其中，GC AllocRegion包含了SurvivorGCAllocRegion和OldGCAllocRegion
         _allocator->init_gc_alloc_regions(evacuation_info);
 
         // Actually do the work...
@@ -4670,7 +4671,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         g1_policy()->record_survivor_regions(_young_list->survivor_length(),
                                              _young_list->first_survivor_region(),
                                              _young_list->last_survivor_region());
-
+        // 在这里，会将survivor Region添加到CSet中去
         _young_list->reset_auxilary_lists();
 
         if (evacuation_failed()) {
@@ -5023,7 +5024,7 @@ void G1ParCopyHelper::mark_object(oop obj) {
   assert(!_g1->heap_region_containing(obj)->in_collection_set(), "should not mark objects in the CSet");
 
   // We know that the object is not moving so it's safe to read its size.
-  _cm->grayRoot(obj, (size_t) obj->size(), _worker_id); /
+  _cm->grayRoot(obj, (size_t) obj->size(), _worker_id);
 }
 
 /**
@@ -5051,6 +5052,7 @@ void G1ParCopyHelper::mark_forwarded_object(oop from_obj, oop to_obj) {
 }
 
 /**
+ * 专门针对klass的mirror对象发生了转移的情况，因此，调用这个方法的时候，一定设置了_scanned_klass，即这个mirror所对应的klass对象
  * p 表示指向类元数据的指针，new_obj 表示一个新创建的对象
  * 在方法 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work 中被调用
  */
@@ -5060,7 +5062,8 @@ void G1ParCopyHelper::do_klass_barrier(T* p, oop new_obj) {
      *  搜索 void record_modified_oops(), 就是设置Klass的_modified_oops变量为1，代表这个对象的oop被修改过,即对象被移动过
      */
   if (_g1->heap_region_containing_raw(new_obj)->is_young()) {
-    _scanned_klass->record_modified_oops(); // 记录这个对象的mirror被移动过
+      // 记录这个对象的mirror被移动过，这里是被GC移动，当然，也有可能JVM中被用户移动(搜索  void Klass::klass_oop_store(oop* p, oop v) )
+    _scanned_klass->record_modified_oops();
   }
 }
 
@@ -5120,12 +5123,14 @@ void G1ParCopyClosure<barrier, do_mark_object>::do_oop_work(T* p) {
       mark_forwarded_object(obj, forwardee); // 尽管当前处于转移阶段，但是需要对对象进行标记，标记位灰色对象，表示对象可达
     }
     /**
+     * G1BarrierKlass的含义是，是否需要拦截对象被修改以后的klass，比如，是否需要根据对象被修改，因此设置对应klass的标记位
      * 为当前正在scan的klass设置一个标记位，标记_modified_oops==1，这样，这个klass就是dirty的，
      *     那么在G1KlassScanClosure中就需要被处理。而没有被标记为dirty的，G1KlassScanClosure就会跳过这个klass
      */
     if (barrier == G1BarrierKlass) {
         /**
          *  调用父类的实现，搜索 G1ParCopyHelper::do_klass_barrier
+         *  这时候，被转移的应该是ClassLoaderData的oop _class_loader
          *  从实现可以看到，只有当forwardee是young(eden + survivor)的时候，会将当前的对象所对应的klass的 _modified_oops 置位
          *  即，当前这个klass的mirror在heap中，但是klass却不在，因此，如果当前的mirror移动了，需要在这个对象的klass上设置一个标记，表示这个klass的mirror已经发生了移动
          *  相当于将这个klass的对象标记为脏对象，后面会针对脏对象进行处理
@@ -5206,8 +5211,10 @@ void G1ParEvacuateFollowersClosure::do_void() {
  *  G1KlassScanClosure 这个Closure是在G1CLDClosure中被引用，搜索 class G1CLDClosure : public CLDClosure 查看引用位置
  */
 class G1KlassScanClosure : public KlassClosure {
- G1ParCopyHelper* _closure; // 一个G1ParCopyHeaper的指针，可能是一个指向G1ParCopyClosure，搜索_klass_in_cld_closure可以看到，这里的这个G1ParCopyClosure会拦截klass
- bool             _process_only_dirty; // 对应了 only_young，当调用这个evacuation的时候是一个young gc的过程，那么_process_only_dirty是true，否则是false
+ // 一个G1ParCopyHeaper的指针，可能是一个指向G1ParCopyClosure，搜索_klass_in_cld_closure可以看到，这里的这个G1ParCopyClosure会拦截klass
+ G1ParCopyHelper* _closure;
+ // 对应了 only_young，当调用这个evacuation的时候是一个young gc的过程，那么_process_only_dirty是true，否则是false
+ bool             _process_only_dirty;
  int              _count;
  /**
   * 构造方法的调用查看 class G1CLDClosure : public CLDClosure
@@ -5231,9 +5238,13 @@ class G1KlassScanClosure : public KlassClosure {
      * 搜索 record_modified_oops， 可以看到，它表征的是这个klass对应的mirror是否有位置的移动或者从null到非null的设置，因此，这个变化可能来自于用户代码，可能来自于gc。
      *  void Klass::klass_update_barrier_set(oop v)
      *
-     *  如果仅仅是不需要初始标记的young gc，那么 _process_only_dirty = true，这时候只有当has_modified_oops的时候才会执行对这个klass的扫描，扫描过程中如果挪动了klass的mirror，会再次将_midified_oop置为true
+     *  如果仅仅是不需要初始标记的young gc，那么 _process_only_dirty = true，这时候只有当has_modified_oops的时候才会执行对这个klass的扫描，
+     *  扫描过程中如果挪动了klass的mirror，会再次将_midified_oop置为true
      *  如果不是young gc，或者gc过程需要进行标记，那么_process_only_dirty = false，这时候无论是否_modified_oops=true，都会对这个klass进行扫描
      *
+     * 这里的理解方式是
+     * - 如果klass有指向年轻代的引用，即klass->has_modified_oops()，那么无论是什么类型的回收(Young，Mix， Old)，一定需要进行处理
+     * - 如果klass没有指向年轻代的引用，即klass->has_modified_oops() == false，那么只有非Young GC(Mix/Old GC)，才需要进行处理
      */
    if (!_process_only_dirty || klass->has_modified_oops()) {
       // Clean the klass since we're going to scavenge all the metadata.
@@ -5247,10 +5258,12 @@ class G1KlassScanClosure : public KlassClosure {
        * 搜索 void Klass::oops_do(OopClosure* cl) 查看方法的具体实现
        * 在这个klass上去apply封装好的G1ParCopyHelper* closure， 其实就是将klass对应的mirror的oop上apply对应的G1ParCopyClosure，
        * 注意这里是对这个klass的mirror进行apply G1ParCopyHelper* closure
-       * 搜搜 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
+       *
        * 这里，如果对象发生了移动，那么依然可能会重新将_modified_oops 置位为1
        * 搜 void Klass::oops_do(OopClosure* cl) 可以看到，这里最终传递给closure处理的是klass 的 mirror对象，
        * 这个对象可能是分配在堆中的，而klass本身不在堆中。因此，当这个mirror因为evacuation发生了移动，那么这个class就变成了dirty的了。
+       *
+       * 具体实现搜 G1ParCopyClosure<barrier, do_mark_object>::do_oop_work
        */
       klass->oops_do(_closure);
 
@@ -5326,9 +5339,11 @@ public:
        */
     G1ParCopyClosure<G1BarrierNone,  do_mark_object>* _oop_closure; //
     /**
+     * 构造了一个新的G1ParCopyClosure，专门用来处理对象被修改以后的klass的修改
      * 基于当前传入的_oop_closure，顺道处理对应的klass，拦截器是G1BarrierKlass, 需要拦截Klass
      */
     G1ParCopyClosure<G1BarrierKlass, do_mark_object>  _oop_in_klass_closure; //
+    // 用来处理CLD下面挂载的所有的klass
     G1KlassScanClosure                                _klass_in_cld_closure;// 封装了_oop_in_klass_closure,对应构造函数中的_process_only_dirty
     bool                                              _claim;
 
@@ -5447,7 +5462,7 @@ public:
       */
       G1ParCopyClosure<G1BarrierNone, G1MarkPromotedFromRoot> scan_mark_weak_root_cl(_g1h, &pss, rp);
       G1CLDClosure<G1MarkPromotedFromRoot>                    scan_mark_weak_cld_cl(&scan_mark_weak_root_cl,
-                                                                                    false, // 处理所有的klass
+                                                                                    false, // only_young
                                                                                     true); // Need to claim CLDs.
 
       OopClosure* strong_root_cl; // 处理强根的Closure
@@ -5486,8 +5501,10 @@ public:
 
          */
          /**
-          * 为什么只有在并发标记暂停的时候，才需要判断ClassUnloadingWithConcurrentMark？？
+          * 为什么只有在并发标记暂停的时候，才需要判断 ClassUnloadingWithConcurrentMark？？
           * 因为类的卸载发生在并发标记的并发清理阶段，当metadata区的分配失败，会设置_initiate_conc_mark_if_possible以促成一次带有初始标记的回收暂停
+          * 如果需要在并发标记阶段进行类卸载(ClassUnloadingWithConcurrentMark)，那么就使用scan_mark_weak_root_cl和scan_mark_weak_cld_cl
+          * 由于是G1MarkPromotedFromRoot，那么，如果扫描的对象不在CSet中，这个closure不会进行标记
           */
         if (ClassUnloadingWithConcurrentMark) { // 如果用户配置了ClassUnloadingWithConcurrentMark，即在并发标记的清理阶段卸载类
           weak_root_cl = &scan_mark_weak_root_cl; // do_mark_object此时为G1MarkPromotedFromRoot
@@ -5524,10 +5541,10 @@ public:
        * 查看 G1RootProcessor::evacuate_roots 和 G1RootProcessor::process_java_roots
        * 在这个方法里面调用了 G1RootProcessor::process_java_roots 和 G1RootProcessor::process_vm_roots
        */
-      _root_processor->evacuate_roots(strong_root_cl,
+      _root_processor->evacuate_roots(strong_root_cl,  // non_heap_root
                                       weak_root_cl, // non_heap_weak_root
-                                      strong_cld_cl,
-                                      weak_cld_cl, // heap_weak_root
+                                      strong_cld_cl, // strong cld root(heap root)
+                                      weak_cld_cl, // heap_weak_root(heap root)
                                       trace_metadata,  // 如果设置了ClassUnloadingWithConcurrentMark，那么trace_metadata=true
                                       worker_id // 当前的gc线程的id);
 
@@ -6607,8 +6624,9 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
        * workers()返回当前的全局的 FlexibleWorkGang 对象指针, 这个FlexibleWorkGang的构造是在 SharedHeap::SharedHeap的构造函数中进行创建并初始化了它负责的所有的GangWorker
        * run_task的实现，搜索 void FlexibleWorkGang::run_task
        * 以STW并行的方式执行g1_par_task
+       * run_task()方法会等待所有的task全部执行完毕
        */
-      workers()->run_task(&g1_par_task);
+      workers()->run_task(&g1_par_task); // 所有的task全部执行完毕
     } else { //
       g1_par_task.set_for_termination(n_workers);
       g1_par_task.work(0);
@@ -6650,12 +6668,12 @@ void G1CollectedHeap::evacuate_collection_set(EvacuationInfo& evacuation_info) {
     double fixup_time_ms = (os::elapsedTime() - fixup_start) * 1000.0;
     phase_times->record_string_dedup_fixup_time(fixup_time_ms);
   }
-  // 删除当前的_gc_alloc_regions，将其保存在 _retained_old_gc_alloc_region 中
+  // 删除当前的_gc_alloc_regions
   _allocator->release_gc_alloc_regions(n_workers, evacuation_info);
   /**
    * void G1RemSet::cleanup_after_oops_into_collection_set_do()
    */
-  g1_rem_set()->cleanup_after_oops_into_collection_set_do(); // 进行已经释放的region的rset的清理
+  g1_rem_set()->cleanup_after_oops_into_collection_set_do(); // 进行已经释放的HeapRegion的rset的清理
 
   // Reset and re-enable the hot card cache.
   // Note the counts for the cards in the regions in the
@@ -6785,7 +6803,7 @@ public:
    */
   void work(uint worker_id) {
     HeapRegion* r;
-    while (r = _g1h->pop_dirty_cards_region()) {
+    while (r = _g1h->pop_dirty_cards_region()) { // 在GC完成以后，遍历所有的脏卡片的HeapRegion，他们应该已经完全被refine了，因此，不应该再有dirty card和dirty card region了
       clear_cards(r);
     }
   }
@@ -7007,6 +7025,7 @@ void G1CollectedHeap::cleanUpCardTable() {
     /**
      * 具体实现，搜索 G1ParCleanupCTTask::work()
      * 这个方法的调用发生在已经完成了evacuation pause以后
+     * 将对应的含有脏卡片的HeapRegion的卡片置为净卡片
      */
     G1ParCleanupCTTask cleanup_task(ct_bs, this);
 

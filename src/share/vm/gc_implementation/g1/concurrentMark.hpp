@@ -109,6 +109,7 @@ class CMBitMapRO VALUE_OBJ_CLASS_SPEC {
   int heapWordDiffToOffsetDiff(size_t diff) const;
 
   // The argument addr should be the start address of a valid object
+  // 获取bitmap的下一个object。这里的“下一个”，意思是在HeapRegion中该对象的下一个对象，而不是该对象的子对象
   HeapWord* nextObject(HeapWord* addr) {
     oop obj = (oop) addr;
     HeapWord* res =  addr + obj->size();
@@ -673,14 +674,16 @@ public:
   // called during evacuation pauses and doesn't compete with the
   // other two (which are called by the marking tasks during
   // concurrent marking or remark).
+  // 往全局标记栈中插入元素
   bool mark_stack_push(oop p) {
     _markStack.par_push(p);
-    if (_markStack.overflow()) {
+    if (_markStack.overflow()) { // 发生溢出了，那么设置ConcurrentMark的_has_overflown标记位
       set_has_overflown();
       return false;
     }
     return true;
   }
+  // 往全局标记栈中插入元素
   bool mark_stack_push(oop* arr, int n) {
     _markStack.par_push_arr(arr, n);
     if (_markStack.overflow()) {
@@ -692,13 +695,15 @@ public:
   void mark_stack_pop(oop* arr, int max, int* n) {
       /**
        * 搜索 bool CMMarkStack::par_pop_arr
+       * 从全局标记栈中弹出n个元素，放到arr中
+       * _markStack是全局标记栈
        */
     _markStack.par_pop_arr(arr, max, n); //
   }
   size_t mark_stack_size()                { return _markStack.size(); }
   size_t partial_mark_stack_size_target() { return _markStack.maxElems()/3; }
-  bool mark_stack_overflow()              { return _markStack.overflow(); }
-  bool mark_stack_empty()                 { return _markStack.isEmpty(); }
+  bool mark_stack_overflow()              { return _markStack.overflow(); } // 全局标记栈溢出
+  bool mark_stack_empty()                 { return _markStack.isEmpty(); } // 全局标记栈空
 
   CMRootRegions* root_regions() { return &_root_regions; }
 

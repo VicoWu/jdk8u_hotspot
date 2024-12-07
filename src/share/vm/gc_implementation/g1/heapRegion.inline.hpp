@@ -252,7 +252,7 @@ inline void HeapRegion::note_start_of_copying(bool during_initial_mark) {
       /**
        * 在initial-mark期间，我们将明确标记根指向的旧区域上的任何对象。
        * 鉴于显式标记仅在 NTAMS 下才有意义，如果我们愿意的话，如果我们能够检查该条件，那就太好了。
-       * 鉴于当前开始进行复制，我们不知道该区域的顶部将在哪里结束，我们只需将 NTAMS 设置为该区域的末尾，以便所有标记都将低于 NTAMS。
+       * 鉴于当前开始进行复制，我们不知道该区域的顶部将在哪里结束，我们只需将 NTAMS 设置为该区域的末尾，以便所有被标记对象都低于NTAMS。
        * 当我们退出该区域时，我们会将其设置为实际顶部，即更新为NTAMS当前的真实的top。
        */
       _next_top_at_mark_start = end();
@@ -277,7 +277,7 @@ inline void HeapRegion::note_end_of_copying(bool during_initial_mark) {
      * 如果是survivor区域，由于对象根本不会在这里直接分配，都是从eden区域转移过来的，
      *  因此survivor区域的_next_top_at_mark_start等于bottom()是一个恒定值
      */
-  if (is_survivor()) { //
+  if (is_survivor()) { // 对于Survivor HeapRegion
     // This is how we always allocate survivors.
     assert(_next_top_at_mark_start == bottom(), "invariant");
   } else { //  对于old区域

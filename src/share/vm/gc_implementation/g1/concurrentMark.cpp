@@ -563,7 +563,7 @@ ConcurrentMark::ConcurrentMark(G1CollectedHeap* g1h, G1RegionToSpaceMapper* prev
   _prevMarkBitMap(&_markBitMap1), // 设置一个空的_prevMarkBitMap
   _nextMarkBitMap(&_markBitMap2), // 设置一个空的_nextMarkBitMap
 
-  _markStack(this),
+  _markStack(this), // 全局标记栈
   // _finger set in set_non_marking_state
 
   _max_worker_id(MAX2((uint)ParallelGCThreads, 1U)), //  task的数量是由 ParallelGCThreads 决定的
@@ -1478,8 +1478,8 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
   g1p->record_concurrent_mark_remark_start();
 
   double start = os::elapsedTime();
-
-  checkpointRootsFinalWork(); // 真正的remark的工作内容。这里面可能会强制设置overflow
+    // 真正的remark的工作内容。这里面可能会强制设置overflow
+  checkpointRootsFinalWork();
 
   double mark_work_end = os::elapsedTime();
   /**
@@ -2364,7 +2364,7 @@ void ConcurrentMark::cleanup() {
    *
    */
   if (ClassUnloadingWithConcurrentMark) {
-    ClassLoaderDataGraph::purge(); // cleanup阶段试图回收cld
+    ClassLoaderDataGraph::purge(); // cleanup阶段试图回收cld,即真正释放内存
   }
   MetaspaceGC::compute_new_size();
 
@@ -2779,6 +2779,7 @@ void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
     rp->set_active_mt_degree(active_workers);
 
     // Process the weak references.
+    // ReferenceProcessor::process_discovered_references
     const ReferenceProcessorStats& stats =
         rp->process_discovered_references(&g1_is_alive,
                                           &g1_keep_alive,
@@ -2795,7 +2796,7 @@ void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
     assert(_markStack.overflow() || _markStack.isEmpty(),
             "mark stack should be empty (unless it overflowed)");
 
-    if (_markStack.overflow()) {
+    if (_markStack.overflow()) { // 全局标记栈发生溢出，那么设置ConcurrentMark的has_overflow标记位
       // This should have been done already when we tried to push an
       // entry on to the global mark stack. But let's do it again.
       set_has_overflown(); // 设置ConcurrentMark的_has_overflown标记位
@@ -2803,7 +2804,8 @@ void ConcurrentMark::weakRefsWork(bool clear_all_soft_refs) {
 
     assert(rp->num_q() == active_workers, "why not");
 
-    rp->enqueue_discovered_references(executor);
+    // ReferenceProcessor::enqueue_discovered_references
+    rp->enqueue_discovered_references(executor);// 将发现到的弱引用添加到引用队列中
 
     rp->verify_no_references_recorded();
     assert(!rp->discovery_enabled(), "Post condition");
@@ -3423,7 +3425,7 @@ void ConcurrentMark::verify_no_cset_oops() {
 
   VerifyNoCSetOopsClosure cl;
 
-  // Verify entries on the global mark stack
+  // 校验在整个全局标记栈中的所有元素
   cl.set_phase(VerifyNoCSetOopsStack);
   _markStack.oops_do(&cl);
 
@@ -3795,6 +3797,7 @@ void ConcurrentMark::print_finger() {
 #endif
 
 /**
+ * 调用这个方法的时候，这个obj一定是已经在_nextMarkBitMap标记过了
  * 调用者
  *       CMTask::make_reference_grey // 这时候scan=false, 不对子对象进行递归(或许是因为子对象是primitive)
  * 以及
@@ -3803,6 +3806,7 @@ void ConcurrentMark::print_finger() {
  */
 template<bool scan>
 inline void CMTask::process_grey_object(oop obj) {
+
   assert(scan || obj->is_typeArray(), "Skipping scan of grey non-typeArray");
   assert(_nextMarkBitMap->isMarked((HeapWord*) obj), "invariant");
 
@@ -3816,11 +3820,15 @@ inline void CMTask::process_grey_object(oop obj) {
 
   if (scan) {
       /**
-       *  调用 搜索 G1CMOopClosure  cm_oop_closure
+       * 对这个对象的所有field进行递归扫描。扫描的时候：
+       *    - 如果发现对应的field已经被标记，那么就不会再继续进行,因此，当前的对象A完全可能被其他的CMTask从其他的路径率先扫描到了
+       *    - 如果发现对应的field还没有被标记，因此就对其进行标记。参考 CMTask::deal_with_reference
+       *  调用 搜索 G1CMOopClosure  cm_oop_closure。 必须和CMBitMapClosure bitmap_closure区分开
        *  迭代方法搜索 G1CMOopClosure::do_oop_nv(T* p)
        *  typedef class oopDesc*                            oop;
        *  在obj的每一个子对象(field) apply对应的 G1CMOopClosure，这会进行递归扫描，递归扫描的对象将会进入标记栈
        *  这个递归的scan需要跟我们在转移暂停的时候转移对象并将对象的相关field放入到PSS的队列中的递归的时候的递归的scan区别开，是两件事情
+       *  搜索  inline int oopDesc::oop_iterate(OopClosureType* blk)
        */
     obj->oop_iterate(_cm_oop_closure);
   }
@@ -3847,6 +3855,7 @@ public:
     _task(task), _cm(cm), _nextMarkBitMap(nextMarkBitMap) { }
   /**
    * 参数是在标记位图中的偏移量
+   * 这个方法断言 offset位置的对象一定已经被标记了，因为调用者CMBitMapRO::iterate  只会处理已经被标记的bitmap
    * @param offset
    * @return
    */
@@ -3855,6 +3864,7 @@ public:
        * 通过offset转换成这个bit对应的内存字地址 ，搜索 HeapWord* offsetToHeapWord(size_t offset)
        */
     HeapWord* addr = _nextMarkBitMap->offsetToHeapWord(offset);  //
+    // 断言 offset位置的对象一定已经被标记了(为什么)
     assert(_nextMarkBitMap->isMarked(addr), "invariant");
     assert( addr < _cm->finger(), "invariant"); // addr在全局finger的下面
 
@@ -3862,7 +3872,10 @@ public:
     assert(addr >= _task->finger(), "invariant"); // addr在当前的task的局部finger的上面
 
     // We move that task's local finger along.
-    _task->move_finger_to(addr); // 移动当前的CMTask的local finger到当前的这个地址
+    // 移动当前的CMTask的local finger到当前的这个地址
+    // _finger前面的对象不一定全部完成扫描了，因为这还涉及到前面的对象的父对象(可能属于其他的CMTask)是否已经被扫描
+    // 即，比如a.field = b， a 在Region A， b在Region B，当前Task B开始执行的时候Task A还没有开始，因此，Task B执行完，对象b还没有被标记
+    _task->move_finger_to(addr);
 
     _task->scan_object(oop(addr)); // 对这个对象进行扫描，从scan_object调用到process_grey_object的时候，scan=true
     // we only partially drain the local queue and global stack
@@ -3908,16 +3921,21 @@ void CMTask::setup_for_region(HeapRegion* hr) {
   }
 
   _curr_region  = hr;
-  _finger       = hr->bottom();
+  _finger       = hr->bottom(); // 领取到一个新的HeapRegion，那么本地_finger设置为这个HeapRegion的_bottom
   update_region_limit();
 }
 
+/**
+ * 更新当前CMTask对应的HeapRegion 的上限，即CMTask的整个扫描范围只能限定在
+ * 当前的的_curr_region的[_finger, limit]之间
+ */
 void CMTask::update_region_limit() {
-  HeapRegion* hr            = _curr_region;
-  HeapWord* bottom          = hr->bottom();
+  HeapRegion* hr            = _curr_region; // 当前HeapRegion
+  HeapWord* bottom          = hr->bottom(); // 当前HeapRegion的bottom
   HeapWord* limit           = hr->next_top_at_mark_start(); // 获取当前region的tams
 
   if (limit == bottom) { // 当前region的tams刚好在region的bottom
+      // 如果我们发现当前的_curr_region的tamps刚好是limit，说明是一个空Region，因此，我们设置_finger为bottom
     if (_cm->verbose_low()) {
       gclog_or_tty->print_cr("[%u] found an empty region "
                              "[" PTR_FORMAT ", " PTR_FORMAT ")",
@@ -3928,10 +3946,10 @@ void CMTask::update_region_limit() {
     // iteration that will follow this will not do anything.
     // (this is not a condition that holds when we set the region up,
     // as the region is not supposed to be empty in the first place)
-    _finger = bottom; // 设置local _finger为当前的bottom
-  } else if (limit >= _region_limit) {
+    _finger = bottom; // 设置CMTask的local _finger为当前的bottom
+  } else if (limit >= _region_limit) { // 这个HeapRegion的tamps 大于或等于_region_limit，即大于我们扫描的区域
     assert(limit >= _finger, "peace of mind");
-  } else {
+  } else { // _region_limit 大于 tamps
     assert(limit < _region_limit, "only way to get here");
     // This can happen under some pretty unusual circumstances.  An
     // evacuation pause empties the region underneath our feet (NTAMS
@@ -3943,10 +3961,10 @@ void CMTask::update_region_limit() {
     // and we do not need in fact to scan anything else. So, we simply
     // set _finger to be limit to ensure that the bitmap iteration
     // doesn't do anything.
-    _finger = limit;
+    _finger = limit; // 将CMTask的本地_finger更新为tams,即tamps前面的对象已经不需要进行灰色话处理了
   }
 
-  _region_limit = limit; // 将_region_limit 更新为limit
+  _region_limit = limit; // 将_region_limit 更新为limit，即NTAMS
 }
 
 void CMTask::giveup_current_region() {
@@ -4051,7 +4069,7 @@ void CMTask::regular_clock_call() {
 
   // (1) If an overflow has been flagged, then we abort.
   if (_cm->has_overflown()) { // 发生了标记栈溢出
-    set_has_aborted(); // CMTask终止
+    set_has_aborted(); // CMTask终止，需要睡眠一段时间重新执行
     return;
   }
 
@@ -4062,7 +4080,7 @@ void CMTask::regular_clock_call() {
 
   // (2) If marking has been aborted for Full GC, then we also abort.
   if (_cm->has_aborted()) { // 整个标记周期已经终止了
-    set_has_aborted(); // CMTask终止
+    set_has_aborted(); // CMTask终止，需要睡眠一段时间重新执行
     statsOnly( ++_aborted_cm_aborted );
     return;
   }
@@ -4097,7 +4115,7 @@ void CMTask::regular_clock_call() {
   if (SuspendibleThreadSet::should_yield()) { // 有Full GC即将发生，我们主动suspend
     // We should yield. To do this we abort the task. The caller is
     // responsible for yielding.
-    set_has_aborted(); // CMTask终止
+    set_has_aborted(); // CMTask终止，需要睡眠一段时间重新执行
     statsOnly( ++_aborted_yield );
     return;
   }
@@ -4106,7 +4124,7 @@ void CMTask::regular_clock_call() {
   // then we abort.
   double elapsed_time_ms = curr_time_ms - _start_time_ms;
   if (elapsed_time_ms > _time_target_ms) { // 实际花费的时间已经超过了时间配额
-    set_has_aborted(); // _has_aborted置位为true
+    set_has_aborted(); // _has_aborted置位为true，需要睡眠一段时间重新执行
     _has_timed_out = true;  // 设置timeout标记
     statsOnly( ++_aborted_timed_out );
     return;
@@ -4122,7 +4140,7 @@ void CMTask::regular_clock_call() {
     }
     // we do need to process SATB buffers, we'll abort and restart
     // the marking task to do so
-    set_has_aborted(); // 我们需要处理SATB缓存了，因此需要终止
+    set_has_aborted(); // 我们需要处理SATB缓存了，因此需要终止，需要睡眠一段时间重新执行
     statsOnly( ++_aborted_satb );
     return;
   }
@@ -4163,8 +4181,9 @@ void CMTask::move_entries_to_global_stack() {
 
   int n = 0;
   oop obj;
+  // 从标记栈中弹出元素，放入到obj中
   while (n < global_stack_transfer_size && _task_queue->pop_local(obj)) {
-    buffer[n] = obj;
+    buffer[n] = obj; // 将弹出的元素存入到buffer中
     ++n;
   }
 
@@ -4173,13 +4192,13 @@ void CMTask::move_entries_to_global_stack() {
 
     statsOnly( ++_global_transfers_to; _local_pops += n );
 
-    if (!_cm->mark_stack_push(buffer, n)) {
+    if (!_cm->mark_stack_push(buffer, n)) { // 向 _markStack中批量插入本地标记栈元素
         // 发生溢出，因此终止当前的CMTask
       if (_cm->verbose_low()) {
         gclog_or_tty->print_cr("[%u] aborting due to global stack overflow",
                                _worker_id);
       }
-      set_has_aborted(); // CMTask终止
+      set_has_aborted(); // 全局标记栈溢出，CMTask终止
     } else {
       // the transfer was successful
 
@@ -4221,7 +4240,7 @@ void CMTask::get_entries_from_global_stack() {
     }
     for (int i = 0; i < n; ++i) {
         /**
-         * 将弹出的元素一次性存放到CMTask的本地_task_queue中
+         * 将弹出的元素一次性一个一个存放到CMTask的本地_task_queue中
          */
       bool success = _task_queue->push(buffer[i]);
       // We only call this when the local queue is empty or under a
@@ -4276,7 +4295,7 @@ void CMTask::drain_local_queue(bool partially) {
     /**
      * 从本地队列中弹出元素，如果本地队列中有元素，则返回true，并将元素赋值给参数 obj；如果队列为空，则返回false。
      */
-    bool ret = _task_queue->pop_local(obj);
+    bool ret = _task_queue->pop_local(obj); // 这里是pop，不是peek
     while (ret) {
       statsOnly( ++_local_pops );
 
@@ -4341,13 +4360,14 @@ void CMTask::drain_global_stack(bool partially) {
   } else { // 完全清空，目标大小为0
     target_size = 0;
   }
-
-  if (_cm->mark_stack_size() > target_size) {// stack中的实际元素个数大于目标size，因此需要进行一些清空操作
+    // 全局标记栈中的实际元素个数大于目标size，因此需要进行一些清空操作
+  if (_cm->mark_stack_size() > target_size) {
     if (_cm->verbose_low()) {
       gclog_or_tty->print_cr("[%u] draining global_stack, target size " SIZE_FORMAT,
                              _worker_id, target_size);
     }
 
+    //只要CMTask没有中断，且全局标记栈中的元素数量大于目标数量，就继续进行清空
     while (!has_aborted() && _cm->mark_stack_size() > target_size) {
       get_entries_from_global_stack(); // 从_cm的全局_markStack中弹出**一批元素**，放入到当前的CMTask的本地_task_queue中
       drain_local_queue(partially); // 开始清空CMTask的本地_task_queue，清空过程会进行对应的scan操作
@@ -4383,9 +4403,11 @@ void CMTask::drain_satb_buffers() {
   // This keeps claiming and applying the closure to completed buffers
   // until we run out of buffers or we need to abort.
   /**
-   * 对于全局的SATB标记队列集合中的元素应用CMSATBBufferClosure
+   * 对于全局的SATB标记队列集合中的元素应用 CMSATBBufferClosure
    * 具体实现搜索 SATBMarkQueueSet::apply_closure_to_completed_buffer
    * 最终调用了CMSATBBufferClosure的do_buffer方法，搜索 virtual void do_buffer
+   * apply_closure_to_completed_buffer返回true，意味着成功地从SATBQueueSet中成功取出一个BufferNode并且apply了CMSATBBufferClosure
+   * 那么，会不断尝试取出更多的BufferNode
    */
   while (!has_aborted() &&
          satb_mq_set.apply_closure_to_completed_buffer(&satb_cl)) {
@@ -4475,7 +4497,7 @@ void CMTask::print_stats() {
       visited by a task in the future, or whether it needs to be also
       pushed on a stack).
 
-      (2) Local Queue. The local queue of the task which is accessed
+      (2) Local Queue(Local Mark Stack). The local queue of the task which is accessed
       reasonably efficiently by the task. Other tasks can steal from
       it when they run out of work. Throughout the marking phase, a
       task attempts to keep its local queue short but not totally
@@ -4573,7 +4595,7 @@ void CMTask::print_stats() {
             则任务将声明其位图所在的堆区域 然后扫描找到gray object。
             global finger 指示最后claim的区域的末尾在哪里。 local finger指示任务已扫描到该区域的深度。
             两个finger 用于确定如何使对象变灰（即是否简单地标记它就可以了，因为它将来会被CMTask访问，或者是否也需要将其压入堆栈）。
-     (2) 本地队列。 任务的本地队列，任务可以合理有效地访问该队列。 当其他任务用完工作时，它们可以窃取它。
+     (2) 本地队列(本地标记栈)。 任务的本地队列，任务可以合理有效地访问该队列。 当其他任务用完工作时，它们可以窃取它。
             在整个标记阶段，任务尝试保持其本地队列较短但不完全为空，以便其他任务可以窃取条目。 仅当没有更多工作时，任务才会完全耗尽其本地队列。
      (3) 全局标记堆栈。 这可以用来解决本地队列的溢出。
             在标记期间，仅在它和本地队列之间移动条目集，而不会向操作本地队列一样直接从中取出元素，因为对它的访问需要互斥锁以及与其进行更细粒度的交互，这可能会导致contention。
@@ -4729,7 +4751,7 @@ void CMTask::do_marking_step(double time_target_ms,
       // contains garbage (update_region_limit() will also move
       // _finger to the start of the region if it is found empty).
       /**
-       * 我们可能会在疏散暂停后重新开始这项任务，这可能会疏散我们脚下的区域。
+       * 我们可能会在回收暂停后重新开始这项任务，这有可能使得我们当前的HeapRegion已经被回收了(即上面的对象已经被疏散了)
        * 所以我们再次读取它的limit，以确保我们不会迭代包含垃圾的堆区域（如果发现它为空，update_region_limit() 也会将 _finger 移动到该区域的开头）。
        */
       update_region_limit();
@@ -4773,8 +4795,8 @@ void CMTask::do_marking_step(double time_target_ms,
            */
         if (_nextMarkBitMap->isMarked(mr.start())) { // 这个对象已经被标记，那么就apply对应的bit closure CMBitMapClosure
           // The object is marked - apply the closure
-          BitMap::idx_t offset = _nextMarkBitMap->heapWordToOffset(mr.start());
-          bitmap_closure.do_bit(offset); // 对offset的这个对象进行递归扫描，同时也会移动CMTask的本地_finger 到这个地址
+          BitMap::idx_t offset = _nextMarkBitMap->heapWordToOffset(mr.start()); // 获取这个内存地址在标记位图中的偏移量
+          bitmap_closure.do_bit(offset); // 对bitmap的offset的对应的这个对象进行递归扫描，同时也会移动CMTask的本地_finger 到这个地址
         }
         // Even if this task aborted while scanning the humongous object
         // we can (and should) give up the current region.
@@ -4788,7 +4810,12 @@ void CMTask::do_marking_step(double time_target_ms,
          *  返回true，说明成功地apply了对应的closure
          *  返回false，说明收到了abort 的信号(查看 class CMBitMapClosure : public BitMapClosure的do_bit方法)
          */
-      } else if (_nextMarkBitMap->iterate(&bitmap_closure, mr)) { //
+          // 我们查看class CMBitMapClosure : public BitMapClosure的do_bit方法，可以看到返回false说明abort了
+
+      } else if (_nextMarkBitMap->iterate(&bitmap_closure, mr)) {
+          // 对_nextMarkBitMap中指定范围内的已经被标记的bit所对应的对象进行扫描,因为_nextMarkBitMap在mr界定的范围内，有些对象已经被标记，有些没有被标记
+          //, 这里，_nextMarkBitMap->iterate(&bitmap_closure, mr)只会处理那些已经被标记的对象
+
         giveup_current_region();
         regular_clock_call();
       } else {
@@ -4817,6 +4844,7 @@ void CMTask::do_marking_step(double time_target_ms,
          *      我们将手指移动足够的距离以指向下一个可能的对象头（位图知道我们需要移动它多少，因为它知道它的粒度）。
          */
         assert(_finger < _region_limit, "invariant");
+        // 获取bitmap的下一个object。这里的“下一个”，意思是在HeapRegion中该对象的下一个对象，而不是该对象的子对象
         HeapWord* new_finger = _nextMarkBitMap->nextObject(_finger);  // 搜索 HeapWord* nextObject
         // Check if bitmap iteration was aborted while scanning the last object
         if (new_finger >= _region_limit) {
@@ -4914,7 +4942,7 @@ void CMTask::do_marking_step(double time_target_ms,
   // Since we've done everything else, we can now totally drain the
   // local queue and global stack.
     /**
-     * 第二次尝试清空local queue 和 global stack, partially = false, 意味着，需要清空全部
+     * 第三次尝试清空local queue 和 global stack, partially = false, 意味着，需要清空全部
      * 需要和清空SATB队列集合drain_satb_buffers 区别开
      * 清空本地和全局标记栈的过程根本上就是从当前的CMTask的本地标记栈中取出元素然后调用scan_object的过程
      */
@@ -5040,7 +5068,7 @@ void CMTask::do_marking_step(double time_target_ms,
                                _worker_id);
       }
 
-      set_has_aborted();  // 设置CMTask的abort标志位
+      set_has_aborted();  // 还有一些工作没有做完，设置CMTask的abort标志位
       statsOnly( ++_aborted_termination );
     }
   }
@@ -5059,7 +5087,7 @@ void CMTask::do_marking_step(double time_target_ms,
 
     statsOnly( ++_aborted );
 
-    if (_has_timed_out) {
+    if (_has_timed_out) { // 如果这次CMTask的终止是因为timeout，即标记时间超时
       double diff_ms = elapsed_time_ms - _time_target_ms; // 实际花费的时间，减去目标时间
       // Keep statistics of how well we did with respect to hitting
       // our target only if we actually timed out (if we aborted for
@@ -5067,7 +5095,7 @@ void CMTask::do_marking_step(double time_target_ms,
       _marking_step_diffs_ms.add(diff_ms);
     }
 
-    if (_cm->has_overflown()) { // 发生了溢出
+    if (_cm->has_overflown()) { // 发生了溢出。搜索 set_has_overflown
       // This is the interesting one. We aborted because a global
       // overflow was raised. This means we have to restart the
       // marking phase and start iterating over regions. However, in

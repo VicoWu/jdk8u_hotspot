@@ -2115,7 +2115,7 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
   init_cset_region_lengths(eden_region_length, survivor_region_length);
 
   HeapRegion* hr = young_list->first_survivor_region();
-  while (hr != NULL) { // 遍历所有的survivor regio
+  while (hr != NULL) { // 遍历所有的survivor region
     assert(hr->is_survivor(), "badly formed young list");
     // There is a convention that all the young regions in the CSet
     // are tagged as "eden", so we do this for the survivors here. We

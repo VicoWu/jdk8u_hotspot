@@ -186,6 +186,9 @@ size_t ReferenceProcessor::total_count(DiscoveredList lists[]) {
   return total;
 }
 
+/**
+ * 处理弱引用
+ */
 ReferenceProcessorStats ReferenceProcessor::process_discovered_references(
   BoolObjectClosure*           is_alive,
   OopClosure*                  keep_alive,
@@ -314,6 +317,8 @@ bool enqueue_discovered_ref_helper(ReferenceProcessor* ref,
 
   // Enqueue references that are not made active again, and
   // clear the decks for the next collection (cycle).
+  // void ReferenceProcessor::enqueue_discovered_reflists
+  // 调用 enqueue_discovered_reflists 方法，将当前待处理的引用列表（即 pending_list_addr）中的引用入队
   ref->enqueue_discovered_reflists((HeapWord*)pending_list_addr, task_executor);
   // Do the post-barrier on pending_list_addr missed in
   // enqueue_discovered_reflist.
@@ -329,6 +334,7 @@ bool enqueue_discovered_ref_helper(ReferenceProcessor* ref,
 bool ReferenceProcessor::enqueue_discovered_references(AbstractRefProcTaskExecutor* task_executor) {
   NOT_PRODUCT(verify_ok_to_handle_reflists());
   if (UseCompressedOops) {
+      // bool enqueue_discovered_ref_helper
     return enqueue_discovered_ref_helper<narrowOop>(this, task_executor);
   } else {
     return enqueue_discovered_ref_helper<oop>(this, task_executor);

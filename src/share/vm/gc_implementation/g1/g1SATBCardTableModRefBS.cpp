@@ -230,7 +230,7 @@ G1SATBCardTableLoggingModRefBS::write_ref_field_work(void* field,
      * 取出field指针对应的卡片地址
      */
   volatile jbyte* byte = byte_for(field); // 获取源对象地址，比如a.field = b ， 那么 byte就是a的地址
-  if (*byte == g1_young_gen) { // 对于a.field = b ,假如a在young区，那么不用处理
+  if (*byte == g1_young_gen) { // 对于a.field = b , 那么 *byte 表示对byte取值，即byte所指向的对象本身的地址，即b的地址
     return;
   }
   OrderAccess::storeload(); // store-load写屏障，保证数据可见性

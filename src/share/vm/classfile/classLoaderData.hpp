@@ -210,7 +210,8 @@ class ClassLoaderData : public CHeapObj<mtClass> {
                            // To avoid applying oop closure more than once.
                            // Has to be an int because we cas it
   /**
-   *  这个ClassLoader下面挂载的所有的类。很显然，这些类具有相同的_is_anoymous性质
+   *  这个ClassLoader下面挂载的所有的类，显然，这是一个数组。
+   *  很显然，这些类具有相同的_is_anoymous性质
    */
   Klass* _klasses;         // The classes defined by the class loader.
   /**
@@ -310,6 +311,8 @@ class ClassLoaderData : public CHeapObj<mtClass> {
 
     /**
      * oop 类型的变量，用于唯一标识一个类加载器或规范的类路径。它可以用于在Java虚拟机中唯一地识别一个类加载器或类路径。
+     * loader 被设计为一个 oop（ordinary object pointer），因为它是一个对 Java 对象的引用，
+     * 而类加载器（java.lang.ClassLoader 的实例）本质上就是一个普通的 Java 对象。这种设计背后有几个重要的原因和逻辑：
      * 当且仅当一个class loader 被卸载，这个class loader下面的类才可以被卸载。
      * 对于一个普通的类，G1GC将这个_class_loader作为这个CLD 的keep_alive_object ，
      * 对于一个匿名类，则将_mirror作为它的keep_alive_object
